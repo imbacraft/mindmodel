@@ -1,0 +1,24 @@
+# --- Private material: never publish ------------------------------------------
+# Design history, decision logs and reference maps describe real (private)
+# codebases. They live outside this repo (../mindmodel-private/); these patterns
+# are a second safety net in case anything is copied back in.
+docs/
+reference/
+private/
+*.mindmodel.json
+facts.json
+facts.md
+
+# --- Output of running mindmodel ----------------------------------------------------
+# /mindmodel writes into the analyzed project's own mindmodel/ folder, never here.
+# Ignored in case the plugin is ever run on this repo itself.
+/mindmodel/
+.work/
+
+# --- Environment / OS / editors ----------------------------------------------------
+node_modules/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log

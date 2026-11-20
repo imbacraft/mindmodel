@@ -1,0 +1,6 @@
+{
+  "name": "mindmodel",
+  "metadata": { "description": "mindmodel: codebase mind maps for humans" },
+  "owner": { "name": "dbouzoukas" },
+  "plugins": [ { "name": "mindmodel", "source": "./" } ]
+}
