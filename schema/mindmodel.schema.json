@@ -464,7 +464,7 @@
               "of",
               "since"
             ],
-            "description": "Commits touching the region in the window before the analyzed commit; the page shows changes often / sometimes / rarely.",
+            "description": "Computed by validate.mjs from `paths`; don't write it.",
             "properties": {
               "commits": {
                 "type": "integer"
@@ -476,6 +476,13 @@
                 "type": "string"
               }
             }
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Folders or files that make up the region (relative to the project root). The validator computes `activity` from them; don't write activity by hand."
           }
         }
       }

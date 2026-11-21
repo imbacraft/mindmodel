@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { index, methodAt } from './java.mjs';
+import { gitWindow, activityFor } from './activity.mjs';
 
 export function parseCite(c) {
   const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#(\S+))?$/.exec(c);
@@ -46,8 +47,18 @@ export function resolveCites(map, root) {
   return changed;
 }
 
+// Activity badges are computed, never written by hand: each region lists its `paths`, and the commit
+// counts come from git in the shared window. Regions without paths keep whatever activity they have.
+export function fillActivity(map, root) {
+  const regions = (map.regions ?? []).filter((r) => r.paths?.length);
+  if (!regions.length) return;
+  const w = gitWindow(root);
+  for (const r of regions) { if (w) r.activity = activityFor(root, w.since, r.paths); else delete r.activity; }
+}
+
 export function validate(map, root) {
   resolveCites(map, root);
+  fillActivity(map, root);
   const errors = [], warnings = [];
   const err = (m) => errors.push(m), warn = (m) => warnings.push(m);
   for (const k of ['purpose', 'context', 'coreSentence', 'concepts', 'state', 'regionSentence', 'regions', 'runtime', 'background', 'rules', 'stories']) if (!map[k]) err(`missing top-level "${k}"`);
@@ -90,6 +101,7 @@ export function validate(map, root) {
     for (const id of regionIds) if (!inSentence.has(id)) err(`regionSentence: region "${id}" not mentioned as [[${id}|…]]`);
   }
   for (const r of map.regions) {
+    for (const p of r.paths ?? []) if (!fs.existsSync(path.join(root, p))) err(`region ${r.id}: path not found "${p}"`);
     if (r.activity && !(r.activity.commits >= 0 && r.activity.commits <= r.activity.of)) err(`region ${r.id}: activity ${r.activity.commits} of ${r.activity.of} is impossible`);
     for (const o of r.owns ?? []) needConcept(o, `region ${r.id} owns`);
     max(r.parts, BUDGET.parts, `region ${r.id} parts`);
@@ -112,6 +124,8 @@ export function validate(map, root) {
   max(map.state.seams, BUDGET.seams, 'state seams');
   max(map.purpose.boot?.run, BUDGET.runSteps, 'boot run steps');
 
+  const act = map.regions.filter((r) => r.activity);
+  if (act.length > 1 && act.every((r) => r.activity.commits === 0)) warn('every region has 0 commits: check the regions\' paths');
   map.context.actors.forEach((a) => { if (!a.importance) warn(`actor ${a.id}: missing "importance" (why it ranks here)`); });
 
   // R14: each story touches >=2 regions; regions no flow runs through are reported.
@@ -172,11 +186,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const [fileArg, rootArg] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
   const file = path.resolve(fileArg ?? 'mindmodel/mindmodel.json');
   const root = path.resolve(rootArg ?? path.join(path.dirname(file), '..'));
-  const map = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const changed = resolveCites(map, root);
-  // --fix writes resolved citations back, so the source file matches what was validated and rendered
-  if (process.argv.includes('--fix') && changed) { fs.writeFileSync(file, JSON.stringify(map, null, 1)); console.log(`fixed ${changed} citation(s)`); }
+  const map = JSON.parse(fs.readFileSync(file, 'utf8')), before = JSON.stringify(map);
   const { errors, warnings, stats } = validate(map, root);
+  // --fix writes resolved citations and computed badges back, so the file matches what was validated and rendered
+  if (process.argv.includes('--fix') && JSON.stringify(map) !== before) { fs.writeFileSync(file, JSON.stringify(map, null, 1)); console.log('fixed: citations resolved and activity computed'); }
   warnings.forEach((w) => console.log(`warn  ${w}`));
   errors.forEach((e) => console.log(`ERROR ${e}`));
   console.log(`${errors.length ? 'FAILED' : 'OK'}: ${errors.length} error(s), ${warnings.length} warning(s)`, stats ?? '');

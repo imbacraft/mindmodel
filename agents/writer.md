@@ -22,7 +22,7 @@ The facts replace searching. Your budget goes on reading the few places that nee
 - **Read line ranges, not whole files.** The facts give file:line. Open ±20 lines around it. Read a whole file only when it is short and central (a core service, the security config).
 - **Keep turns few** (aim for ≤ 25): every turn re-reads your whole context, so cost grows with each one. Batch independent reads into one turn, and collect several ranges in one command (e.g. one `sed -n` per file, joined) rather than one call per range.
 - **Read the project's docs selectively:** intro docs fully, plus only the docs whose titles concern the domain, architecture, tenancy, flows or security (Part 2, phase 1).
-- **Activity is a script, not a search:** for each region run `node <plugin>/engine/activity.mjs <root> "<window from facts>" <path prefixes…>` and copy the result into `activity`.
+- **Give each region its `paths`** (the folders or files it is made of). Don't write `activity`: `validate.mjs --fix` computes the badges from the paths.
 - **Cite with symbols** where you can: `path:120-130#saveCustomer`. The validator checks that the symbol is in those lines, so you never need to re-open a file to double-check a citation. Use a symbol on every lifecycle step, rule and story step. Symbols must be identifiers (no spaces).
 - **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json --fix` and fix every ERROR **with small edits to the file, never by rewriting it whole**. Warnings are fine if justified.
 - **Stop when the checks pass.** Don't polish beyond the critic checklist.

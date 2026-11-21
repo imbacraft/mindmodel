@@ -21,11 +21,25 @@ export function count(log, prefixes) {
 }
 assert.deepStrictEqual(count('@@a\nM\tsrc/new/A.java\n@@b\nR100\tsrc/old/A.java\tsrc/new/A.java\n@@c\nM\tsrc/old/A.java\n@@d\nM\tREADME.md', ['src/new']), { commits: 3, of: 4 });
 
+const git = (root, args) => { try { return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
+
+// The activity window (rules 3.4): 6 months before HEAD; under 20 commits there, the last 50; under 10 in total, none.
+export function gitWindow(root) {
+  const headDate = git(root, ['log', '-1', '--format=%cI']); if (!headDate) return null;
+  const since = new Date(new Date(headDate).getTime() - 182.5 * 864e5).toISOString().slice(0, 10);
+  const inWindow = Number(git(root, ['rev-list', '--count', `--since=${since}`, 'HEAD']));
+  const total = Number(git(root, ['rev-list', '--count', 'HEAD']));
+  return inWindow >= 20 ? { kind: '6 months', since, commits: inWindow } : total >= 10 ? { kind: 'last 50 commits', since: `last ${Math.min(50, total)} commits`, commits: Math.min(50, total) } : null;
+}
+
+export function activityFor(root, window, prefixes) {
+  const n = /^last (\d+) commits$/.exec(window);
+  const log = git(root, ['log', '-M', '--name-status', '--format=@@%H', ...(n ? ['-n', n[1]] : [`--since=${window}`]), 'HEAD']) ?? '';
+  return { ...count(log, prefixes.map((p) => p.replace(/\/$/, ''))), since: window };
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [root, window, ...prefixes] = process.argv.slice(2);
   if (!root || !window || !prefixes.length) { console.error('usage: activity.mjs <root> <window> <pathPrefix>...'); process.exit(2); }
-  const n = /^last (\d+) commits$/.exec(window);
-  const range = n ? ['-n', n[1]] : [`--since=${window}`];
-  const log = execFileSync('git', ['-C', root, 'log', '-M', '--name-status', '--format=@@%H', ...range, 'HEAD'], { encoding: 'utf8', maxBuffer: 1 << 28 });
-  console.log(JSON.stringify({ ...count(log, prefixes.map((p) => p.replace(/\/$/, ''))), since: window }));
+  console.log(JSON.stringify(activityFor(root, window, prefixes)));
 }

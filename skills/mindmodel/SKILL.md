@@ -34,7 +34,7 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    > Plugin root: `${CLAUDE_PLUGIN_ROOT}`
    > Rules: `${CLAUDE_PLUGIN_ROOT}/rules/generation-rules.md` · JSON shape: `node ${CLAUDE_PLUGIN_ROOT}/engine/shape.mjs`
    > Facts digest: `<root>/mindmodel/.work/facts.md` (details in `facts.json`)
-   > Activity script: `${CLAUDE_PLUGIN_ROOT}/engine/activity.mjs` · Validator: `${CLAUDE_PLUGIN_ROOT}/engine/validate.mjs`
+   > Validator: `${CLAUDE_PLUGIN_ROOT}/engine/validate.mjs`
    > Write `<root>/mindmodel/mindmodel.json` and make it pass the validator.
 
    Wait for it to finish. Don't do the analysis yourself, and don't read the project's code in this session; the subagent keeps that work out of the user's context.

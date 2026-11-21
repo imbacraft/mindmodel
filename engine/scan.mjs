@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert';
 import { javaFacts, bootFacts } from './deep.mjs';
+import { gitWindow } from './activity.mjs';
 
 const IGNORE = new Set(['.git', 'node_modules', 'target', 'build', 'bin', 'dist', 'out', '.gradle', '.idea', '.vscode', '.settings', '.ua', 'mindmodel', 'uploads', 'coverage', '.next', 'android', 'ios', '.mvn', 'vendor', '.claude', '.cursor', '.agent']);
 // Compiled and binary files are never read, so don't even list them (wherever a build tool put them).
@@ -200,11 +201,8 @@ export function scan(root) {
     const head = git(root, ['rev-parse', '--short', 'HEAD']); if (!head) return null;
     const dirty = !!git(root, ['status', '--porcelain', '--untracked-files=no']);
     const headDate = git(root, ['log', '-1', '--format=%cI']);
-    const since = new Date(new Date(headDate).getTime() - 182.5 * 864e5).toISOString().slice(0, 10);
-    const inWindow = Number(git(root, ['rev-list', '--count', `--since=${since}`, 'HEAD']));
     const total = Number(git(root, ['rev-list', '--count', 'HEAD']));
-    const window = inWindow >= 20 ? { kind: '6 months', since, commits: inWindow } : total >= 10 ? { kind: 'last 50 commits', since: `last ${Math.min(50, total)} commits`, commits: Math.min(50, total) } : null;
-    return { head, dirty, headDate, totalCommits: total, window };
+    return { head, dirty, headDate, totalCommits: total, window: gitWindow(root) };
   })();
 
   return {
