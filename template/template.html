@@ -103,8 +103,7 @@ code { font: .86em/1.4 var(--mono); background: var(--code-bg); padding: .08em .
 .cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
 .ctx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
 .ctx-list b { display: block; font-family: var(--serif); font-size: 18px; }
-.ctx-list.ranked li { display: grid; grid-template-columns: 34px 1fr; gap: 10px; }
-.ctx-list.ranked .importance { margin: 2px 0 4px; font-size: 16px; }
+.ctx-list .importance { margin: 2px 0 4px; font-size: 16px; }
 .ctx-list span { color: var(--muted); font-size: 18px; }
 
 /* Cast */
@@ -323,7 +322,7 @@ add('purpose', 'Overview', `
 add('context', 'People & outside systems', `
   <h2>People and outside systems</h2>
   <div class="cols2">
-    <div><h4>People, most important first</h4><ol class="ctx-list ranked">${M.context.actors.map((a, i) => `<li><span class="rank">${i + 1}</span><div><b>${esc(a.name)}</b>${a.importance ? `<p class="importance">${rich(a.importance)}</p>` : ''}<span>${rich(a.text)}</span>${cites(a.cites)}</div></li>`).join('')}</ol></div>
+    <div><h4>People, most important first</h4><ul class="ctx-list">${M.context.actors.map((a) => `<li><b>${esc(a.name)}</b>${a.importance ? `<p class="importance">${rich(a.importance)}</p>` : ''}<span>${rich(a.text)}</span>${cites(a.cites)}</li>`).join('')}</ul></div>
     <div><h4>Outside systems</h4><ul class="ctx-list">${M.context.externals.map((a) => `<li><b>${esc(a.name)}</b><span>${rich(a.text)}</span>${cites(a.cites)}</li>`).join('')}</ul></div>
   </div>`);
 
