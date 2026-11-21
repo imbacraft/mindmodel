@@ -137,7 +137,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 |---|---|---|
 | Plain name · code names | Docs vocabulary, UI labels, i18n strings | Plain name first |
 | What it is | Docs + how the UI presents it | One sentence, real-world meaning |
-| Not to be confused with | Look-alike groups, name mismatches | Mandatory when a look-alike exists |
+| Not to be confused with | Look-alike groups, name mismatches | **Only where confusion is likely**, else omit the field (most cards have none). Test: would a developer reading the code plausibly use the wrong one, or misread the name? A merely related concept, or a difference the card's own text already makes clear, does not qualify. ≤ 2 entries |
 | Lifecycle | Creation sites (`new`, builders, `save`, `findOrCreate`); status enums; every `setStatus(X)`; jobs that expire, clean up or delete. If the schema or the valid values live in a SQL dump, migration or seed file, that file is the source: cite it (it is **not** demoted as data) | Each state change cited at the line that makes it |
 | Relations | Foreign keys / associations between **core** concepts only, **plus runtime conversions** (one concept becomes another, e.g. a session cart is saved as an order) | Each cited; a short label; list each relation on one card only (the side that holds the reference or does the conversion); a card may have none |
 | Fields that matter | Status, tenant key, links to other concepts, money, external IDs | 2–4 |
@@ -149,7 +149,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 
 **Checks:**
 - Is any chosen concept a technical artifact, or a member of a collapsed family? → wrong.
-- Does each look-alike group have a "Not to be confused with"?
+- Does each look-alike group have a "Not to be confused with"? Does every entry pass the likely-confusion test, and is it absent everywhere else?
 - Does every lifecycle step cite the line that performs it?
 - Does the core sentence mention every concept, and only them, in dependency order?
 - Is the core sentence about how the *things* relate (not a user's journey, and not the code layout)?
