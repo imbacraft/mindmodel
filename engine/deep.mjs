@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
-import { index } from './java.mjs';
+import { index, methodAt } from './java.mjs';
 
 // Cite methods by name only: `validate.mjs --fix` fills in the exact range, and the digest stays short.
 const cite = (file, m) => `${file}#${m.name}`;
@@ -159,6 +159,31 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     for (const [v, s] of Object.entries(sites)) {
       const parts = [s.conditional.length && `conditional update in ${[...new Set(s.conditional)].join(', ')}`, s.set.length && `${hasConditional ? 'PLAIN set' : 'set'} in ${[...new Set(s.set)].join(', ')}`].filter(Boolean);
       lifecycle.push(`  ${v}: ${parts.join('; ') || 'no set found (confirm before saying it is never set)'}`);
+    }
+  }
+
+  // Status fields that hold constants instead of an enum (byte/int/String codes): every place a constant is set,
+  // attributed to the entity from the receiver's declared type or the nearest Entity.builder().
+  const constStatus = entities.filter((e) => (!shortlist || shortlist.has(e.name)) && e.fields.some((fl) => /^(status|state)$/i.test(fl.name) && !statusEnums.has(fl.type)));
+  if (constStatus.length) {
+    const names = constStatus.map((e) => e.name), sites = Object.fromEntries(names.map((n) => [n, {}]));
+    const SET = /(\w+)\s*\.\s*set(?:Status|State)\s*\(\s*((?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]+)\s*\)|\.(?:status|state)\s*\(\s*((?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]+)\s*\)|\b(?:status|state)\s*=\s*((?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]+)\s*;/;
+    for (const f of files) f.lines.forEach((l, i) => {
+      const x = SET.exec(l); if (!x) return;
+      const m = methodAt(f.ix, i + 1), body = m ? f.lines.slice(m.start - 1, m.end).join('\n') : '';
+      let ent = null;
+      if (x[1]) ent = names.find((n) => new RegExp(`\\b${n}(?:<[^>]*>)?\\s+${x[1]}\\b|\\b${x[1]}\\s*=\\s*(?:new\\s+)?${n}\\b|\\b${x[1]}\\s*=\\s*${n}\\.builder`).test(body));
+      else if (x[3]) ent = names.map((n) => [n, f.lines.slice(Math.max(0, i - 8), i + 1).join('\n').lastIndexOf(`${n}.builder(`)]).filter(([, k]) => k >= 0).sort((a, b) => b[1] - a[1])[0]?.[0];
+      else if (x[4] && names.includes(f.name)) ent = f.name; // field default inside the entity itself
+      if (!ent) return;
+      const v = (x[2] ?? x[3] ?? x[4]).split('.').pop();
+      ((sites[ent][v] ??= new Set())).add(m ? cite(f.p, m) : `${f.p}:${i + 1}`);
+    });
+    for (const [ent, vals] of Object.entries(sites)) {
+      if (!Object.keys(vals).length) continue;
+      const fl = constStatus.find((e) => e.name === ent).fields.find((x) => /^(status|state)$/i.test(x.name));
+      lifecycle.push(`${ent}.${fl.name} (${fl.type} constants, not an enum: only values seen being set are listed)`);
+      for (const [v, where] of Object.entries(vals)) lifecycle.push(`  ${v}: set in ${[...where].slice(0, 6).join(', ')}${where.size > 6 ? ` +${where.size - 6}` : ''}`);
     }
   }
 
