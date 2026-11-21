@@ -5,20 +5,21 @@
 It is deliberately *not* complete. Graph tools show hundreds of nodes; mindmodel shows only what a developer must carry in their head, and every claim on the page is traced to a cited line of code.
 
 ## What the page contains
-1. **Purpose:** what the system is for, and what it deliberately is not.
+1. **Overview:** what the system is for, what it deliberately is not, where it starts, the switches that change its behavior, and the one way to run it locally.
 2. **Context:** who uses it, and which outside systems it calls.
 3. **Core concepts:** the ≤ 5 things everything else is about, one sentence linking them, and a card each (what it is, what not to confuse it with, its lifecycle, the fields that matter).
 4. **Regions:** where the code lives, ordered along the user's journey, with how often each part changes.
-5. **How a request travels:** the path every API call takes, as one sequence diagram.
-6. **What runs on its own:** scheduled jobs, webhooks, queues and async work.
-7. **Rules & surprises:** ranked by how much code they touch × how bad it is to get them wrong.
-8. **Stories:** the main flows, walked end to end through real code.
+5. **State & source of truth:** where the truth for each concept lives, which code may change it (shared writes flagged), copies that can go stale, and steps that can half-succeed.
+6. **How a request travels:** the path every API call takes, as one sequence diagram.
+7. **What runs on its own:** scheduled jobs, webhooks, queues and async work.
+8. **Rules & surprises:** ranked by how much code they touch × how bad it is to get them wrong.
+9. **Stories:** the main flows, walked end to end through real code.
 
 Every citation opens the file at the line in VS Code or IntelliJ.
 
 ## Install (Claude Code)
 ```
-/plugin marketplace add <github-user>/mindmodel
+/plugin marketplace add imbacraft/mindmodel
 /plugin install mindmodel@mindmodel
 ```
 Then, in any project:
