@@ -226,6 +226,9 @@ export function scan(root) {
 export function summarize(f) {
   const L = [];
   const sec = (h) => L.push('', `## ${h}`);
+  // Every list is capped so the digest stays the same size on a 300k-line app; the rest stays in facts.json.
+  const cap = (list, n, where) => list.length > n ? [...list.slice(0, n), `- +${list.length - n} more in facts.json (${where})`] : list;
+  const push = (lines) => L.push(...lines);
   const prefix = (list) => { if (!list.length) return ''; let p = list[0]; for (const s of list) while (!s.startsWith(p)) p = p.slice(0, p.lastIndexOf('/', p.length - 2) + 1); return p; };
   const J = prefix(f.packages.map((p) => p.dir + '/')), F = prefix(f.frontend.routes.map((r) => r.file).concat(f.frontend.apiJoin.map((s) => s.split(' ').find((x) => x.includes(':')) ?? '')).filter(Boolean));
   const ab = (s) => String(s).split(J).join(J.length > 8 ? 'J/' : J).split(F).join(F.length > 8 ? 'F/' : F);
@@ -235,28 +238,31 @@ export function summarize(f) {
   sec('Build & externals'); for (const b of f.build) L.push(`- ${b.file}: ${b.deps.join(', ')}`);
   for (const [k, v] of Object.entries(f.externals.sdkImports)) L.push(`- ${k}: ${v.join(', ')}`);
   for (const c of f.externals.config) L.push(`- config ${c.file}${c.db ? ` (db: ${c.db})` : ''}: ${c.keys.length} keys (names only in facts.json)`);
-  sec(`Docs (${f.docs.length})`); for (const d of f.docs.slice(0, 50)) L.push(`- ${d.file} (${d.kb} KB)${d.title ? ' · ' + d.title : ''}`);
+  sec(`Docs (${f.docs.length})`); push(cap(f.docs.map((d) => `- ${d.file} (${d.kb} KB)${d.title ? ' · ' + d.title : ''}`), 40, 'docs'));
   sec('Packages (java files per module/subfolder)');
   const mods = {}; for (const p of f.packages) { const r = p.dir.startsWith(J) ? p.dir.slice(J.length) : p.dir; const [m, ...sub] = r.split('/'); (mods[m || '.'] ??= []).push(`${sub.join('/') || '.'} ${p.javaFiles}`); }
-  for (const [m, subs] of Object.entries(mods)) L.push(`- ${m}: ${subs.join(', ')}`);
+  push(cap(Object.entries(mods).map(([m, subs]) => `- ${m}: ${subs.slice(0, 25).join(', ')}${subs.length > 25 ? `, +${subs.length - 25}` : ''}`), 40, 'packages'));
   sec(`Entity funnel (${f.entities.count} entities; score = relIn·3 + log refs·4 + controllers + log frontend/views·3 + status·2)`);
   f.entities.funnel.slice(0, 20).forEach((e, i) => L.push(`${i + 1}. ${e.name} ${e.score} · ${e.file}:${e.line}${e.table ? ' table ' + e.table : ''} · relIn ${e.relIn}, refs ${e.refs}, ctrl ${e.controllers}, svc ${e.services}, fe ${e.frontendFiles}, views ${e.viewFiles}${e.status ? ', status' : ''}${e.flags.length ? ' · ' + e.flags.join(' ') : ''}${e.relations.length ? '\n   rel: ' + e.relations.join('; ') : ''}`));
   if (f.entities.funnel.length > 20) L.push(`rest: ${f.entities.funnel.slice(20).map((e) => `${e.name}(${e.score}${e.flags.length ? ' ' + e.flags.join(' ') : ''})`).join(', ')}`);
-  sec('Enums'); for (const e of f.entities.enums) L.push(`- ${e.name} ${e.file}:${e.line}: ${e.values.join(' ')}`);
+  sec('Enums'); push(cap(f.entities.enums.map((e) => `- ${e.name} ${e.file}:${e.line}: ${e.values.join(' ')}`), 40, 'entities.enums'));
   sec(`Controllers (${f.endpoints.length} endpoints)`);
   const byCtl = {}; for (const e of f.endpoints) { const k = e.inheritedBy ?? e.file; (byCtl[k] ??= []).push(e); }
-  for (const [file, eps] of Object.entries(byCtl)) { const prefixes = [...new Set(eps.map((e) => e.path.split('/').slice(0, 4).join('/')))]; L.push(`- ${file}: ${eps.length} (${[...new Set(eps.map((e) => e.verb))].join('/')}) ${prefixes.slice(0, 3).join(' ')}`); }
+  const ctl = Object.entries(byCtl).map(([file, eps]) => `- ${file}: ${eps.length} (${[...new Set(eps.map((e) => e.verb))].join('/')}) ${[...new Set(eps.map((e) => e.path.split('/').slice(0, 4).join('/')))].slice(0, 3).join(' ')}`);
+  if (ctl.length <= 60) push(ctl);
+  else { const byBase = {}; for (const e of f.endpoints) { const k = e.path.split('/').slice(0, 3).join('/') || '/'; (byBase[k] ??= new Set()).add(e.inheritedBy ?? e.file); }
+    push(cap(Object.entries(byBase).sort((a, b) => b[1].size - a[1].size).map(([k, files]) => `- ${k}/**: ${files.size} controller(s), e.g. ${[...files].slice(0, 2).join(', ')}`), 50, 'endpoints')); }
   sec('Frontend'); L.push(`${f.frontend.files} files; ${f.frontend.apiCalls} API call sites matched to endpoints in facts.json (frontend.apiJoin); unmatched: ${f.frontend.unmatchedApiCalls.length ? f.frontend.unmatchedApiCalls.join(' | ') : 'none'}`);
-  for (const r of f.frontend.routes.slice(0, 80)) L.push(`- route ${r.path} ${r.file}:${r.line}`);
+  push(cap(f.frontend.routes.map((r) => `- route ${r.path} ${r.file}:${r.line}`), 60, 'frontend.routes'));
   if (f.views.count) { L.push(`${f.views.count} server-rendered views; returned by controllers: ${Object.keys(f.views.returnedBy).length}; never returned or included (dead?): ${f.views.deadViews.join(', ') || 'none'}`); }
   sec('Request machinery');
-  for (const s of f.runtime.security) L.push(`- security ${s.file}:${s.line} ${s.text}`);
+  push(cap(f.runtime.security.map((s) => `- security ${s.file}:${s.line} ${s.text}`), 40, 'runtime.security'));
   L.push(`- method security annotations: ${f.runtime.methodSecurity.map((m) => `${m.file} ×${m.n}`).join(', ') || 'none'}`);
-  for (const s of f.runtime.interceptors) L.push(`- interceptor/filter ${s.file}:${s.line} ${s.text}`);
-  for (const s of f.runtime.contextScopes) L.push(`- context ${s.file}:${s.line} ${s.text}`);
+  push(cap(f.runtime.interceptors.map((s) => `- interceptor/filter ${s.file}:${s.line} ${s.text}`), 30, 'runtime.interceptors'));
+  push(cap(f.runtime.contextScopes.map((s) => `- context ${s.file}:${s.line} ${s.text}`), 20, 'runtime.contextScopes'));
   if (f.runtime.exceptionHandlers.length) L.push(`- @ExceptionHandler in ${f.runtime.exceptionHandlers.length} files (list in facts.json)`);
   for (const b of f.runtime.baseClasses) L.push(`- base class ${b.base}: ${b.subclasses} subclasses`);
-  for (const s of f.runtime.sessionState.slice(0, 30)) L.push(`- session ${s.file}:${s.line} ${s.text}`);
+  for (const s of f.runtime.sessionState.slice(0, 20)) L.push(`- session ${s.file}:${s.line} ${s.text}`);
   sec('Boot, computed (copy into the map; open files only if a line looks wrong)');
   for (const l of f.boot.computed) L.push(`- ${l}`);
   sec('Boot details (entry points, profile switches)');
@@ -277,17 +283,20 @@ export function summarize(f) {
   for (const [e, ls] of Object.entries(mod).filter(([e]) => top.has(e))) L.push(`- ${e}: ${ls.length} @Modifying quer${ls.length > 1 ? 'ies' : 'y'} in ${f.state.modifying.find((m) => m.entity === e).file}:${ls.join(',')}`);
   for (const c of f.state.caches.slice(0, 25)) L.push(`- copy/cache ${c.file}:${c.line} ${c.text}`);
   sec('Seams, computed (each must be listed in the map or dismissed on purpose)');
-  for (const x of f.seams) L.push(`- ${x}`);
+  // Ranked: half-done outside effects on money first, then other outside effects, then the rest.
+  const seamRank = (x) => (/NO TRANSACTION/.test(x) ? 4 : /^OUTSIDE CALL IN/.test(x) ? 3 : /^JOB DELETES|^AFTER COMMIT/.test(x) ? 2 : 1) + (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(x) ? 2 : 0);
+  push(cap([...f.seams].sort((a, b) => seamRank(b) - seamRank(a)).map((x) => `- ${x}`), 30, 'seams'));
   if (!f.seams.length) L.push('- none found');
   sec('Lifecycles, computed (every place each status is set; cite these instead of searching)');
-  for (const x of f.lifecycle) L.push(x.startsWith('  ') ? `  -${x.slice(1)}` : `- ${x}`);
+  push(cap(f.lifecycle.map((x) => (x.startsWith('  ') ? `  -${x.slice(1)}` : `- ${x}`)), 80, 'lifecycle'));
   sec('Schedules and retries, computed (plain-language timing; copy into "What runs on its own")');
-  for (const x of f.schedules) L.push(`- ${x}`);
+  push(cap(f.schedules.map((x) => `- ${x}`), 30, 'schedules'));
   sec('Runs on its own (async, listeners, sockets; scheduled jobs are listed above)');
-  for (const b of f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled')) L.push(`- @${b.kind}${b.args ? ' ' + b.args : ''} ${b.file}:${b.line}`);
+  push(cap(f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled').map((b) => `- @${b.kind}${b.args ? ' ' + b.args : ''} ${b.file}:${b.line}`), 30, 'background'));
   for (const s of f.background.sockets) L.push(`- socket ${s.file}:${s.line} ${s.path ?? s.text}`);
   for (const r of f.background.runners) L.push(`- startup runner ${r.file}:${r.line}`);
-  return ab(L.join('\n')).replace('@@J@@', J).replace('@@F@@', F) + '\n';
+  const out = ab(L.join('\n')).replace('@@J@@', J).replace('@@F@@', F) + '\n';
+  return out.length > 70_000 ? out.replace('\n', `\n**Over the 70 KB digest budget (${Math.round(out.length / 1024)} KB): read sections selectively.**\n`) : out;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
