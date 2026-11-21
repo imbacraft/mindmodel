@@ -73,13 +73,26 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist })
       .map((c) => ({ recv: c[1], method: c[2], line: f.ix.lineOf(m.open + c.index) }));
   };
   const VERB = /^(create|retrieve|update|list|cancel|capture|confirm|refund|send|delete|post|put|patch|get|exchange|execute|call|publish|upload|download|invoke|search|convertAndSend)$|^(create|send|publish|upload|refund|charge|post|put)[A-Z]/;
-  const direct = (f, m) => callsIn(f, m).filter((c) => f.outside.has(c.recv) && VERB.test(c.method)).map((c) => ({ ...c, what: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` }));
+  // Only calls that change something outside make a seam; reads (get, list, retrieve, search) leave nothing behind.
+  const READ = /^(get|list|retrieve|search)$/;
+  const direct = (f, m) => callsIn(f, m).filter((c) => f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method)).map((c) => ({ ...c, what: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` }));
   const targets = (f, c) => { const t = f.fields.get(c.recv); return t ? implsOf(t).flatMap((g) => g.ix.methods.filter((m) => m.name === c.method).map((m) => ({ g, m }))) : []; };
   const reach = (f, m, seen = new Set([m])) => {
     const body = f.ix.src.slice(m.open, m.close);
     for (const c of body.matchAll(/(?:^|[^.\w])(?:this\s*\.\s*)?(\w+)\s*\(/g)) for (const n of f.ix.methods.filter((n) => n.name === c[1] && !seen.has(n) && !(n.open > m.open && n.close < m.close))) { seen.add(n); reach(f, n, seen); }
     return [...seen];
   };
+  // Outside calls a method reaches: its own, its same-class helpers', and up to two bean hops away.
+  const outsideOf = (f, m, depth = 2, seen = new Set()) => {
+    if (seen.has(m)) return []; seen.add(m);
+    const res = [];
+    for (const r of reach(f, m)) {
+      for (const c of direct(f, r)) res.push({ line: c.line, what: c.what });
+      if (depth) for (const c of callsIn(f, r)) for (const { g, m: t } of targets(f, c)) for (const d of outsideOf(g, t, depth - 1, seen)) res.push({ line: c.line, what: `${d.what} via ${g.name}.${t.name}` });
+    }
+    return res;
+  };
+  const savesOf = (f, m) => reach(f, m).flatMap((r) => callsIn(f, r).filter((c) => /^(save|delete|update|insert)/.test(c.method) && repoEntity.has(f.fields.get(c.recv))).map((c) => ({ line: c.line, what: `${repoEntity.get(f.fields.get(c.recv))} ${c.method}` })));
   const isTx = (f, m) => m.annotations.some((a) => /^Transactional\b/.test(a) && !/readOnly\s*=\s*true/.test(a)) || (f.txClass && m.isPublic);
 
   const seams = [];
@@ -98,6 +111,13 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist })
       const then = callsIn(f, n).flatMap((c) => targets(f, c).map(({ g, m: t }) => `${g.name}.${t.name}${t.annotations.some((a) => /^Async\b/.test(a)) ? ' (@Async)' : ''}`));
       seams.push(`AFTER COMMIT ${f.name}.${m.name} ${here}: afterCommit at :${n.start} runs ${then.join(', ') || 'code'} only once the transaction has committed; if that fails, the commit is not undone.`);
     }
+  }
+  // Outside call first, then a database write, with no transaction around them: if the write fails, the outside side stays done.
+  for (const f of files) for (const m of f.ix.methods) {
+    if (isTx(f, m) || !m.isPublic) continue;
+    const out = outsideOf(f, m).filter((o) => o.line >= m.start && o.line <= m.end), saves = savesOf(f, m).filter((x) => x.line >= m.start && x.line <= m.end);
+    if (!out.length || !saves.length || Math.min(...out.map((o) => o.line)) > Math.max(...saves.map((x) => x.line))) continue;
+    seams.push(`OUTSIDE CALL THEN SAVE, NO TRANSACTION ${f.name}.${m.name} ${cite(f.p, m)}: ${[...new Set(out.map((o) => `${o.what} at :${o.line}`))].slice(0, 3).join('; ')}; then ${[...new Set(saves.map((x) => `${x.what} at :${x.line}`))].slice(0, 3).join('; ')}. If a save fails, the outside side stays done.`);
   }
   for (const f of files) for (const m of f.ix.methods) {
     if (m.annotations.some((a) => /^TransactionalEventListener\b/.test(a))) seams.push(`AFTER-COMMIT LISTENER ${f.name}.${m.name} ${cite(f.p, m)}: runs after the publishing transaction commits.`);
