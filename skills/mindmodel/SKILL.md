@@ -32,7 +32,7 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
 4. **Write the map.** Dispatch one subagent of type `mindmodel:writer` with this task (fill in the paths):
    > Project root: `<root>`
    > Plugin root: `${CLAUDE_PLUGIN_ROOT}`
-   > Rules: `${CLAUDE_PLUGIN_ROOT}/rules/generation-rules.md` · Schema: `${CLAUDE_PLUGIN_ROOT}/schema/mindmodel.schema.json`
+   > Rules: `${CLAUDE_PLUGIN_ROOT}/rules/generation-rules.md` · JSON shape: `node ${CLAUDE_PLUGIN_ROOT}/engine/shape.mjs`
    > Facts digest: `<root>/mindmodel/.work/facts.md` (details in `facts.json`)
    > Activity script: `${CLAUDE_PLUGIN_ROOT}/engine/activity.mjs` · Validator: `${CLAUDE_PLUGIN_ROOT}/engine/validate.mjs`
    > Write `<root>/mindmodel/mindmodel.json` and make it pass the validator.

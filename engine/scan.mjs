@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert';
+import { javaFacts, bootFacts } from './deep.mjs';
 
 const IGNORE = new Set(['.git', 'node_modules', 'target', 'build', 'bin', 'dist', 'out', '.gradle', '.idea', '.vscode', '.settings', '.ua', 'mindmodel', 'uploads', 'coverage', '.next', 'android', 'ios', '.mvn', 'vendor', '.claude', '.cursor', '.agent']);
 // Compiled and binary files are never read, so don't even list them (wherever a build tool put them).
@@ -164,7 +165,7 @@ export function scan(root) {
   const configKeys = configFiles.map((f) => { const t = read(f); const keys = f.endsWith('.properties') ? t.split('\n').map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)]).filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l)).map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`) : t.split('\n').map((l, i) => [l, i + 1]).filter(([l]) => /^\s*[\w-]+:/.test(l)).map(([l, n]) => `${l.trim().split(':')[0]}:${n}`); const db = /jdbc:(\w+)/.exec(t); return { file: R(f), db: db?.[1], keys }; });
   const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i).slice(0, 60) }));
 
-  // state: who writes each entity (repository mutations per caller), copies of state, transaction seams
+  // state: who writes each entity (repository mutations per caller), copies of state
   const repoEntity = new Map(repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]));
   const writes = {};
   for (const j of nonEntity) {
@@ -176,6 +177,9 @@ export function scan(root) {
   const caches = pick(/@Cacheable|@CacheEvict|@CachePut|@EnableCaching|expireAfter|\.ttl\(|entryTtl/).concat(fe.flatMap((f) => linesMatching(f.text, /localStorage\.|sessionStorage\.|staleTime|invalidateQueries|configureStore|\bcreate\(\s*\(set|persist\(/).map((m) => ({ file: f.p, ...m })))).slice(0, 80);
   const sdkFiles = new Set(java.filter((j) => Object.keys(EXT).some((k) => new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text))).map((j) => j.p));
   const seams = pick(/@Transactional\b|@TransactionalEventListener|publishEvent\(|TransactionSynchronization|kafkaTemplate\.send|rabbitTemplate\.convertAndSend/, java.filter((j) => sdkFiles.has(j.p) || /publishEvent\(|@TransactionalEventListener|TransactionSynchronization/.test(j.text))).slice(0, 60);
+
+  const deep = javaFacts({ java, repoEntity, EXT, enums, entities, shortlist: new Set(funnel.slice(0, 15).map((e) => e.name)) });
+  const bootComputed = bootFacts({ root, files, rel: R, git });
 
   // boot: entry points, profile switches, how to run locally
   const mains = java.filter((j) => /@SpringBootApplication/.test(j.text)).map((j) => ({ file: j.p, line: linesMatching(j.text, /static\s+void\s+main\s*\(/)[0]?.line }));
@@ -214,7 +218,8 @@ export function scan(root) {
     runtime: { security, methodSecurity, interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
     background: { scheduledAsyncListeners: background, sockets, runners },
     state: { writes: Object.fromEntries(Object.entries(writes).map(([e, byFile]) => [e, Object.entries(byFile).map(([file, lines]) => `${file}:${lines.join(',')}`)])), modifying, caches, seams },
-    boot: { mains, switches, profiles, frontend: feEntries, compose, scripts },
+    boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
+    seams: deep.seams, lifecycle: deep.lifecycle, schedules: deep.schedules,
     externals: { sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])), config: configKeys },
   };
 }
@@ -254,20 +259,34 @@ export function summarize(f) {
   if (f.runtime.exceptionHandlers.length) L.push(`- @ExceptionHandler in ${f.runtime.exceptionHandlers.length} files (list in facts.json)`);
   for (const b of f.runtime.baseClasses) L.push(`- base class ${b.base}: ${b.subclasses} subclasses`);
   for (const s of f.runtime.sessionState.slice(0, 30)) L.push(`- session ${s.file}:${s.line} ${s.text}`);
-  sec('Boot (entry points, profile switches, run locally)');
+  sec('Boot, computed (copy into the map; open files only if a line looks wrong)');
+  for (const l of f.boot.computed) L.push(`- ${l}`);
+  sec('Boot details (entry points, profile switches)');
   for (const m of f.boot.mains) L.push(`- main ${m.file}:${m.line ?? ''}`);
   for (const e of f.boot.frontend) L.push(`- frontend ${e.file}: ${e.lines.map((l) => `${l.line} ${l.text}`).join(' | ')}`);
   if (f.boot.profiles.length) L.push(`- profile configs: ${f.boot.profiles.join(', ')}`);
-  for (const s of f.boot.switches) L.push(`- switch ${s.file}:${s.line} ${s.text}`);
+  for (const s of f.boot.switches.slice(0, 12)) L.push(`- switch ${s.file}:${s.line} ${s.text}`);
   for (const c of f.boot.compose) L.push(`- compose ${c.file}: ${c.services.join(', ')}`);
   for (const s of f.boot.scripts) if (Object.keys(s.scripts).length) L.push(`- scripts ${s.file}: ${Object.entries(s.scripts).filter(([k]) => /^(dev|start|serve|build)$/.test(k)).map(([k, v]) => `${k}=${v}`).join('; ')}`);
-  sec('State (who writes each entity; copies; transaction seams)');
-  for (const [e, byFile] of Object.entries(f.state.writes).sort((a, b) => b[1].length - a[1].length)) L.push(`- ${e} written from ${byFile.length} files: ${byFile.join(' ; ')}`);
-  for (const m of f.state.modifying) L.push(`- @Modifying ${m.entity} ${m.file}:${m.line}`);
-  for (const c of f.state.caches) L.push(`- copy/cache ${c.file}:${c.line} ${c.text}`);
-  for (const s of f.state.seams) L.push(`- seam? ${s.file}:${s.line} ${s.text}`);
-  sec('Runs on its own');
-  for (const b of f.background.scheduledAsyncListeners) L.push(`- @${b.kind}${b.args ? ' ' + b.args : ''} ${b.file}:${b.line}`);
+  // Shortlisted entities only, files without line lists: the full write sites stay in facts.json (state.writes).
+  sec('State (which files write each shortlisted entity; copies)');
+  const top = new Set(f.entities.funnel.slice(0, 15).map((e) => e.name));
+  for (const [e, byFile] of Object.entries(f.state.writes).filter(([e]) => top.has(e)).sort((a, b) => b[1].length - a[1].length)) {
+    const files = byFile.map((x) => { const [p, l] = x.split(/:(?=[\d,]+$)/); return `${p}:${l.split(',')[0]}${l.includes(',') ? ` (+${l.split(',').length - 1})` : ''}`; });
+    L.push(`- ${e} written from ${byFile.length} file(s): ${files.slice(0, 8).join(' ; ')}${files.length > 8 ? ` ; +${files.length - 8} more in facts.json` : ''}`);
+  }
+  const mod = {}; for (const m of f.state.modifying) (mod[m.entity] ??= []).push(m.line);
+  for (const [e, ls] of Object.entries(mod).filter(([e]) => top.has(e))) L.push(`- ${e}: ${ls.length} @Modifying quer${ls.length > 1 ? 'ies' : 'y'} in ${f.state.modifying.find((m) => m.entity === e).file}:${ls.join(',')}`);
+  for (const c of f.state.caches.slice(0, 25)) L.push(`- copy/cache ${c.file}:${c.line} ${c.text}`);
+  sec('Seams, computed (each must be listed in the map or dismissed on purpose)');
+  for (const x of f.seams) L.push(`- ${x}`);
+  if (!f.seams.length) L.push('- none found');
+  sec('Lifecycles, computed (every place each status is set; cite these instead of searching)');
+  for (const x of f.lifecycle) L.push(x.startsWith('  ') ? `  -${x.slice(1)}` : `- ${x}`);
+  sec('Schedules and retries, computed (plain-language timing; copy into "What runs on its own")');
+  for (const x of f.schedules) L.push(`- ${x}`);
+  sec('Runs on its own (async, listeners, sockets; scheduled jobs are listed above)');
+  for (const b of f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled')) L.push(`- @${b.kind}${b.args ? ' ' + b.args : ''} ${b.file}:${b.line}`);
   for (const s of f.background.sockets) L.push(`- socket ${s.file}:${s.line} ${s.path ?? s.text}`);
   for (const r of f.background.runners) L.push(`- startup runner ${r.file}:${r.line}`);
   return ab(L.join('\n')).replace('@@J@@', J).replace('@@F@@', F) + '\n';

@@ -1,6 +1,8 @@
 ---
 name: writer
 description: Writes a mindmodel.json for one application by following the mindmodel generation rules, starting from the scanner's facts. Dispatched by the /mindmodel skill.
+model: opus
+effort: low
 ---
 
 # mindmodel writer
@@ -9,18 +11,20 @@ You produce `mindmodel/mindmodel.json` for one application: the essential mental
 
 ## Inputs, in this order
 1. **The generation rules** (`<plugin>/rules/generation-rules.md`). Read them fully once. They are the authority: follow the principles, the process order (Part 2), every section's rules (Part 3), the critic checklist (Part 4) and the cut order (Part 5).
-2. **The schema** (`<plugin>/schema/mindmodel.schema.json`): the exact JSON you must write.
+2. **The JSON shape:** run `node <plugin>/engine/shape.mjs` for a compact view of the exact JSON you must write (field names, required/optional, enums). Don't read the full schema; the validator enforces it.
 3. **The facts digest** (`<root>/mindmodel/.work/facts.md`): everything mechanical the scanner already found (entity funnel with scores, flags and relations; enums; controllers; frontend routes and the API join; views; security lines; interceptors; context scopes; session state; scheduled, async, listener and socket work; externals; docs; git window). **Start every phase from it.**
 
 ## Work efficiently
 The facts replace searching. Your budget goes on reading the few places that need judgment.
+- **The digest's computed sections are facts, not hints:** Boot, Seams, Lifecycles, Schedules and retries. Copy them into the map; open code only to judge importance, to explain *why*, or where a line says to confirm.
+- **Cite methods by name:** `path#method`, as the digest does. `validate.mjs --fix` fills in the exact line range, so never open a file just to find line numbers.
 - **Never re-derive what the facts give you.** Don't grep for entities, mappings, jobs, security lines or relations. Look things up in the digest, or search `facts.json` with `grep` when you need a detail (never read it whole).
 - **Read line ranges, not whole files.** The facts give file:line. Open ±20 lines around it. Read a whole file only when it is short and central (a core service, the security config).
-- **Batch independent reads** in one turn.
+- **Keep turns few** (aim for ≤ 25): every turn re-reads your whole context, so cost grows with each one. Batch independent reads into one turn, and collect several ranges in one command (e.g. one `sed -n` per file, joined) rather than one call per range.
 - **Read the project's docs selectively:** intro docs fully, plus only the docs whose titles concern the domain, architecture, tenancy, flows or security (Part 2, phase 1).
 - **Activity is a script, not a search:** for each region run `node <plugin>/engine/activity.mjs <root> "<window from facts>" <path prefixes…>` and copy the result into `activity`.
 - **Cite with symbols** where you can: `path:120-130#saveCustomer`. The validator checks that the symbol is in those lines, so you never need to re-open a file to double-check a citation. Use a symbol on every lifecycle step, rule and story step. Symbols must be identifiers (no spaces).
-- **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json` and fix every ERROR. Warnings are fine if justified.
+- **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json --fix` and fix every ERROR **with small edits to the file, never by rewriting it whole**. Warnings are fine if justified.
 - **Stop when the checks pass.** Don't polish beyond the critic checklist.
 
 ## Hard rules (from the rules, repeated because they matter most)

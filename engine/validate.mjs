@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
+import { index, methodAt } from './java.mjs';
 
 export function parseCite(c) {
   const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#(\S+))?$/.exec(c);
@@ -16,7 +17,37 @@ assert.deepStrictEqual(parseCite('a/B.java:5#save'), { file: 'a/B.java', start: 
 
 const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [4, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, parts: 7, coreWords: 3000, copies: 5, seams: 4, runSteps: 3 };
 
+// Fill in or repair line ranges from symbols, in place: "path#method" gets the method's exact range, and a
+// range that misses its #symbol is moved to the method of that name nearest to it. Writers cite methods by
+// name and never need to look up line numbers. Returns how many citations changed.
+export function resolveCites(map, root) {
+  const cache = new Map(), load = (abs) => { if (!cache.has(abs)) { const t = fs.readFileSync(abs, 'utf8'); cache.set(abs, { lines: t.split('\n'), ix: abs.endsWith('.java') ? index(t) : null }); } return cache.get(abs); };
+  const fix = (c) => {
+    const pc = parseCite(c); if (!pc?.symbol) return c;
+    const abs = path.join(root, pc.file); if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return c;
+    const { lines, ix } = load(abs);
+    if (pc.start != null && lines.slice(pc.start - 1, pc.end).join('\n').includes(pc.symbol)) return c;
+    const named = ix ? [...ix.methods, ...ix.types].filter((m) => m.name === pc.symbol) : [];
+    if (named.length) { const near = pc.start == null ? named[0] : named.sort((a, b) => Math.abs(a.start - pc.start) - Math.abs(b.start - pc.start))[0]; return `${pc.file}:${near.start}-${near.end}#${pc.symbol}`; }
+    if (pc.start == null) { const i = lines.findIndex((l) => l.includes(pc.symbol)); if (i >= 0) { const m = ix && methodAt(ix, i + 1); return m ? `${pc.file}:${m.start}-${m.end}#${pc.symbol}` : `${pc.file}:${i + 1}#${pc.symbol}`; } }
+    return c;
+  };
+  let changed = 0;
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== 'object') return;
+    for (const [k, v] of Object.entries(node)) {
+      if ((k === 'cites' || k === 'start') && Array.isArray(v)) v.forEach((c, i) => { const f = typeof c === 'string' ? fix(c) : c; if (f !== c) { v[i] = f; changed++; } });
+      else if (k === 'cite' && typeof v === 'string') { const f = fix(v); if (f !== v) { node[k] = f; changed++; } }
+      else walk(v);
+    }
+  };
+  walk(map);
+  return changed;
+}
+
 export function validate(map, root) {
+  resolveCites(map, root);
   const errors = [], warnings = [];
   const err = (m) => errors.push(m), warn = (m) => warnings.push(m);
   for (const k of ['purpose', 'context', 'coreSentence', 'concepts', 'state', 'regionSentence', 'regions', 'runtime', 'background', 'rules', 'stories']) if (!map[k]) err(`missing top-level "${k}"`);
@@ -136,9 +167,14 @@ export function validate(map, root) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const file = path.resolve(process.argv[2] ?? 'mindmodel/mindmodel.json');
-  const root = path.resolve(process.argv[3] ?? path.join(path.dirname(file), '..'));
-  const { errors, warnings, stats } = validate(JSON.parse(fs.readFileSync(file, 'utf8')), root);
+  const [fileArg, rootArg] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+  const file = path.resolve(fileArg ?? 'mindmodel/mindmodel.json');
+  const root = path.resolve(rootArg ?? path.join(path.dirname(file), '..'));
+  const map = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const changed = resolveCites(map, root);
+  // --fix writes resolved citations back, so the source file matches what was validated and rendered
+  if (process.argv.includes('--fix') && changed) { fs.writeFileSync(file, JSON.stringify(map, null, 1)); console.log(`fixed ${changed} citation(s)`); }
+  const { errors, warnings, stats } = validate(map, root);
   warnings.forEach((w) => console.log(`warn  ${w}`));
   errors.forEach((e) => console.log(`ERROR ${e}`));
   console.log(`${errors.length ? 'FAILED' : 'OK'}: ${errors.length} error(s), ${warnings.length} warning(s)`, stats ?? '');
