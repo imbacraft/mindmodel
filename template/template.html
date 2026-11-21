@@ -161,7 +161,6 @@ svg.diagram .row.dim { opacity: .35; }
 .act.often { color: var(--surprise); border-color: var(--surprise); background: var(--surprise-soft); }
 .act.rarely { color: var(--faint); border-style: dashed; }
 .region-card .code { font: 13px/1.5 var(--mono); color: var(--faint); margin: 6px 0 10px; overflow-wrap: anywhere; }
-.region-card .lm { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 16px; }
 .region-card ul.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .region-card ul.parts li { font-size: 16px; }
 .region-card ul.parts b { display: block; }
@@ -356,8 +355,6 @@ add('regions', 'Regions', `
       <p><b>${rich(r.role)}</b></p>
       ${r.text ? `<p>${rich(r.text)}</p>` : ''}
       ${r.owns?.length ? `<div class="owns">${r.owns.map((o) => `<a href="#concept-${o}">${esc(conceptName(o))}</a>`).join('')}</div>` : ''}
-      <h4>Start reading at</h4>
-      <ul class="lm">${r.landmarks.map((l) => `<li>${rich(l.label)}<span class="tier">${esc(l.tier ?? '')}</span><br>${cite(l.cite)}</li>`).join('')}</ul>
       ${r.parts?.length ? `<h4>Inside</h4><ul class="parts">${r.parts.map((x) => `<li><b>${rich(x.name)}<span class="tier">${esc(x.tier ?? '')}</span></b>${rich(x.text)}${cites(x.cites)}</li>`).join('')}</ul>` : ''}
     </article>`).join('')}</div>`);
 

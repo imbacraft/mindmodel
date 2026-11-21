@@ -419,8 +419,7 @@
           "id",
           "name",
           "role",
-          "owns",
-          "landmarks"
+          "owns"
         ],
         "properties": {
           "id": {
@@ -443,35 +442,6 @@
             "type": "array",
             "items": {
               "$ref": "#/$defs/id"
-            }
-          },
-          "landmarks": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 3,
-            "items": {
-              "type": "object",
-              "required": [
-                "label",
-                "cite"
-              ],
-              "properties": {
-                "label": {
-                  "type": "string"
-                },
-                "tier": {
-                  "enum": [
-                    "frontend",
-                    "backend",
-                    "data",
-                    "config",
-                    "docs"
-                  ]
-                },
-                "cite": {
-                  "$ref": "#/$defs/cite"
-                }
-              }
             }
           },
           "parts": {

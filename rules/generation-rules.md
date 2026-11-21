@@ -178,7 +178,6 @@ Work in this order. Later sections depend on earlier ones: everything is written
 - **Role:** one line, what the region is responsible for.
 - **Text:** 2–4 sentences on what is *in the code* here and how it is put together. Do **not** restate concept lifecycles; the concept cards own those.
 - **Owns:** the core concepts this region is primarily about. Each concept is owned by exactly one region: the one where users meet it most. Other regions that create or change it say so in their parts.
-- **Landmarks:** 1–3 places to start reading. Prefer an entry point and the central type; one frontend and one backend file where both exist.
 - **Parts:** ≤ 7 real sub-areas, each one line with a citation.
 - **Activity** (if git history exists): commits touching the region's paths, out of all commits in the window, counted **rename-aware** (follow moved files: `git log -M --name-status`, mapping old paths to their current location). The page shows *changes often* (≥ 25%), *rarely* (< 10%), otherwise *sometimes*.
   - **Window:** the 6 months before the analyzed commit. **If that window holds fewer than 20 commits** (a dormant repo), use the last 50 commits instead (or all, if fewer), and record the window used in `since` (e.g. "last 50 commits"). If even that is fewer than 10 commits, omit activity: the badge would carry no signal.
@@ -388,7 +387,7 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 4 switches, ≤ 3 run steps; ≤ 150 words |
 | Context: actors and externals | ≤ 7 each |
 | Core concepts | ≤ 5, one card each, plus 1 core sentence that mentions every concept |
-| Regions | ≤ 6 + Shared infrastructure; ≤ 3 landmarks and ≤ 7 parts each |
+| Regions | ≤ 6 + Shared infrastructure; ≤ 7 parts each |
 | State & source of truth | 1 row per core concept; ≤ 5 copies; ≤ 4 seams; ≤ 400 words |
 | How a request travels | ≤ 7 steps, ≤ 5 lanes |
 | What runs on its own | ≤ 10 rows |

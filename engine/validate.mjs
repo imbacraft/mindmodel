@@ -14,7 +14,7 @@ assert.deepStrictEqual(parseCite('a/b.java:10-12'), { file: 'a/b.java', start: 1
 assert.deepStrictEqual(parseCite('CLAUDE.md'), { file: 'CLAUDE.md', start: null, end: null, symbol: null });
 assert.deepStrictEqual(parseCite('a/B.java:5#save'), { file: 'a/B.java', start: 5, end: 5, symbol: 'save' });
 
-const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [4, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, landmarks: 3, parts: 7, coreWords: 3000, copies: 5, seams: 4, switches: 4, runSteps: 3 };
+const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [4, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, parts: 7, coreWords: 3000, copies: 5, seams: 4, switches: 4, runSteps: 3 };
 
 export function validate(map, root) {
   const errors = [], warnings = [];
@@ -61,7 +61,6 @@ export function validate(map, root) {
   for (const r of map.regions) {
     if (r.activity && !(r.activity.commits >= 0 && r.activity.commits <= r.activity.of)) err(`region ${r.id}: activity ${r.activity.commits} of ${r.activity.of} is impossible`);
     for (const o of r.owns ?? []) needConcept(o, `region ${r.id} owns`);
-    max(r.landmarks, BUDGET.landmarks, `region ${r.id} landmarks`);
     max(r.parts, BUDGET.parts, `region ${r.id} parts`);
   }
   map.runtime.steps.forEach((s, i) => {
