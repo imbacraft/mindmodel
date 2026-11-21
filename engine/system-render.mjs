@@ -59,6 +59,8 @@ export function talks(map, sys) {
   return map.services.filter((s) => !role.get(s.name)).map((s) => ({
     service: s.name,
     calls: [...new Set(sys.rest.filter((r) => r.from === s.name && r.to !== s.name && !role.get(r.to)).map((r) => r.to))],
+    // Inbound REST too: a service that is only ever called (a shared core) would otherwise look idle.
+    calledBy: [...new Set(sys.rest.filter((r) => r.known && r.to === s.name && r.from !== s.name && !role.get(r.from)).map((r) => r.from))],
     // A channel a service only consumes itself (saga replies, a Streams store) is labelled as such, not as unheard.
     publishes: sys.channels.filter((c) => c.out.some((o) => o.service === s.name)).map((c) => { const to = [...new Set(c.in.map((i) => i.service))]; return { channel: short(c.name) || `unresolved ${c.unresolved}`, kind: c.kind, to: to.filter((n) => n !== s.name), self: to.includes(s.name) }; }),
     listens: sys.channels.filter((c) => c.in.some((i) => i.service === s.name)).map((c) => { const from = [...new Set(c.out.map((o) => o.service))]; return { channel: short(c.name) || `unresolved ${c.unresolved}`, kind: c.kind, from: from.filter((n) => n !== s.name), self: from.includes(s.name) }; }),

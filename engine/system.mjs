@@ -69,6 +69,9 @@ export function channelName(x, text, keys, ix) {
   if (/^".*"$/.test(e)) return resolve(e.slice(1, -1), keys);
   if (/\.class$/.test(e)) { const c = e.replace(/\.class$/, '').split('.').pop(); return ix.fqn.has(c) ? { name: ix.fqn.get(c), via: `${c}.class` } : { name: null, unresolved: e }; }
   if (ix.constants.has(e)) return { name: ix.constants.get(e), via: e };
+  // A field or parameter injected from config: @Value("${key}") ... String var
+  const inj = new RegExp(`@Value\\(\\s*"(\\$\\{[^}]+\\})"\\s*\\)\\s*(?:private\\s+|protected\\s+|public\\s+)?(?:final\\s+)?String\\s+${e.replace(/^this\./, '')}\\b`).exec(text);
+  if (inj) return resolve(inj[1], keys);
   // An aggregate publisher (FooDomainEventPublisher extends Abstract...Publisher<Foo>) publishes to Foo's channel.
   if (x.publisher && x.recv) { const t = new RegExp(`\\b(\\w+)\\s+${x.recv}\\s*[;=)]`).exec(text)?.[1]; const agg = t && ix.aggregateOf.get(t); if (agg && ix.fqn.has(agg)) return { name: ix.fqn.get(agg), via: `${t} → ${agg}` }; }
   return { name: null, unresolved: e };
@@ -78,6 +81,7 @@ export function channelName(x, text, keys, ix) {
   assert.equal(channelName({ expr: 'K.CH' }, '', new Map(), ix).name, 'kitchenService');
   assert.equal(channelName({ expr: 'ticket', publisher: true, recv: 'pub' }, 'private TicketPub pub;', new Map(), ix).name, 'a.b.Ticket');
   assert.equal(channelName({ expr: 'Ticket.class' }, '', new Map(), ix).name, 'a.b.Ticket');
+  assert.equal(channelName({ expr: 'queueName' }, '@Value("${risk.queueName}")\n\tprivate String queueName;', new Map([['risk.queueName', { value: 'risk-q' }]]), ix).name, 'risk-q');
 }
 
 // REST calls to other services: Feign clients, URLs with a host name, lb:// gateway routes.
@@ -138,6 +142,7 @@ export function systemScan(folder) {
     const keys = new Map(), ymls = [];
     for (const f of cfgFiles) { const t = fs.readFileSync(f, 'utf8'); ymls.push({ f, t }); for (const [k, v] of configKeys(t, f.endsWith('.properties'))) keys.set(k, { ...v, file: path.relative(folder, f) }); }
     const name = keys.get('spring.application.name')?.value ?? path.basename(dir);
+    const port = /^\d+$/.test(keys.get('server.port')?.value ?? '') ? keys.get('server.port').value : null;
     const rel = (p) => path.relative(folder, path.join(dir, p));
     const java = javaFiles(dir);
     const msgs = [], calls = [];
@@ -146,26 +151,29 @@ export function systemScan(folder) {
       for (const x of messaging(t, patterns)) { const res = channelName(x, t, keys, ix); msgs.push({ kind: x.kind, dir: x.dir, line: x.line, ...res, raw: x.expr, cite: `${r}:${x.line}` }); }
       for (const c of restCalls(t)) calls.push({ ...c, cite: `${r}:${c.line}` });
     }
-    for (const [k, v] of keys) { const u = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?=[:/]|$)/.exec(v.value); if (u && !/^(localhost|www)$/.test(u[1])) calls.push({ host: u[1], path: '', via: 'config', cite: `${v.file}:${v.line}` }); }
+    for (const [k, v] of keys) { const u = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::(\d+))?(?=[:/]|$)/.exec(v.value); if (u && u[1] !== 'www' && k !== 'server.port') calls.push({ host: u[1] === 'localhost' ? `localhost:${u[2]}` : u[1], path: '', via: 'config', cite: `${v.file}:${v.line}` }); }
     // Destinations bound from config that is not in the repo (env vars, deployment): named, marked unresolved.
     const unresolvedDest = [];
     for (const f of java) { const t = fs.readFileSync(f, 'utf8'), pre = /@ConfigurationProperties\s*\(\s*(?:prefix\s*=\s*)?"([^"]+)"/.exec(t)?.[1]; if (pre) for (const m of t.matchAll(/private\s+String\s+(\w*(?:Url|Uri|Host))\s*;/g)) { const key = `${pre}.${m[1]}`; if (![...keys.keys()].some((k) => k.toLowerCase().replace(/-/g, '') === key.toLowerCase())) unresolvedDest.push(key); } }
     for (const { f, t } of ymls) for (const g of gatewayRoutes(t)) calls.push({ host: g.host, path: g.paths.join(','), via: 'gateway', cite: `${path.relative(folder, f)}:${g.line}` });
     const text = java.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     const role = /@EnableConfigServer/.test(text) ? 'config server' : /@EnableEurekaServer/.test(text) ? 'discovery server' : /@EnableAdminServer/.test(text) ? 'admin server' : null;
-    return { name, dir: path.relative(folder, dir) || '.', role, facts, msgs, calls, unresolvedDest, lines: text.split('\n').length };
+    return { name, dir: path.relative(folder, dir) || '.', role, facts, msgs, calls, unresolvedDest, port, lines: text.split('\n').length };
   });
 
   // Two services with the same spring.application.name (a copy-paste slip) would merge in discovery: tell them apart by folder.
   const dupes = services.filter((s) => services.filter((o) => o.name === s.name).length > 1);
   for (const s of dupes) { s.nameConflict = s.name; s.name = path.basename(s.dir); }
   // Join: topics/queues to their producers and consumers; REST calls to the service they reach.
-  const byName = new Map(services.flatMap((s) => [[s.name, s], [path.basename(s.dir), s]]));
+  // Match a call to a service by its name, its folder, the same name without dashes ("customercore"), or, for
+  // local URLs like http://localhost:8110, by the port the service runs on.
+  const norm = (n) => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byName = new Map(services.flatMap((s) => [[s.name, s], [path.basename(s.dir), s], [norm(s.name), s], [norm(path.basename(s.dir)), s], ...(s.port ? [[`localhost:${s.port}`, s]] : [])]));
   const channels = {};
   for (const s of services) for (const m of s.msgs) { const key = `${m.kind}:${m.name ?? `?${m.unresolved}`}`; (channels[key] ??= { kind: m.kind, name: m.name, unresolved: m.unresolved, out: [], in: [] })[m.dir].push({ service: s.name, cite: m.cite }); }
   const rest = [];
   for (const s of services) for (const c of s.calls) {
-    const target = byName.get(c.host);
+    const target = byName.get(c.host) ?? byName.get(norm(c.host));
     const ep = target && c.path && c.via !== 'gateway' ? target.facts.endpoints.find((e) => e.path === c.path.replace(/\{[^}]+\}/g, '{}').replace(/\/$/, '')) : null;
     rest.push({ from: s.name, to: target?.name ?? c.host, known: !!target, path: c.path, via: c.via, cite: c.cite, endpoint: ep ? `${ep.file}:${ep.line}` : null });
   }
@@ -191,7 +199,9 @@ export function systemSummary(sys) {
   L.push('', '## REST between services (caller → callee)');
   const seen = new Set();
   for (const r of sys.rest) { const k = `${r.from}>${r.to}>${r.path}`; if (seen.has(k)) continue; seen.add(k); L.push(`- ${r.from} → ${r.to}${r.known ? '' : ' (not in this folder)'} ${r.path || ''} [${r.via}] ${r.cite}${r.endpoint ? ` → ${r.endpoint}` : ''}`); }
-  const fanIn = {}; for (const r of sys.rest) if (r.known) (fanIn[r.to] ??= new Set()).add(r.from); for (const c of sys.channels) for (const o of c.out) for (const i of c.in) if (o.service !== i.service) (fanIn[o.service] ??= new Set()).add(i.service);
+  // Plumbing (config, discovery, admin servers) is not something services rely on for their business.
+  const plumbing = new Set(sys.services.filter((s) => s.role).map((s) => s.name));
+  const fanIn = {}; for (const r of sys.rest) if (r.known && !plumbing.has(r.to)) (fanIn[r.to] ??= new Set()).add(r.from); for (const c of sys.channels) for (const o of c.out) for (const i of c.in) if (o.service !== i.service) (fanIn[o.service] ??= new Set()).add(i.service);
   L.push('', '## Dependence (who relies on each service: callers + consumers of what it produces)');
   for (const s of [...sys.services].sort((a, b) => (fanIn[b.name]?.size ?? 0) - (fanIn[a.name]?.size ?? 0))) L.push(`- ${s.name}: ${fanIn[s.name]?.size ?? 0}${fanIn[s.name]?.size ? ` (${[...fanIn[s.name]].join(', ')})` : ''}`);
   return L.join('\n') + '\n';

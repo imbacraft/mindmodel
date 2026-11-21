@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>mindmodel · system</title>
+<style>
+/* Layout concept: an atlas page. A sticky legend (contents) on the left, prose in a ~68ch column,
+   words first. Region colour = region identity everywhere. */
+:root {
+  color-scheme: light;
+  --paper: #f4f5f2;
+  --sheet: #fbfbf9;
+  --ink: #1c2530;
+  --muted: #5d6774;
+  --faint: #8a939e;
+  --line: #d9ddd5;
+  --accent: #2552c4;
+  --accent-soft: #e3eafb;
+  --surprise: #a24a12;
+  --surprise-soft: #f8e9dd;
+  --code-bg: #eceee9;
+  --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --r0f: hsl(212 62% 93%); --r0s: hsl(212 48% 36%);
+  --r1f: hsl(165 42% 91%); --r1s: hsl(168 50% 27%);
+  --r2f: hsl(38 75% 91%);  --r2s: hsl(32 62% 33%);
+  --r3f: hsl(280 40% 93%); --r3s: hsl(280 34% 40%);
+  --r4f: hsl(352 60% 94%); --r4s: hsl(352 46% 40%);
+  --r5f: hsl(92 34% 90%);  --r5s: hsl(96 36% 28%);
+  --r6f: hsl(190 40% 91%); --r6s: hsl(192 50% 28%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #13171c; --sheet: #181d23; --ink: #e5e8eb; --muted: #b6bec7; --faint: #77818c; --line: #2b323b;
+    --accent: #86a8ff; --accent-soft: #1f2a44; --surprise: #f0a56f; --surprise-soft: #3a2618; --code-bg: #222830;
+    --r0f: hsl(212 30% 20%); --r0s: hsl(212 70% 76%);
+    --r1f: hsl(166 26% 18%); --r1s: hsl(166 50% 66%);
+    --r2f: hsl(36 30% 18%);  --r2s: hsl(38 75% 68%);
+    --r3f: hsl(280 22% 21%); --r3s: hsl(280 55% 78%);
+    --r4f: hsl(352 26% 20%); --r4s: hsl(352 70% 78%);
+    --r5f: hsl(94 20% 18%);  --r5s: hsl(94 42% 66%);
+    --r6f: hsl(190 24% 18%); --r6s: hsl(190 50% 66%);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #13171c; --sheet: #181d23; --ink: #e5e8eb; --muted: #b6bec7; --faint: #77818c; --line: #2b323b;
+  --accent: #86a8ff; --accent-soft: #1f2a44; --surprise: #f0a56f; --surprise-soft: #3a2618; --code-bg: #222830;
+  --r0f: hsl(212 30% 20%); --r0s: hsl(212 70% 76%);
+  --r1f: hsl(166 26% 18%); --r1s: hsl(166 50% 66%);
+  --r2f: hsl(36 30% 18%);  --r2s: hsl(38 75% 68%);
+  --r3f: hsl(280 22% 21%); --r3s: hsl(280 55% 78%);
+  --r4f: hsl(352 26% 20%); --r4s: hsl(352 70% 78%);
+  --r5f: hsl(94 20% 18%);  --r5s: hsl(94 42% 66%);
+  --r6f: hsl(190 24% 18%); --r6s: hsl(190 50% 66%);
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 18px/1.6 var(--sans); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 32px 96px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(24px + env(safe-area-inset-top, 0px)); align-self: start; font-size: 15px; }
+nav.toc .brand { font: 600 13px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin-bottom: 18px; }
+nav.toc .brand + .app { font: 600 18px/1.3 var(--serif); color: var(--ink); margin: -8px 0 18px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: toc; }
+nav.toc a { display: grid; grid-template-columns: 22px 1fr; padding: 5px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; counter-increment: toc; }
+nav.toc a::before { content: counter(toc); color: var(--faint); font: 13px/1.9 var(--mono); }
+nav.toc a:hover, nav.toc a.on { background: var(--sheet); color: var(--ink); }
+#theme { margin-top: 24px; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--sheet); color: var(--muted); cursor: pointer; }
+#theme:hover { color: var(--ink); border-color: var(--muted); }
+#theme svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#theme .sun, .is-dark #theme .moon { display: none; }
+.is-dark #theme .sun { display: block; }
+nav.toc .tools { margin-top: 22px; display: grid; gap: 8px; color: var(--faint); font-size: 13px; }
+nav.toc select, nav.toc button { font: inherit; color: var(--ink); background: var(--sheet); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+main { min-width: 0; }
+section { padding-block: 40px 8px; border-top: 1px solid var(--line); }
+section:first-of-type { border-top: 0; padding-top: 0; }
+.eyebrow { font: 600 13px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0 0 14px; }
+h1, h2, h3, h4 { font-family: var(--serif); font-weight: 600; text-wrap: balance; margin: 0; }
+h2 { font-size: 31px; line-height: 1.15; margin-bottom: 10px; }
+h3 { font-size: 22px; line-height: 1.25; }
+h4 { font: 600 13px/1.2 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 18px 0 8px; }
+p { margin: 0 0 12px; }
+.lede { max-width: 68ch; color: var(--muted); }
+.prose { max-width: 68ch; }
+code { font: .86em/1.4 var(--mono); background: var(--code-bg); padding: .08em .32em; border-radius: 4px; overflow-wrap: anywhere; }
+.purpose { font: 400 clamp(24px, 3.1vw, 34px)/1.3 var(--serif); max-width: 30ch; margin: 6px 0 18px; text-wrap: pretty; }
+.metaphor { font: italic 19px/1.55 var(--serif); color: var(--muted); max-width: 62ch; }
+.nongoals { max-width: 66ch; margin: 16px 0 0; color: var(--ink); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--faint); font-size: 14px; margin-top: 18px; }
+.budget { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 600 13px/1 var(--sans); padding: 6px 10px; border-radius: 999px; background: var(--sheet); border: 1px solid var(--line); color: var(--muted); }
+.cite { font: 13px/1.4 var(--mono); color: var(--faint); text-decoration: none; white-space: nowrap; }
+.cite:hover { color: var(--accent); text-decoration: underline; }
+.cites { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 600 13px/1 var(--sans); padding: 4px 8px; border-radius: 999px; background: var(--rf); color: var(--rs); white-space: nowrap; border: 0; cursor: pointer; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--rs); }
+.chip:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.boot { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px 28px; margin-top: 24px; }
+.cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.ctx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.ctx-list b { display: block; font-family: var(--serif); font-size: 18px; }
+.ctx-list .importance { margin: 2px 0 4px; font-size: 16px; }
+.ctx-list span { color: var(--muted); font-size: 18px; }
+
+/* Cast */
+.cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; margin-top: 20px; }
+.card { background: var(--sheet); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; }
+.card .names { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.card .names code { font-size: 13px; }
+.card .what { font-size: 18px; }
+.confuse { font-size: 16px; color: var(--muted); margin: 0; padding-left: 18px; }
+.confuse li + li { margin-top: 6px; }
+.confuse b { color: var(--ink); }
+.life { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.life li { display: grid; grid-template-columns: 14px 1fr; gap: 10px; }
+.life li::before { content: ""; width: 9px; height: 9px; margin-top: 7px; border-radius: 50%; border: 2px solid var(--accent); }
+.life .state { font: 600 13px/1.4 var(--mono); color: var(--ink); display: block; }
+.life .t { font-size: 16px; color: var(--muted); }
+dl.fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 16px; }
+dl.fields dt { font: 13.5px/1.6 var(--mono); }
+dl.fields dd { margin: 0; color: var(--muted); }
+.rule { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); font-size: 16px; }
+.rule b { font: 600 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 6px; }
+.lives { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 16px; color: var(--muted); margin-top: 12px; }
+.lives span:nth-child(odd) { color: var(--faint); }
+.rel { font-size: 16px; color: var(--muted); margin: 0; padding-left: 18px; }
+
+/* Diagrams: only where they encode something text can't. Today: the main-flow sequence (order across systems). */
+.figure { background: var(--sheet); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 18px; }
+.figure figcaption { font-size: 14px; color: var(--faint); padding: 2px 4px 10px; }
+.svgbox { overflow-x: auto; }
+svg.diagram { display: block; width: 100%; height: auto; }
+svg.seq { min-width: 760px; }
+svg.diagram .arrow { fill: var(--muted); }
+svg.diagram .lane rect { fill: var(--paper); stroke: var(--line); }
+svg.diagram .lname { font: 600 22px var(--serif); fill: var(--ink); }
+svg.diagram .ltext { font: 16px var(--sans); fill: var(--faint); }
+svg.diagram .life { stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 3 5; }
+svg.diagram .msg { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+svg.diagram .msg.async { stroke-dasharray: 6 5; }
+svg.diagram .mlabel { font: 19px var(--sans); fill: var(--ink); paint-order: stroke; stroke: var(--sheet); stroke-width: 6px; stroke-linejoin: round; }
+svg.diagram .num circle { fill: var(--accent); }
+svg.diagram .num text { font: 700 16px var(--sans); fill: var(--sheet); text-anchor: middle; dominant-baseline: central; }
+svg.diagram .gap line { stroke: var(--surprise); stroke-dasharray: 2 4; stroke-width: 1.5; }
+svg.diagram .gap text { font: 600 16px var(--sans); letter-spacing: .08em; text-transform: uppercase; fill: var(--surprise); paint-order: stroke; stroke: var(--sheet); stroke-width: 6px; }
+svg.diagram .row.hot .mlabel { font-weight: 700; }
+svg.diagram .row.hot .msg { stroke: var(--accent); stroke-width: 2.5; }
+svg.diagram .row.dim { opacity: .35; }
+.core { font: 400 clamp(19px, 2.2vw, 23px)/1.55 var(--serif); max-width: 46ch; margin: 18px 0 4px; padding: 16px 20px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); text-wrap: pretty; }
+.core a { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.core a:hover { color: var(--accent); }
+.flow-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 20px; max-width: 80ch; }
+.regions { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 18px; margin-top: 20px; }
+.region-card { padding: 18px 20px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); scroll-margin-top: 24px; }
+.region-card.flash { box-shadow: 0 0 0 2px var(--rs); }
+.card-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.act { font: 600 13px/1 var(--sans); padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.act.often { color: var(--surprise); border-color: var(--surprise); background: var(--surprise-soft); }
+.act.rarely { color: var(--faint); border-style: dashed; }
+.region-card .code { font: 13px/1.5 var(--mono); color: var(--faint); margin: 6px 0 10px; overflow-wrap: anywhere; }
+.region-card ul.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.region-card ul.parts li { font-size: 16px; }
+.region-card ul.parts b { display: block; }
+.tier { font: 600 13px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-left: 6px; }
+.owns { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.owns a { font: 600 13px/1 var(--sans); padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); text-decoration: none; }
+.owns a:hover { color: var(--ink); border-color: var(--ink); }
+.card { scroll-margin-top: 24px; }
+.card.flash { box-shadow: 0 0 0 2px var(--accent); }
+
+/* Plot, rules, stories */
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: st; }
+ol.steps > li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; counter-increment: st; }
+ol.steps > li::before { content: counter(st); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--sheet); font: 700 14px/1 var(--sans); margin-top: 1px; }
+ol.steps > li.hot::before { outline: 3px solid var(--accent-soft); }
+ol.steps .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+.inferred { font: 600 13px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--surprise); border: 1px dashed var(--surprise); border-radius: 4px; padding: 3px 6px; }
+.rules { display: grid; gap: 14px; margin-top: 16px; max-width: 80ch; }
+.rules .r { display: grid; grid-template-columns: 96px 1fr; gap: 14px; padding: 16px 18px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); }
+.kind { font: 700 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; padding: 6px 8px; border-radius: 6px; align-self: start; text-align: center; }
+.kind.rule { background: var(--accent-soft); color: var(--accent); }
+.kind.surprise { background: var(--surprise-soft); color: var(--surprise); }
+details.story { background: var(--sheet); border: 1px solid var(--line); border-radius: 14px; margin-top: 16px; }
+details.story > summary { cursor: pointer; list-style: none; padding: 18px 22px; display: grid; gap: 6px; }
+details.story > summary::-webkit-details-marker { display: none; }
+details.story > summary h3::after { content: " +"; color: var(--faint); font-family: var(--sans); }
+details.story[open] > summary h3::after { content: " –"; }
+details.story .body { padding: 0 22px 22px; }
+.setup { color: var(--muted); max-width: 72ch; margin: 0; }
+.story-route { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0; }
+.takeaways { margin-top: 18px; padding: 14px 16px; border-radius: 10px; background: var(--accent-soft); }
+.takeaways b { font: 600 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.takeaways ul { margin: 8px 0 0; padding-left: 18px; }
+.storykind { display: flex; align-items: center; gap: 8px; font: 700 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.rank { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--ink); color: var(--ink); font: 700 14px/1 var(--sans); letter-spacing: 0; }
+.rank-col { display: grid; justify-items: center; align-content: start; gap: 8px; }
+.importance { font-style: italic; color: var(--muted); margin-bottom: 8px; }
+.wtc { overflow-x: auto; margin-top: 16px; }
+.wtc table { width: 100%; border-collapse: collapse; font-size: 18px; min-width: 620px; }
+.wtc th, .wtc td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); }
+.wtc th { font: 600 13px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+#state h3 { margin: 32px 0 10px; }
+#state .rules h3 { margin: 0 0 6px; }
+#state .kind { display: inline-block; white-space: nowrap; margin-top: 6px; }
+#state .wtc td { line-height: 1.5; }
+#state .wtc td > div { margin-top: 6px; }
+.wtc .also { color: var(--muted); font-size: 16px; }
+footer { margin-top: 48px; color: var(--faint); font-size: 14px; }
+
+#mbar, #scrim { display: none; }
+@media (max-width: 980px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-top: calc(72px + env(safe-area-inset-top, 0px)); }
+  /* Phones: a sticky bar names the current section; tapping it opens the contents as a bottom sheet. */
+  #mbar { display: flex; align-items: center; gap: 10px; position: fixed; top: 0; left: 0; right: 0; z-index: 20; padding: calc(12px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px)); font: 600 16px/1.2 var(--sans); color: var(--ink); background: var(--paper); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+  #mbar-num { color: var(--faint); font: 14px/1 var(--mono); }
+  #mbar svg { width: 18px; height: 18px; margin-left: auto; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .4); }
+  #scrim:not([hidden]) { display: block; }
+  nav.toc { position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 30; max-height: 80vh; overflow-y: auto; min-width: 0; padding: 20px max(20px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px)); background: var(--sheet); border-radius: 16px 16px 0 0; box-shadow: 0 -8px 30px rgb(0 0 0 / .25); transform: translateY(105%); visibility: hidden; transition: transform .25s ease, visibility 0s .25s; }
+  nav.toc.open { transform: none; visibility: visible; transition: transform .25s ease; }
+  nav.toc a { padding: 10px 8px; font-size: 17px; }
+  @media (prefers-reduced-motion: reduce) { nav.toc, nav.toc.open { transition: none; } }
+  /* Phones can't open a desktop editor, so the link setting is hidden there. */
+  nav.toc .linkmode { display: none; }
+  #theme { margin-top: 8px; }
+  section, .card, .region-card { scroll-margin-top: calc(64px + env(safe-area-inset-top, 0px)); }
+  .map-grid { grid-template-columns: 1fr; }
+  .zoom { border-left: 0; border-top: 1px solid var(--line); padding: 14px 4px 4px; }
+}
+@media (max-width: 640px) {
+  .cols2 { grid-template-columns: 1fr; }
+  .cast { grid-template-columns: 1fr; }
+  .rules .r { grid-template-columns: 1fr; }
+  h2 { font-size: 27px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+svg.sysmap { max-width: 980px; }
+svg.sysmap .dom rect { fill: var(--rf, var(--paper)); opacity: .45; stroke: none; }
+svg.sysmap .dom text { font: 600 14px var(--sans); fill: var(--rs, var(--muted)); }
+svg.sysmap .node rect { fill: var(--sheet); stroke: var(--rs, var(--line)); stroke-width: 1.5; }
+svg.sysmap .node text { font: 600 15px var(--sans); fill: var(--ink); }
+svg.sysmap .node:focus { outline: none; } svg.sysmap .node:focus rect { stroke-width: 3; }
+svg.sysmap .link path { fill: none; stroke: var(--muted); stroke-width: 1.8; }
+svg.sysmap .link.kafka path { stroke-dasharray: 7 5; } svg.sysmap .link.jms path { stroke-dasharray: 2 4; }
+svg.sysmap .link.dim { opacity: .12; }
+svg.diagram .msg.undo { stroke: var(--surprise); }
+svg.seq .lname { font-size: 15px; }
+table.talks { min-width: 0; }
+table.talks .tline { margin: 2px 0 6px; }
+table.talks .tdir { color: var(--muted); font-size: 14px; }
+table.talks .tdir code { font-size: 13px; }
+svg.strip { max-width: 100%; }
+svg.strip .sarrow { fill: none; }
+svg.strip .sbox rect { fill: var(--rf); stroke: var(--rs); stroke-width: 1.5; }
+svg.strip .sname { font: 600 18px var(--serif); fill: var(--ink); }
+svg.strip .ssvc { font: 15px var(--sans); fill: var(--muted); }
+svg.strip .ssvc.hub { fill: var(--ink); font-weight: 600; }
+svg.strip .sarrow { stroke: var(--muted); stroke-width: 2; }
+svg.strip .snote { font: italic 14px var(--sans); fill: var(--muted); }
+main section > h3 { margin: 36px 0 12px; }
+nav.toc .brand .kindof { display: block; margin-top: 4px; }
+main section .figure, main section .wtc, main section .regions, main section .rules { margin-top: 20px; margin-bottom: 8px; }
+main section .ctx-list { margin-top: 8px; }
+details.story .figure { margin: 4px 0 20px; }
+svg.sysmap .mlabel { font: 13px var(--sans); fill: var(--ink); paint-order: stroke; stroke: var(--sheet); stroke-width: 5px; }
+.svc { margin: 14px 0; padding-top: 10px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<button id="mbar" type="button" aria-controls="sheet" aria-expanded="false"><span id="mbar-num"></span><span id="mbar-label">Contents</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+<div id="scrim" hidden></div>
+<div class="wrap">
+  <nav class="toc" id="sheet" aria-label="Contents">
+    <div class="brand">mindmodel<span class="kindof">system</span></div>
+    <div class="app" id="app"></div>
+    <ol id="toc"></ol>
+    <div class="tools">
+      <label class="linkmode">Open code in<br><select id="linkmode"><option value="vscode">VS Code</option><option value="idea">IntelliJ IDEA</option><option value="none">Show path only</option></select></label>
+      <button id="theme" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg></button>
+    </div>
+  </nav>
+  <main id="main"></main>
+</div>
+<script id="mindmodel-data" type="application/json">{"version":"system-0.1","project":{"name":"Lakeside Mutual","generatedAt":"2026-11-21","stack":"Spring Boot 3, ActiveMQ (embedded in Policy Management), H2, Resilience4j, OpenFeign"},"overview":{"purpose":"Lakeside Mutual is a fictitious insurance company, built as a sample of microservices and domain-driven design: customers get quotes and policies online, and staff manage customers and policies.","sentence":"A customer signs up and requests a quote in [[selfservice|Self-Service]], which registers their personal data with [[customer|Customer Data]]; [[policy|Policy Management]] prices the request, issues the policy on acceptance and answers back over JMS; [[care|Customer Care]] staff read and edit the same customers through Customer Data.","shape":"5 Spring Boot services (plus a Spring Boot Admin server); one ActiveMQ broker embedded in policy-management-backend; no gateway; REST to customer-core with an API key; 6 JMS queues, one (newpolicies) consumed outside the scanned services.","cites":["README.md","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/configuration/MessagingConfiguration.java:41-58#broker"]},"domains":[{"id":"selfservice","name":"Self-Service","text":"Where customers sign up, log in, keep their address up to date and request, accept or reject insurance quotes."},{"id":"customer","name":"Customer Data","text":"The single home of customers' personal data, served over REST to every other backend."},{"id":"policy","name":"Policy Management","text":"Where staff price quote requests and where policies are created and kept; also hosts the message broker."},{"id":"care","name":"Customer Care","text":"Where staff look up and edit customers and chat with them; keeps the interaction log."},{"id":"platform","name":"Platform","text":"Monitoring of the other services.","platform":true}],"services":[{"name":"customer-self-service-backend","domain":"selfservice","tier":"core","responsibility":"Decides who a logged-in user is and lets them start, accept or reject an insurance quote request.","owns":["User login","Insurance quote request (customer side)"],"importance":"Starts the quote-to-policy flow; produces 2 queues and consumes 3; policy-management-backend depends on it.","exposes":"REST for the self-service frontend: /auth, /customers, /insurance-quote-requests","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteRequestCoordinator.java:107-137#createInsuranceQuoteRequest","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/AuthenticationController.java"]},{"name":"customer-core","domain":"customer","tier":"core","responsibility":"Decides what a customer's personal data and current address are; the only service that stores them.","owns":["Customer"],"importance":"3 of the 4 other backends call it (highest dependence in the scan).","exposes":"REST /customers, /customers/{ids}, /customers/{id}/address, /cities/{postalCode}; API key required","cites":["customer-core/src/main/java/com/lakesidemutual/customercore/interfaces/CustomerInformationHolder.java","customer-core/src/main/java/com/lakesidemutual/customercore/interfaces/configuration/APIKeyAuthenticationManager.java:58-72#authenticate"]},{"name":"policy-management-backend","domain":"policy","tier":"core","responsibility":"Decides the quote (premium, limit, expiry) for each request and turns an accepted quote into a policy.","owns":["Policy","Insurance quote request (insurer side)"],"importance":"Produces 4 queues and consumes 2; hosts the ActiveMQ broker every JMS hop runs through.","exposes":"REST for the staff frontend: /insurance-quote-requests, /policies, /customers, /riskfactor/compute","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/InsuranceQuoteRequestProcessingResource.java:87-126#respondToInsuranceQuoteRequest","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision"]},{"name":"customer-management-backend","domain":"care","tier":"supporting","responsibility":"Lets staff edit customers through customer-core and keeps the chat interaction log.","owns":["Interaction log"],"exposes":"REST /customers, /interaction-logs, /notifications; STOMP /chat/messages","cites":["customer-management-backend/src/main/java/com/lakesidemutual/customermanagement/infrastructure/CustomerCoreClient.java","customer-management-backend/src/main/java/com/lakesidemutual/customermanagement/interfaces/CustomerMessageController.java"]},{"name":"spring-boot-admin","domain":"platform","tier":"peripheral","responsibility":"Monitoring dashboard the four backends register with.","cites":["customer-core/src/main/resources/application.properties:30"]}],"ownership":[{"concept":"Customer","owner":"customer-core","truth":"customer-core's database: profile, current address and move history. Other backends keep only the customer id, except quote requests, which snapshot the customer's details.","copies":[{"service":"customer-self-service-backend","feed":"Customer id stored on the user login after POST /customers to customer-core","staleness":"Never stale (an id)","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/CustomerInformationHolder.java:92-106#registerCustomer"]},{"service":"policy-management-backend","feed":"Customer info (name, contact and billing address) copied into the quote request inside the insurance-quote-request event","staleness":"Frozen when the request is submitted; an address change in customer-core does not reach it","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/InsuranceQuoteRequestMessageConsumer.java:36-51#receiveInsuranceQuoteRequest"]}],"cites":["customer-core/src/main/java/com/lakesidemutual/customercore/application/CustomerService.java"]},{"concept":"Insurance quote request","owner":"policy-management-backend","truth":"Two full copies, one per side, each with its own status history. Self-Service writes submit/accept/reject; Policy Management writes quote, rejection, expiry and policy creation; each side applies the other's changes from JMS events.","copies":[{"service":"customer-self-service-backend","feed":"insurance-quote-response, insurance-quote-expired and policy-created queues","staleness":"Behind by event delay; stays behind for good if a send failed (failures are only logged)","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteResponseMessageConsumer.java:32-58#receiveInsuranceQuoteResponse","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/PolicyCreatedMessageConsumer.java:29-44#receivePolicyCreatedEvent"]}],"flags":["shared write","dual write"],"cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteRequestCoordinator.java:142-183#respondToInsuranceQuote","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision"]},{"concept":"Policy","owner":"policy-management-backend","truth":"policy-management-backend's database. Created when an accepted, unexpired quote is processed, or by staff via POST /policies.","copies":[{"service":"customer-self-service-backend","feed":"Policy id only, from the policy-created queue","staleness":"Behind by event delay","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/PolicyCreatedMessageConsumer.java:29-44#receivePolicyCreatedEvent"]}],"flags":["dual write"],"cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/PolicyInformationHolder.java:75-106#createPolicy","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision"]}],"contracts":[{"name":"Customer API","kind":"rest","from":"customer-core","to":["customer-self-service-backend","policy-management-backend","customer-management-backend"],"carries":"GET /customers/{ids} (comma-separated ids), POST /customers, PUT address; every call carries an API key","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/CustomerCoreRemoteProxy.java:57-67#getCustomersById","customer-management-backend/src/main/java/com/lakesidemutual/customermanagement/infrastructure/CustomerCoreClient.java"]},{"name":"InsuranceQuoteRequestEvent / CustomerDecisionEvent","kind":"jms","from":"customer-self-service-backend","to":["policy-management-backend"],"carries":"The whole request (customer info, insurance options, status history); later the request id, date and accepted yes/no","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/infrastructure/PolicyManagementMessageProducer.java"]},{"name":"Quote response / expired / policy created","kind":"jms","from":"policy-management-backend","to":["customer-self-service-backend"],"carries":"Request id and date, plus premium, policy limit and expiry date (response) or the policy id (created)","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/CustomerSelfServiceMessageProducer.java"]},{"name":"UpdatePolicyEvent (newpolicies)","kind":"jms","from":"policy-management-backend","to":[],"carries":"Customer and policy for risk management; consumed by the Node.js risk-management-server over STOMP, outside the scanned services","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/RiskManagementMessageProducer.java:38-45#emitEvent","risk-management-server/config.json"]}],"flows":[{"id":"quote-to-policy","title":"From quote request to policy","importance":"The product's core: the only flow that creates a policy from a customer's request, and it crosses every JMS queue.","hops":[{"from":"customer-self-service-backend","to":"policy-management-backend","kind":"async","text":"The request is saved as REQUEST_SUBMITTED, then the whole request is sent on insurance-quote-request-event-queue; Policy Management saves its own copy.","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteRequestCoordinator.java:107-137#createInsuranceQuoteRequest","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/InsuranceQuoteRequestMessageConsumer.java:36-51#receiveInsuranceQuoteRequest"]},{"from":"policy-management-backend","to":"customer-self-service-backend","kind":"async","text":"A staff member quotes (QUOTE_RECEIVED with premium, limit, expiry) or rejects; the response goes on insurance-quote-response-event-queue and Self-Service applies it.","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/InsuranceQuoteRequestProcessingResource.java:87-126#respondToInsuranceQuoteRequest","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteResponseMessageConsumer.java:32-58#receiveInsuranceQuoteResponse"]},{"from":"customer-self-service-backend","to":"policy-management-backend","kind":"async","text":"The customer accepts or rejects; the decision is sent on customer-decision-event-queue before Self-Service saves its own status.","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteRequestCoordinator.java:142-183#respondToInsuranceQuote","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision"]},{"from":"policy-management-backend","to":"customer-self-service-backend","kind":"async","text":"On an unexpired acceptance, a policy running one year from the chosen start date is saved and policy-created-event-queue carries its id back; Self-Service marks POLICY_CREATED.","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:131-148#createPolicyForInsuranceQuoteRequest","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/PolicyCreatedMessageConsumer.java:29-44#receivePolicyCreatedEvent"]},{"from":"policy-management-backend","to":"customer-self-service-backend","kind":"async","compensation":true,"text":"If the quote had already expired, the request is marked accepted then expired and insurance-quote-expired-event-queue tells Self-Service; no policy is created.","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteExpiredMessageConsumer.java"]},{"from":"policy-management-backend","to":"customer-core","kind":"sync","text":"Policy Management fetches the customer from customer-core to build the risk event, then sends UpdatePolicyEvent on newpolicies.","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/CustomerCoreRemoteProxy.java:57-67#getCustomersById"]}]},{"id":"signup","title":"Customer completes registration","importance":"Creates the Customer every other flow needs; the one write Self-Service makes to customer-core.","hops":[{"from":"customer-self-service-backend","to":"customer-core","kind":"sync","text":"The logged-in user's profile is POSTed to customer-core, which creates the customer; Self-Service then stores the returned customer id on the user login.","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/CustomerInformationHolder.java:92-106#registerCustomer","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/infrastructure/CustomerCoreRemoteProxy.java:93-102#createCustomer"]}]}],"failures":[{"hop":"Customer decision (Self-Service → Policy Management)","onFailure":"The decision is sent before the local save; a failed send is only logged, so Self-Service shows QUOTE_ACCEPTED while Policy Management never hears of it and creates no policy.","mechanism":"nothing (log only)","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/infrastructure/PolicyManagementMessageProducer.java:41-44#sendCustomerDecision","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteRequestCoordinator.java:142-183#respondToInsuranceQuote"]},{"hop":"Policy creation while customer-core is down","onFailure":"The policy is saved and policy-created is sent, then the customer lookup throws; the request's new status in Policy Management is never saved and no risk event is sent.","mechanism":"nothing: no circuit breaker on this proxy, listener not transacted","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/CustomerCoreRemoteProxy.java:57-67#getCustomersById","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/configuration/MessagingConfiguration.java:92-98#jmsListenerContainerFactory"]},{"hop":"New quote request (Self-Service → Policy Management)","onFailure":"The request is saved as REQUEST_SUBMITTED first; a failed send is only logged and the request never reaches staff.","mechanism":"nothing (log only)","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/infrastructure/PolicyManagementMessageProducer.java:36-39#sendInsuranceQuoteRequest"]},{"hop":"Quote response / expiry / policy created (Policy Management → Self-Service)","onFailure":"Policy Management changes its copy regardless; a failed send is only logged and the customer's view stays on the old status.","mechanism":"nothing (log only)","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/CustomerSelfServiceMessageProducer.java"]},{"hop":"Event for an unknown request id (either side)","onFailure":"The consumer logs an error and returns; the message is consumed and dropped.","mechanism":"nothing (log and drop)","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision","customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/interfaces/InsuranceQuoteResponseMessageConsumer.java:32-58#receiveInsuranceQuoteResponse"]},{"hop":"Self-Service reads a customer from customer-core","onFailure":"A Resilience4j circuit breaker returns a placeholder customer whose fields read 'WARNING: No … info available'.","mechanism":"circuit breaker with fallback","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/infrastructure/CustomerCoreRemoteProxy.java:57-77#getDummyCustomer"]},{"hop":"Quote expiry (Policy Management job → Self-Service)","onFailure":"Every 60 s a Quartz job marks quotes past their expiry date QUOTE_EXPIRED, saves, then sends one expired event each; a lost send is not retried because the status is already saved.","mechanism":"scheduled job, no retry","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/application/ExpirationCheckerJob.java:33-52#execute","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/application/ExpirationCheckerJobConfiguration.java:23"]}],"rules":[{"title":"A quote request lives twice: change it on one side and send the event to the other","kind":"rule","importance":"Reach: the whole core flow. Damage: the customer and staff see different statuses, or a policy is never created.","text":"Self-Service and Policy Management each store the full request and status history in their own database. A status change made on one side reaches the other only as a JMS event that the receiving consumer applies. A new transition needs a producer on one side and a consumer on the other.","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/domain/insurancequoterequest/InsuranceQuoteRequestAggregateRoot.java","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/domain/insurancequoterequest/InsuranceQuoteRequestAggregateRoot.java"]},{"title":"JMS sends never fail loudly","kind":"surprise","importance":"Reach: every one of the 6 queues. Damage: silent divergence between services.","text":"Every producer catches JmsException and only logs it, and there is no outbox or retry. The calling code carries on as if the message was delivered, so check logs before trusting that the other side knows.","cites":["customer-self-service-backend/src/main/java/com/lakesidemutual/customerselfservice/infrastructure/PolicyManagementMessageProducer.java","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/CustomerSelfServiceMessageProducer.java","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/infrastructure/RiskManagementMessageProducer.java:38-45#emitEvent"]},{"title":"The message broker runs inside policy-management-backend","kind":"surprise","importance":"Reach: all messaging. Damage: Self-Service cannot send or receive while Policy Management is down.","text":"policy-management-backend starts an embedded, persistent ActiveMQ broker on TCP 61616 and STOMP 61613; Self-Service and the risk-management server connect to it. Start Policy Management before the others.","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/configuration/MessagingConfiguration.java:41-58#broker","customer-self-service-backend/src/main/resources/application.properties:20"]},{"title":"Every call to customer-core needs an API key","kind":"rule","importance":"Reach: 3 callers. Damage: every customer lookup is refused.","text":"customer-core authenticates each request by an `Authorization: Bearer \u003ckey>` header checked against its list of known keys. Each caller sets the header from its own apikey.header and apikey.value settings; a new caller needs a key registered on customer-core.","cites":["customer-core/src/main/java/com/lakesidemutual/customercore/interfaces/configuration/APIKeyAuthenticationManager.java:58-72#authenticate","customer-management-backend/src/main/java/com/lakesidemutual/customermanagement/infrastructure/APIKeyRequestInterceptor.java:21-24#apply"]},{"title":"Customer data in a quote request is a frozen snapshot","kind":"surprise","importance":"Reach: quoting and policies. Damage: staff work from an old address.","text":"The customer info travels inside the quote-request event and is stored on Policy Management's copy; later changes in customer-core do not update it. Only the risk event re-reads the customer from customer-core.","cites":["policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/InsuranceQuoteRequestMessageConsumer.java:36-51#receiveInsuranceQuoteRequest","policy-management-backend/src/main/java/com/lakesidemutual/policymanagement/interfaces/CustomerDecisionMessageConsumer.java:63-129#receiveCustomerDecision"]}],"diagram":{"mode":"domains","gateway":null,"nodes":[{"id":"selfservice","col":0,"name":"Self-Service"},{"id":"customer","col":1,"name":"Customer Data"},{"id":"policy","col":2,"name":"Policy Management"},{"id":"care","col":3,"name":"Customer Care"}],"edges":[{"a":"care","b":"customer","fwd":true,"back":false,"kinds":["rest"],"names":[],"label":""},{"a":"customer","b":"selfservice","fwd":false,"back":true,"kinds":["rest"],"names":[],"label":""},{"a":"customer","b":"policy","fwd":false,"back":true,"kinds":["rest"],"names":[],"label":""},{"a":"policy","b":"selfservice","fwd":true,"back":true,"kinds":["jms"],"names":["insurance-quote-request-event-queue","customer-decision-event-queue","insurance-quote-expired-event-queue","insurance-quote-response-event-queue","policy-created-event-queue"],"label":""}],"dropped":0},"talks":[{"service":"customer-self-service-backend","calls":["customer-core"],"calledBy":[],"publishes":[{"channel":"insurance-quote-request-event-queue","kind":"jms","to":["policy-management-backend"],"self":false},{"channel":"customer-decision-event-queue","kind":"jms","to":["policy-management-backend"],"self":false}],"listens":[{"channel":"insurance-quote-expired-event-queue","kind":"jms","from":["policy-management-backend"],"self":false},{"channel":"insurance-quote-response-event-queue","kind":"jms","from":["policy-management-backend"],"self":false},{"channel":"policy-created-event-queue","kind":"jms","from":["policy-management-backend"],"self":false}]},{"service":"customer-core","calls":[],"calledBy":["customer-management-backend","customer-self-service-backend","policy-management-backend"],"publishes":[],"listens":[]},{"service":"policy-management-backend","calls":["customer-core"],"calledBy":[],"publishes":[{"channel":"insurance-quote-expired-event-queue","kind":"jms","to":["customer-self-service-backend"],"self":false},{"channel":"insurance-quote-response-event-queue","kind":"jms","to":["customer-self-service-backend"],"self":false},{"channel":"policy-created-event-queue","kind":"jms","to":["customer-self-service-backend"],"self":false},{"channel":"newpolicies","kind":"jms","to":[],"self":false}],"listens":[{"channel":"insurance-quote-request-event-queue","kind":"jms","from":["customer-self-service-backend"],"self":false},{"channel":"customer-decision-event-queue","kind":"jms","from":["customer-self-service-backend"],"self":false}]},{"service":"customer-management-backend","calls":["customer-core"],"calledBy":[],"publishes":[],"listens":[]}]}</script>
+<script>
+(() => {
+const ROOT = "https://github.com/Microservice-API-Patterns/LakesideMutual/blob/357ca2db7e6b814fce663183f2be954b051e6be4".replace(/\/$/, "");
+// A published page links citations to the code on the web; the editor picker only applies to local pages.
+const WEB = /^https?:\/\//.test(ROOT);
+const M = JSON.parse(document.getElementById('mindmodel-data').textContent);
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Signalling: identifiers, enum values and API paths render as code so they read as beacons.
+// Backticks only (names, sentences): code where the writer marked it, nothing automatic.
+const ticks = (s) => String(s ?? '').split(/`([^`]+)`/).map((p, i) => (i % 2 ? `<code>${esc(p)}</code>` : esc(p))).join('');
+const richPlain = (s) => esc(s).replace(/(\/api\/[\w\-/{}.…]*[\w}…]|\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+(?:\.[a-zA-Z]+)?(?:\(\))?|\b[a-z]+[A-Z][A-Za-z]+(?:\(\))?|\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|\*[A-Z][a-z]+)/g, '<code>$1</code>');
+// `text` in backticks is code as written; the rest gets automatic code signalling.
+const rich = (s) => String(s ?? '').split(/`([^`]+)`/).map((p, i) => (i % 2 ? `<code>${esc(p)}</code>` : richPlain(p))).join('');
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+let linkMode = store.get('mindmodel.links', 'vscode');
+
+const domIdx = new Map(M.domains.map((d, i) => [d.id, i]));
+const dvars = (id) => { const i = domIdx.get(id) ?? 0; return `--rf:var(--r${i % 7}f);--rs:var(--r${i % 7}s)`; };
+const svcOf = new Map(M.services.map((s) => [s.name, s]));
+const chip = (name) => `<button type="button" class="chip" data-svc="${esc(name)}" style="${dvars(svcOf.get(name)?.domain)}">${esc(name)}</button>`;
+// [[domain-id|text]] in the system sentence links to that domain.
+const linkSentence = (t) => ticks(t).replace(/\[\[([a-z][a-z0-9-]*)\|([^\]]+)\]\]/g, (_, id, txt) => `<a href="#domain-${id}">${txt}</a>`);
+
+function href(c) {
+  const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#\S+)?$/.exec(c); if (!m) return null;
+  const abs = `${ROOT}/${m[1]}`, line = m[2] || 1;
+  if (WEB) return `${abs}${m[2] ? `#L${m[2]}${m[3] ? `-L${m[3]}` : ''}` : ''}`;
+  if (linkMode === 'vscode') return `vscode://file${abs.startsWith('/') ? '' : '/'}${abs}:${line}`;
+  if (linkMode === 'idea') return `idea://open?file=${encodeURIComponent(abs)}&line=${line}`;
+  return null;
+}
+const short = (c) => { const [p, l] = c.replace(/#\S+$/, '').split(/:(?=\d)/); const parts = p.split('/'); const name = parts.pop() || parts.pop(); return l ? `${name}:${l}` : name; };
+const cite = (c) => { const h = href(c), plain = c.replace(/#\S+$/, ''); return h ? `<a class="cite" href="${esc(h)}" title="${esc(plain)}">${esc(short(c))}</a>` : `<span class="cite" title="${esc(plain)}">${esc(plain)}</span>`; };
+const cites = (list) => list?.length ? `<div class="cites">${list.map(cite).join('')}</div>` : '';
+
+$('#app').textContent = M.project.name;
+const sections = [];
+const add = (id, label, html) => sections.push({ id, label, html });
+
+add('overview', 'Overview', `
+  <p class="eyebrow">${esc(M.project.name)}</p>
+  <p class="purpose">${esc(M.overview.purpose)}</p>
+  <p class="core">${linkSentence(M.overview.sentence)}</p>
+  <p class="lede">${rich(M.overview.shape)}</p>${cites(M.overview.cites)}
+  <div class="meta"><span>${esc(M.project.stack ?? '')}</span><span>generated ${esc(M.project.generatedAt)}</span></div>`);
+
+const tier = (d, t) => M.services.filter((s) => s.domain === d && s.tier === t);
+add('domains', 'Domains & services', `
+  <h2>Domains and services</h2>
+  <p class="lede">Grouped by business domain, in the order business flows through them. Core services first.</p>
+  <div class="regions">${M.domains.map((d) => `
+    <article class="region-card" id="domain-${d.id}" style="${dvars(d.id)}">
+      <div class="card-top"><h3>${esc(d.name)}</h3></div>
+      <p>${rich(d.text)}</p>
+      ${tier(d.id, 'core').map((s) => `<div class="svc">${chip(s.name)}<p><b>${rich(s.responsibility)}</b></p>${s.importance ? `<p class="importance">${rich(s.importance)}</p>` : ''}${s.owns?.length ? `<p class="also">Owns: ${s.owns.map(esc).join(', ')}</p>` : ''}${s.map ? `<p class="also"><a href="${esc(s.map)}">Its own mindmodel</a></p>` : ''}${cites(s.cites)}</div>`).join('')}
+      ${tier(d.id, 'supporting').length ? `<h4>Supporting</h4><ul class="lm">${tier(d.id, 'supporting').map((s) => `<li>${chip(s.name)} ${rich(s.responsibility)}${cites(s.cites)}</li>`).join('')}</ul>` : ''}
+      ${tier(d.id, 'peripheral').length ? `<p class="also">Also: ${tier(d.id, 'peripheral').map((s) => esc(s.name)).join(', ')}</p>` : ''}
+    </article>`).join('')}</div>`);
+
+add('ownership', 'Who owns what', `
+  <h2>Who owns what</h2>
+  <p class="lede">The single source of truth for each core concept, and every copy kept elsewhere.</p>
+  <div class="wtc"><table><thead><tr><th>Concept</th><th>Truth</th><th>Copies</th></tr></thead><tbody>
+  ${M.ownership.map((o) => `<tr><td><b>${esc(o.concept)}</b>${(o.flags ?? []).map((f) => `<div><span class="kind surprise">${esc(f)}</span></div>`).join('')}</td><td>${chip(o.owner)} ${rich(o.truth)}${cites(o.cites)}</td><td>${(o.copies ?? []).map((c) => `<div class="also">${chip(c.service)} ${rich(c.feed)}${c.staleness ? ` · ${rich(c.staleness)}` : ''}${cites(c.cites)}</div>`).join('') || '<span class="also">none</span>'}</td></tr>`).join('')}
+  </tbody></table></div>`);
+
+const svcList = (xs) => xs.length ? xs.map(chip).join(' ') : '<span class="also">nobody in this folder</span>';
+add('talks', 'How it talks', `
+  <h2>How it talks</h2>
+  <p class="lede">The business sequence, domain by domain, as in the system sentence. Every connection between services is in the table below.</p>
+  <figure class="figure"><div class="svgbox"><svg class="diagram strip" id="strip" role="img" aria-label="Domains in the order business flows through them"></svg></div></figure>
+  <div class="wtc"><table class="talks"><thead><tr><th>Service</th><th>REST</th><th>Messages</th></tr></thead><tbody>
+  ${M.talks.map((t) => {
+    const line = (arrow, label, items) => `<div class="tline"><span class="tdir">${arrow} ${label}</span> ${items}</div>`;
+    const rest = [t.calledBy?.length && line('←', 'called by', t.calledBy.map(chip).join(' ')), t.calls.length && line('→', 'calls', t.calls.map(chip).join(' '))].filter(Boolean).join('') || '<span class="also">—</span>';
+    const msgs = [...t.publishes.map((c) => line('→', `<code>${esc(c.channel)}</code> to`, c.to.length || !c.self ? svcList(c.to) : '<span class="also">itself</span>')),
+      ...t.listens.map((c) => line('←', `<code>${esc(c.channel)}</code> from`, c.from.length || !c.self ? svcList(c.from) : '<span class="also">itself</span>'))].join('') || '<span class="also">—</span>';
+    return `<tr><td>${chip(t.service)}</td><td>${rest}</td><td>${msgs}</td></tr>`;
+  }).join('')}
+  </tbody></table></div>
+  ${M.talks.length > 5 && M.contracts.length ? `<h3>Key contracts</h3>
+  <p class="lede">The few messages and APIs the whole system depends on: change one of them and several services break.</p>
+  <ul class="ctx-list">${M.contracts.map((c) => `<li><b>${esc(c.name)} <span class="tier">${esc(c.kind)}</span></b><span>${chip(c.from)} → ${c.to.map(chip).join(' ')} ${rich(c.carries)}</span>${cites(c.cites)}</li>`).join('')}</ul>` : ''}`);
+
+add('flows', 'Main flows', `
+  <h2>Main flows, most important first</h2>
+  ${M.flows.map((f, i) => `
+    <details class="story" ${i === 0 ? 'open' : ''}>
+      <summary><h3>${esc(f.title)}</h3><p class="importance">${rich(f.importance)}</p></summary>
+      <div class="body"><figure class="figure"><div class="svgbox"><svg class="diagram seq" data-flow="${i}" role="img" aria-label="${esc(f.title)}"></svg></div></figure><ol class="steps">${f.hops.map((h) => `<li><div><div class="head">${chip(h.from)} → ${chip(h.to)} <span class="kind ${h.kind === 'async' ? 'surprise' : 'rule'}">${h.compensation ? 'undo · ' : ''}${esc(h.kind)}</span></div>${rich(h.text)}${cites(h.cites)}</div></li>`).join('')}</ol></div>
+    </details>`).join('')}`);
+
+add('failures', 'When a hop fails', `
+  <h2>When a hop fails</h2>
+  <p class="lede">What happens when the other side is down, slow, or a message arrives twice. Money and core data first.</p>
+  <div class="wtc"><table><thead><tr><th>Hop</th><th>If it fails</th><th>Mechanism</th></tr></thead><tbody>
+  ${M.failures.map((x) => `<tr><td><b>${rich(x.hop)}</b></td><td>${rich(x.onFailure)}${cites(x.cites)}</td><td>${rich(x.mechanism ?? '')}</td></tr>`).join('')}
+  </tbody></table></div>`);
+
+add('rules', 'Rules & surprises', `
+  <h2>System rules and surprises</h2>
+  <div class="rules">${M.rules.map((r, i) => `<div class="r"><div class="rank-col"><span class="rank">${i + 1}</span><span class="kind ${r.kind}">${r.kind}</span></div><div><h3>${esc(r.title)}</h3><p class="importance">${rich(r.importance)}</p><p>${rich(r.text)}</p>${cites(r.cites)}</div></div>`).join('')}</div>`);
+
+add('end', '', `<footer>Generated by mindmodel from <code>mindmodel-system/system.json</code>.</footer>`);
+
+$('#main').innerHTML = sections.map((s) => `<section id="${s.id}">${s.html}</section>`).join('');
+$('#toc').innerHTML = sections.filter((s) => s.label).map((s) => `<li><a href="#${s.id}">${esc(s.label)}</a></li>`).join('');
+
+// ---- SVG helpers ----
+const NS = 'http://www.w3.org/2000/svg';
+const el = (parent, tag, attrs = {}) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); parent.appendChild(e); return e; };
+const arrowhead = (svg, id) => { const m = el(el(svg, 'defs'), 'marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }); el(m, 'path', { d: 'M0,0 L10,5 L0,10 z', class: 'arrow' }); };
+const flash = (node) => { node.scrollIntoView({ behavior: 'smooth', block: 'start' }); node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 1600); };
+
+// Wrap a label into lines that fit maxW, measured in the browser (breaks after spaces and hyphens), so diagram text
+// is never cut. Returns the number of lines; only text beyond maxLines ends in "…".
+const wrapText = (t, str, maxW, maxLines = 3, lh = null) => {
+  const parts = String(str).split(/(?<=[\s-])/), lines = []; let cur = '';
+  const fits = (s) => { t.textContent = s; return t.getComputedTextLength() <= maxW; };
+  for (const w of parts) { if (!cur || fits((cur + w).trim())) cur += w; else { lines.push(cur.trim()); cur = w; } }
+  if (cur.trim()) lines.push(cur.trim());
+  const keep = lines.slice(0, maxLines); if (lines.length > maxLines) keep[maxLines - 1] += '…';
+  t.textContent = ''; const x = t.getAttribute('x');
+  keep.forEach((l, k) => { const sp = document.createElementNS(NS, 'tspan'); sp.setAttribute('x', x); if (k) sp.setAttribute('dy', lh ? String(lh) : '1.2em'); sp.textContent = l; t.appendChild(sp); });
+  el(t, 'title').textContent = str;
+  return keep.length;
+};
+const commonCut = (names) => { const c = names.length > 1 ? names.reduce((a, n) => { let i = 0; while (i < a.length && a[i] === n[i]) i++; return a.slice(0, i); }) : ''; return c.lastIndexOf('-') + 1; };
+const CUT = commonCut(M.services.map((s) => s.name));
+
+// ---- Each main flow as a sequence diagram: services are lanes, hops are numbered arrows, dashed = async ----
+// Each row is as tall as its label needs (labels wrap, never cut), so long hop descriptions don't crowd the next row.
+document.querySelectorAll('svg.seq[data-flow]').forEach((svg) => {
+  const f = M.flows[Number(svg.dataset.flow)], mark = `ah-f${svg.dataset.flow}`; arrowhead(svg, mark);
+  const lanes = [...new Set(f.hops.flatMap((h) => [h.from, h.to]))];
+  const LW = 240, BW = 210, PADX = 130, HEAD = 70, LINE = 16;
+  const lx = Object.fromEntries(lanes.map((l, i) => [l, PADX + i * LW]));
+  const VW = PADX * 2 + (lanes.length - 1) * LW;
+  svg.setAttribute('viewBox', `0 0 ${VW} 400`); // provisional, so text can be measured
+  const life = el(svg, 'g');
+  for (const l of lanes) {
+    const g = el(svg, 'g', { class: 'lane', style: dvars(svcOf.get(l)?.domain) }), x = lx[l];
+    el(g, 'rect', { x: x - BW / 2, y: 8, width: BW, height: HEAD - 8, rx: 10 });
+    const t = el(g, 'text', { x, y: 0, class: 'lname', 'text-anchor': 'middle' });
+    const n = wrapText(t, l.slice(CUT), BW - 20, 2); t.setAttribute('y', n > 1 ? 34 : 44);
+  }
+  // One line height for wrapping and spacing alike, so a label can never reach its own arrow or the next row.
+  const LH = 24;
+  let y = HEAD + 14;
+  f.hops.forEach((h, i) => {
+    const x1 = lx[h.from], x2 = lx[h.to], self = x1 === x2, g = el(svg, 'g', { class: 'row' });
+    // Label: the message's name if the hop marks one in backticks, else its first clause.
+    const label = /`([^`]+)`/.exec(h.text)?.[1] ?? h.text.split(/[;:,.](?=\s)/)[0];
+    const t = el(g, 'text', self ? { x: x1 + 50, y: 0, class: 'mlabel' } : { x: (x1 + x2) / 2, y: 0, class: 'mlabel', 'text-anchor': 'middle' });
+    const n = wrapText(t, label, self ? LW - 70 : Math.abs(x2 - x1) - 40, 5, LH);
+    const half = Math.max(16, (n * LH) / 2);
+    const ya = self ? y + half : y + n * LH + 8; // the arrow's line
+    t.setAttribute('y', self ? ya + 6 - ((n - 1) * LH) / 2 : ya - 10 - (n - 1) * LH);
+    const cls = 'msg' + (h.kind === 'async' ? ' async' : '') + (h.compensation ? ' undo' : '');
+    if (self) el(g, 'path', { d: `M${x1},${ya - 8} h40 v16 h-38`, class: cls, 'marker-end': `url(#${mark})` });
+    else { const dir = Math.sign(x2 - x1); el(g, 'path', { d: `M${x1},${ya} L${x2 - dir * 3},${ya}`, class: cls, 'marker-end': `url(#${mark})` }); }
+    const c = el(g, 'g', { class: 'num' }), nx = Math.min(x1, x2) - 22;
+    el(c, 'circle', { cx: nx, cy: ya, r: 13 }); el(c, 'text', { x: nx, y: ya }).textContent = i + 1;
+    y = ya + (self ? half : 0) + 18;
+  });
+  for (const l of lanes) el(life, 'line', { x1: lx[l], y1: HEAD, x2: lx[l], y2: y, class: 'life' });
+  svg.setAttribute('viewBox', `0 0 ${VW} ${y + 10}`); svg.style.minWidth = `${Math.min(760, VW / 1.6)}px`; svg.style.maxWidth = `${VW}px`;
+});
+
+// ---- How it talks: a strip of domains in flow order. Arrows only between consecutive domains, so it can't
+// tangle; each box lists its services (wrapped, never cut), and the hub (talking to the most domains) is bold.
+(function strip() {
+  const svg = $('#strip'); if (!svg) return;
+  arrowhead(svg, 'ah-strip');
+  const doms = M.domains.filter((d) => !d.platform), W = 210, G = 50, PAD = 16, LH = 19;
+  const domOf = (n) => svcOf.get(n)?.domain;
+  const reach = new Map(M.talks.map((t) => [t.service, new Set([...t.calls, ...t.publishes.flatMap((c) => c.to), ...t.listens.flatMap((c) => c.from)].map(domOf).filter((d) => d && d !== domOf(t.service)))]));
+  const hub = [...reach].sort((a, b) => b[1].size - a[1].size)[0], isHub = (n) => hub && n === hub[0] && hub[1].size > 1;
+  const lists = doms.map((d) => M.services.filter((s) => s.domain === d.id && s.tier !== 'peripheral').map((s) => s.name));
+  // More than 4 domains wrap onto a second row, so the text never shrinks; the arrow carries on to the next row.
+  const per = doms.length > 4 ? Math.ceil(doms.length / 2) : doms.length, rowsN = Math.ceil(doms.length / per), RG = 44;
+  // First pass: write the text and measure how many lines each box needs; then size every box to the tallest.
+  const boxes = doms.map((d, i) => {
+    const g = el(svg, 'g', { class: 'sbox', style: dvars(d.id) }), x = PAD + (i % per) * (W + G), row = Math.floor(i / per);
+    const nm = el(g, 'text', { x: x + 14, y: 0, class: 'sname' }), nameLines = wrapText(nm, d.name, W - 28, 2);
+    const svcs = lists[i].map((n) => { const t = el(g, 'text', { x: x + 14, y: 0, class: 'ssvc' + (isHub(n) ? ' hub' : '') }); return { t, lines: wrapText(t, n.slice(CUT), W - 28, 3) }; });
+    return { g, x, row, nm, nameLines, svcs };
+  });
+  const H = 26 + Math.max(...boxes.map((b) => b.nameLines * 22 + 10 + Math.max(1, b.svcs.reduce((n, s) => n + s.lines, 0)) * LH));
+  const yOf = (row) => PAD + row * (H + RG);
+  boxes.forEach((b, i) => {
+    const y = yOf(b.row);
+    b.g.insertBefore(el(b.g, 'rect', { x: b.x, y, width: W, height: H, rx: 12 }), b.g.firstChild);
+    b.nm.setAttribute('y', y + 28);
+    let ty = y + 28 + b.nameLines * 22 + 6;
+    for (const s of b.svcs) { s.t.setAttribute('y', ty); ty += s.lines * LH; }
+    if (i && i % per) el(svg, 'path', { d: `M${b.x - G + 6},${y + H / 2} H${b.x - 6}`, class: 'sarrow', 'marker-end': 'url(#ah-strip)' });
+    else if (i) { const p = boxes[i - 1], py = yOf(p.row), my = py + H + RG / 2; el(svg, 'path', { d: `M${p.x + W / 2},${py + H + 4} V${my} H${b.x + W / 2} V${y - 6}`, class: 'sarrow', 'marker-end': 'url(#ah-strip)', fill: 'none' }); }
+  });
+  const total = rowsN * H + (rowsN - 1) * RG;
+  if (hub && hub[1].size > 1) el(svg, 'text', { x: PAD, y: total + PAD + 22, class: 'snote' }).textContent = `${hub[0].slice(CUT)} is the hub: it talks to ${hub[1].size} other domains (see the table).`;
+  svg.setAttribute('viewBox', `0 0 ${PAD * 2 + per * W + (per - 1) * G} ${total + PAD * 2 + 26}`);
+})();
+
+document.addEventListener('click', (e) => { const c = e.target.closest('.chip'); if (c) { const d = svcOf.get(c.dataset.svc)?.domain; const t = d && $(`#domain-${d}`); if (t) flash(t); } });
+
+// toc highlight
+const links = [...document.querySelectorAll('#toc a')];
+// Phone contents sheet: open from the bar, close on a pick, the backdrop or Escape.
+const sheet = $('#sheet'), mbar = $('#mbar'), scrim = $('#scrim');
+const setSheet = (open) => { sheet.classList.toggle('open', open); scrim.hidden = !open; mbar.setAttribute('aria-expanded', open); if (open) sheet.querySelector('a.on, a')?.focus({ focusVisible: false }); };
+mbar.addEventListener('click', () => setSheet(!sheet.classList.contains('open')));
+scrim.addEventListener('click', () => setSheet(false));
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheet.classList.contains('open')) { setSheet(false); mbar.focus(); } });
+links.forEach((a, i) => a.addEventListener('click', () => setSheet(false)));
+const showCurrent = (a) => { $('#mbar-num').textContent = links.indexOf(a) + 1; $('#mbar-label').textContent = a.textContent; };
+showCurrent(links[0]);
+const io = new IntersectionObserver((es) => es.forEach((en) => { if (en.isIntersecting) links.forEach((a) => { const on = a.getAttribute('href') === `#${en.target.id}`; a.classList.toggle('on', on); if (on) showCurrent(a); }); }), { rootMargin: '-40% 0px -55% 0px' });
+document.querySelectorAll('main section').forEach((s) => io.observe(s));
+
+// tools
+if (WEB) $('label.linkmode').hidden = true;
+const lm = $('#linkmode'); lm.value = linkMode;
+lm.addEventListener('change', () => { linkMode = lm.value; store.set('mindmodel.links', linkMode); location.reload(); });
+const savedTheme = store.get('mindmodel.theme', ''); if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+// The button shows the theme you'll switch to: a moon in light mode, a sun in dark mode.
+const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+const syncTheme = () => { const d = isDark(), label = `Switch to ${d ? 'light' : 'dark'} theme`; document.documentElement.classList.toggle('is-dark', d); $('#theme').setAttribute('aria-label', label); $('#theme').title = label; };
+syncTheme(); matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
+$('#theme').addEventListener('click', () => {
+  document.documentElement.dataset.theme = isDark() ? 'light' : 'dark'; store.set('mindmodel.theme', document.documentElement.dataset.theme); syncTheme();
+});
+document.title = `mindmodel · ${M.project.name}`;
+})();
+</script>
+</body>
+</html>

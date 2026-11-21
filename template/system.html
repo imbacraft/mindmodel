@@ -249,6 +249,11 @@ svg.sysmap .link path { fill: none; stroke: var(--muted); stroke-width: 1.8; }
 svg.sysmap .link.kafka path { stroke-dasharray: 7 5; } svg.sysmap .link.jms path { stroke-dasharray: 2 4; }
 svg.sysmap .link.dim { opacity: .12; }
 svg.diagram .msg.undo { stroke: var(--surprise); }
+svg.seq .lname { font-size: 15px; }
+table.talks { min-width: 0; }
+table.talks .tline { margin: 2px 0 6px; }
+table.talks .tdir { color: var(--muted); font-size: 14px; }
+table.talks .tdir code { font-size: 13px; }
 svg.strip { max-width: 100%; }
 svg.strip .sarrow { fill: none; }
 svg.strip .sbox rect { fill: var(--rf); stroke: var(--rs); stroke-width: 1.5; }
@@ -258,6 +263,7 @@ svg.strip .ssvc.hub { fill: var(--ink); font-weight: 600; }
 svg.strip .sarrow { stroke: var(--muted); stroke-width: 2; }
 svg.strip .snote { font: italic 14px var(--sans); fill: var(--muted); }
 main section > h3 { margin: 36px 0 12px; }
+nav.toc .brand .kindof { display: block; margin-top: 4px; }
 main section .figure, main section .wtc, main section .regions, main section .rules { margin-top: 20px; margin-bottom: 8px; }
 main section .ctx-list { margin-top: 8px; }
 details.story .figure { margin: 4px 0 20px; }
@@ -270,7 +276,7 @@ svg.sysmap .mlabel { font: 13px var(--sans); fill: var(--ink); paint-order: stro
 <div id="scrim" hidden></div>
 <div class="wrap">
   <nav class="toc" id="sheet" aria-label="Contents">
-    <div class="brand">mindmodel</div>
+    <div class="brand">mindmodel<span class="kindof">system</span></div>
     <div class="app" id="app"></div>
     <ol id="toc"></ol>
     <div class="tools">
@@ -353,8 +359,14 @@ add('talks', 'How it talks', `
   <h2>How it talks</h2>
   <p class="lede">The business sequence, domain by domain, as in the system sentence. Every connection between services is in the table below.</p>
   <figure class="figure"><div class="svgbox"><svg class="diagram strip" id="strip" role="img" aria-label="Domains in the order business flows through them"></svg></div></figure>
-  <div class="wtc"><table><thead><tr><th>Service</th><th>Calls (REST)</th><th>Publishes → who listens</th><th>Listens to ← who publishes</th></tr></thead><tbody>
-  ${M.talks.map((t) => `<tr><td>${chip(t.service)}</td><td>${t.calls.length ? t.calls.map(chip).join(' ') : '<span class="also">—</span>'}</td><td>${t.publishes.map((c) => `<div class="also"><code>${esc(c.channel)}</code> → ${c.to.length || !c.self ? svcList(c.to) : '<span class="also">itself</span>'}</div>`).join('') || '<span class="also">—</span>'}</td><td>${t.listens.map((c) => `<div class="also"><code>${esc(c.channel)}</code> ← ${c.from.length || !c.self ? svcList(c.from) : '<span class="also">itself</span>'}</div>`).join('') || '<span class="also">—</span>'}</td></tr>`).join('')}
+  <div class="wtc"><table class="talks"><thead><tr><th>Service</th><th>REST</th><th>Messages</th></tr></thead><tbody>
+  ${M.talks.map((t) => {
+    const line = (arrow, label, items) => `<div class="tline"><span class="tdir">${arrow} ${label}</span> ${items}</div>`;
+    const rest = [t.calledBy?.length && line('←', 'called by', t.calledBy.map(chip).join(' ')), t.calls.length && line('→', 'calls', t.calls.map(chip).join(' '))].filter(Boolean).join('') || '<span class="also">—</span>';
+    const msgs = [...t.publishes.map((c) => line('→', `<code>${esc(c.channel)}</code> to`, c.to.length || !c.self ? svcList(c.to) : '<span class="also">itself</span>')),
+      ...t.listens.map((c) => line('←', `<code>${esc(c.channel)}</code> from`, c.from.length || !c.self ? svcList(c.from) : '<span class="also">itself</span>'))].join('') || '<span class="also">—</span>';
+    return `<tr><td>${chip(t.service)}</td><td>${rest}</td><td>${msgs}</td></tr>`;
+  }).join('')}
   </tbody></table></div>
   ${M.talks.length > 5 && M.contracts.length ? `<h3>Key contracts</h3>
   <p class="lede">The few messages and APIs the whole system depends on: change one of them and several services break.</p>
@@ -390,62 +402,94 @@ const el = (parent, tag, attrs = {}) => { const e = document.createElementNS(NS,
 const arrowhead = (svg, id) => { const m = el(el(svg, 'defs'), 'marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }); el(m, 'path', { d: 'M0,0 L10,5 L0,10 z', class: 'arrow' }); };
 const flash = (node) => { node.scrollIntoView({ behavior: 'smooth', block: 'start' }); node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 1600); };
 
-// shared label maker for diagrams
+// Wrap a label into lines that fit maxW, measured in the browser (breaks after spaces and hyphens), so diagram text
+// is never cut. Returns the number of lines; only text beyond maxLines ends in "…".
+const wrapText = (t, str, maxW, maxLines = 3, lh = null) => {
+  const parts = String(str).split(/(?<=[\s-])/), lines = []; let cur = '';
+  const fits = (s) => { t.textContent = s; return t.getComputedTextLength() <= maxW; };
+  for (const w of parts) { if (!cur || fits((cur + w).trim())) cur += w; else { lines.push(cur.trim()); cur = w; } }
+  if (cur.trim()) lines.push(cur.trim());
+  const keep = lines.slice(0, maxLines); if (lines.length > maxLines) keep[maxLines - 1] += '…';
+  t.textContent = ''; const x = t.getAttribute('x');
+  keep.forEach((l, k) => { const sp = document.createElementNS(NS, 'tspan'); sp.setAttribute('x', x); if (k) sp.setAttribute('dy', lh ? String(lh) : '1.2em'); sp.textContent = l; t.appendChild(sp); });
+  el(t, 'title').textContent = str;
+  return keep.length;
+};
+const commonCut = (names) => { const c = names.length > 1 ? names.reduce((a, n) => { let i = 0; while (i < a.length && a[i] === n[i]) i++; return a.slice(0, i); }) : ''; return c.lastIndexOf('-') + 1; };
+const CUT = commonCut(M.services.map((s) => s.name));
+
 // ---- Each main flow as a sequence diagram: services are lanes, hops are numbered arrows, dashed = async ----
+// Each row is as tall as its label needs (labels wrap, never cut), so long hop descriptions don't crowd the next row.
 document.querySelectorAll('svg.seq[data-flow]').forEach((svg) => {
-  const f = M.flows[Number(svg.dataset.flow)]; arrowhead(svg, `ah-f${svg.dataset.flow}`);
+  const f = M.flows[Number(svg.dataset.flow)], mark = `ah-f${svg.dataset.flow}`; arrowhead(svg, mark);
   const lanes = [...new Set(f.hops.flatMap((h) => [h.from, h.to]))];
-  const cutAll = ((n) => { let c = n.length > 1 ? n.reduce((a, x) => { let i = 0; while (i < a.length && a[i] === x[i]) i++; return a.slice(0, i); }) : ''; return c.lastIndexOf('-') + 1; })(M.services.map((s) => s.name));
-  const LW = 230, PADX = 130, TOP = 92, ROW = 64;
+  const LW = 240, BW = 210, PADX = 130, HEAD = 70, LINE = 16;
   const lx = Object.fromEntries(lanes.map((l, i) => [l, PADX + i * LW]));
-  const bottom = TOP + 30 + f.hops.length * ROW, VW = PADX * 2 + (lanes.length - 1) * LW;
-  svg.setAttribute('viewBox', `0 0 ${VW} ${bottom + 10}`); svg.style.minWidth = `${Math.min(760, VW / 1.6)}px`;
+  const VW = PADX * 2 + (lanes.length - 1) * LW;
+  svg.setAttribute('viewBox', `0 0 ${VW} 400`); // provisional, so text can be measured
+  const life = el(svg, 'g');
   for (const l of lanes) {
     const g = el(svg, 'g', { class: 'lane', style: dvars(svcOf.get(l)?.domain) }), x = lx[l];
-    el(g, 'rect', { x: x - 100, y: 10, width: 200, height: 52, rx: 10 });
-    el(g, 'text', { x, y: 42, class: 'lname', 'text-anchor': 'middle' }).textContent = l.slice(cutAll);
-    el(svg, 'line', { x1: x, y1: 62, x2: x, y2: bottom, class: 'life' });
+    el(g, 'rect', { x: x - BW / 2, y: 8, width: BW, height: HEAD - 8, rx: 10 });
+    const t = el(g, 'text', { x, y: 0, class: 'lname', 'text-anchor': 'middle' });
+    const n = wrapText(t, l.slice(CUT), BW - 20, 2); t.setAttribute('y', n > 1 ? 34 : 44);
   }
+  // One line height for wrapping and spacing alike, so a label can never reach its own arrow or the next row.
+  const LH = 24;
+  let y = HEAD + 14;
   f.hops.forEach((h, i) => {
-    const y = TOP + 20 + i * ROW, x1 = lx[h.from], x2 = lx[h.to], g = el(svg, 'g', { class: 'row' });
+    const x1 = lx[h.from], x2 = lx[h.to], self = x1 === x2, g = el(svg, 'g', { class: 'row' });
+    // Label: the message's name if the hop marks one in backticks, else its first clause.
+    const label = /`([^`]+)`/.exec(h.text)?.[1] ?? h.text.split(/[;:,.](?=\s)/)[0];
+    const t = el(g, 'text', self ? { x: x1 + 50, y: 0, class: 'mlabel' } : { x: (x1 + x2) / 2, y: 0, class: 'mlabel', 'text-anchor': 'middle' });
+    const n = wrapText(t, label, self ? LW - 70 : Math.abs(x2 - x1) - 40, 5, LH);
+    const half = Math.max(16, (n * LH) / 2);
+    const ya = self ? y + half : y + n * LH + 8; // the arrow's line
+    t.setAttribute('y', self ? ya + 6 - ((n - 1) * LH) / 2 : ya - 10 - (n - 1) * LH);
     const cls = 'msg' + (h.kind === 'async' ? ' async' : '') + (h.compensation ? ' undo' : '');
-    if (x1 === x2) el(g, 'path', { d: `M${x1},${y - 8} h40 v16 h-38`, class: cls, 'marker-end': `url(#ah-f${svg.dataset.flow})` });
-    else { const dir = Math.sign(x2 - x1); el(g, 'path', { d: `M${x1},${y} L${x2 - dir * 3},${y}`, class: cls, 'marker-end': `url(#ah-f${svg.dataset.flow})` }); }
-    // Arrow label: the message's name if the hop text marks one in backticks, else its first words.
-    const raw = /`([^`]+)`/.exec(h.text)?.[1] ?? h.text.split(/[;:,.]/)[0];
-    const label = raw.length <= 34 ? raw : raw.slice(0, 34).replace(/\s+\S*$/, '') + '…'; // cut at a word, never mid-word
-    el(g, 'text', x1 === x2 ? { x: x1 + 50, y: y + 4, class: 'mlabel' } : { x: (x1 + x2) / 2, y: y - 8, class: 'mlabel', 'text-anchor': 'middle' }).textContent = label;
-    const n = el(g, 'g', { class: 'num' }), nx = Math.min(x1, x2) - 22;
-    el(n, 'circle', { cx: nx, cy: y, r: 13 }); el(n, 'text', { x: nx, y }).textContent = i + 1;
+    if (self) el(g, 'path', { d: `M${x1},${ya - 8} h40 v16 h-38`, class: cls, 'marker-end': `url(#${mark})` });
+    else { const dir = Math.sign(x2 - x1); el(g, 'path', { d: `M${x1},${ya} L${x2 - dir * 3},${ya}`, class: cls, 'marker-end': `url(#${mark})` }); }
+    const c = el(g, 'g', { class: 'num' }), nx = Math.min(x1, x2) - 22;
+    el(c, 'circle', { cx: nx, cy: ya, r: 13 }); el(c, 'text', { x: nx, y: ya }).textContent = i + 1;
+    y = ya + (self ? half : 0) + 18;
   });
+  for (const l of lanes) el(life, 'line', { x1: lx[l], y1: HEAD, x2: lx[l], y2: y, class: 'life' });
+  svg.setAttribute('viewBox', `0 0 ${VW} ${y + 10}`); svg.style.minWidth = `${Math.min(760, VW / 1.6)}px`; svg.style.maxWidth = `${VW}px`;
 });
 
 // ---- How it talks: a strip of domains in flow order. Arrows only between consecutive domains, so it can't
-// tangle; each box lists its services, and the hub (the service talking to the most domains) is marked.
+// tangle; each box lists its services (wrapped, never cut), and the hub (talking to the most domains) is bold.
 (function strip() {
   const svg = $('#strip'); if (!svg) return;
   arrowhead(svg, 'ah-strip');
-  const doms = M.domains.filter((d) => !d.platform), W = 210, G = 50, PAD = 16, LH = 21;
+  const doms = M.domains.filter((d) => !d.platform), W = 210, G = 50, PAD = 16, LH = 19;
   const domOf = (n) => svcOf.get(n)?.domain;
   const reach = new Map(M.talks.map((t) => [t.service, new Set([...t.calls, ...t.publishes.flatMap((c) => c.to), ...t.listens.flatMap((c) => c.from)].map(domOf).filter((d) => d && d !== domOf(t.service)))]));
-  const hub = [...reach].sort((a, b) => b[1].size - a[1].size)[0];
+  const hub = [...reach].sort((a, b) => b[1].size - a[1].size)[0], isHub = (n) => hub && n === hub[0] && hub[1].size > 1;
   const lists = doms.map((d) => M.services.filter((s) => s.domain === d.id && s.tier !== 'peripheral').map((s) => s.name));
-  const strip = (names) => { let c = names.length > 1 ? names.reduce((a, n) => { let i = 0; while (i < a.length && a[i] === n[i]) i++; return a.slice(0, i); }) : ''; return c.lastIndexOf('-') + 1; };
-  const cut = strip(M.services.map((s) => s.name));
   // More than 4 domains wrap onto a second row, so the text never shrinks; the arrow carries on to the next row.
   const per = doms.length > 4 ? Math.ceil(doms.length / 2) : doms.length, rowsN = Math.ceil(doms.length / per), RG = 44;
-  const H = 54 + Math.max(1, ...lists.map((l) => l.length)) * LH;
-  svg.setAttribute('viewBox', `0 0 ${PAD * 2 + per * W + (per - 1) * G} ${rowsN * H + (rowsN - 1) * RG + PAD * 2 + 26}`);
-  const at = (i) => ({ x: PAD + (i % per) * (W + G), y: PAD + Math.floor(i / per) * (H + RG) });
-  doms.forEach((d, i) => {
-    const { x, y } = at(i), g = el(svg, 'g', { class: 'sbox', style: dvars(d.id) });
-    el(g, 'rect', { x, y, width: W, height: H, rx: 12 });
-    el(g, 'text', { x: x + 14, y: y + 28, class: 'sname' }).textContent = d.name;
-    lists[i].forEach((n, k) => el(g, 'text', { x: x + 14, y: y + 56 + k * LH, class: 'ssvc' + (hub && n === hub[0] && hub[1].size > 1 ? ' hub' : '') }).textContent = n.slice(cut) + (hub && n === hub[0] && hub[1].size > 1 ? ` · talks to ${hub[1].size}` : ''));
-    if (i && i % per) el(svg, 'path', { d: `M${x - G + 6},${y + H / 2} H${x - 6}`, class: 'sarrow', 'marker-end': 'url(#ah-strip)' });
-    else if (i) { const p = at(i - 1), my = p.y + H + RG / 2; el(svg, 'path', { d: `M${p.x + W / 2},${p.y + H + 4} V${my} H${x + W / 2} V${y - 6}`, class: 'sarrow', 'marker-end': 'url(#ah-strip)', fill: 'none' }); }
+  // First pass: write the text and measure how many lines each box needs; then size every box to the tallest.
+  const boxes = doms.map((d, i) => {
+    const g = el(svg, 'g', { class: 'sbox', style: dvars(d.id) }), x = PAD + (i % per) * (W + G), row = Math.floor(i / per);
+    const nm = el(g, 'text', { x: x + 14, y: 0, class: 'sname' }), nameLines = wrapText(nm, d.name, W - 28, 2);
+    const svcs = lists[i].map((n) => { const t = el(g, 'text', { x: x + 14, y: 0, class: 'ssvc' + (isHub(n) ? ' hub' : '') }); return { t, lines: wrapText(t, n.slice(CUT), W - 28, 3) }; });
+    return { g, x, row, nm, nameLines, svcs };
   });
-  if (hub && hub[1].size > 1) el(svg, 'text', { x: PAD, y: rowsN * H + (rowsN - 1) * RG + PAD + 22, class: 'snote' }).textContent = `${hub[0].slice(cut)} is the hub: it talks to ${hub[1].size} other domains (see the table).`;
+  const H = 26 + Math.max(...boxes.map((b) => b.nameLines * 22 + 10 + Math.max(1, b.svcs.reduce((n, s) => n + s.lines, 0)) * LH));
+  const yOf = (row) => PAD + row * (H + RG);
+  boxes.forEach((b, i) => {
+    const y = yOf(b.row);
+    b.g.insertBefore(el(b.g, 'rect', { x: b.x, y, width: W, height: H, rx: 12 }), b.g.firstChild);
+    b.nm.setAttribute('y', y + 28);
+    let ty = y + 28 + b.nameLines * 22 + 6;
+    for (const s of b.svcs) { s.t.setAttribute('y', ty); ty += s.lines * LH; }
+    if (i && i % per) el(svg, 'path', { d: `M${b.x - G + 6},${y + H / 2} H${b.x - 6}`, class: 'sarrow', 'marker-end': 'url(#ah-strip)' });
+    else if (i) { const p = boxes[i - 1], py = yOf(p.row), my = py + H + RG / 2; el(svg, 'path', { d: `M${p.x + W / 2},${py + H + 4} V${my} H${b.x + W / 2} V${y - 6}`, class: 'sarrow', 'marker-end': 'url(#ah-strip)', fill: 'none' }); }
+  });
+  const total = rowsN * H + (rowsN - 1) * RG;
+  if (hub && hub[1].size > 1) el(svg, 'text', { x: PAD, y: total + PAD + 22, class: 'snote' }).textContent = `${hub[0].slice(CUT)} is the hub: it talks to ${hub[1].size} other domains (see the table).`;
+  svg.setAttribute('viewBox', `0 0 ${PAD * 2 + per * W + (per - 1) * G} ${total + PAD * 2 + 26}`);
 })();
 
 document.addEventListener('click', (e) => { const c = e.target.closest('.chip'); if (c) { const d = svcOf.get(c.dataset.svc)?.domain; const t = d && $(`#domain-${d}`); if (t) flash(t); } });
