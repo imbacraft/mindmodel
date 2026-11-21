@@ -1,8 +1,8 @@
 {
   "name": "mindmodel",
-  "description": "Generates a mindmodel: a single offline page that installs the essential mental model of a codebase in a human developer's head",
-  "version": "0.1.0",
+  "description": "Generates a mindmodel: a single offline page with the essential mental model of a codebase, or of a system of microservices, for human developers",
+  "version": "0.2.0",
   "author": { "name": "dbouzoukas" },
   "license": "MIT",
-  "keywords": ["onboarding", "architecture", "codebase-understanding", "spring", "react"]
+  "keywords": ["onboarding", "architecture", "codebase-understanding", "microservices", "spring", "react"]
 }

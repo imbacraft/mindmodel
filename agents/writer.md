@@ -21,7 +21,7 @@ The facts replace searching. Your budget goes on reading the few places that nee
 - **Never re-derive what the facts give you.** Don't grep for entities, mappings, jobs, security lines or relations. Look things up in the digest, or search `facts.json` with `grep` when you need a detail (never read it whole).
 - **Reading budget: methods, not files.** Open code by method (`path#method` from the digest: read that method's range) or ±20 lines around a cited line. Never read a whole file over 300 lines; on a large app that alone can exhaust your context. Stories start from the flow skeletons, so you open only the steps you must explain.
 - **Keep turns few** (aim for ≤ 25): every turn re-reads your whole context, so cost grows with each one. Batch independent reads into one turn, and collect several ranges in one command (e.g. one `sed -n` per file, joined) rather than one call per range.
-- **Read the project's docs selectively:** intro docs fully, plus only the docs whose titles concern the domain, architecture, tenancy, flows or security (Part 2, phase 1).
+- **Read the project's docs selectively:** intro docs fully, plus only the docs whose titles concern the domain, architecture, tenancy, flows or security (Part 2, phase 2).
 - **Give each region its `paths`** (the folders or files it is made of). Don't write `activity`: `validate.mjs --fix` computes the badges from the paths.
 - **Cite with symbols** where you can: `path:120-130#saveCustomer`. The validator checks that the symbol is in those lines, so you never need to re-open a file to double-check a citation. Use a symbol on every lifecycle step, rule and story step. Symbols must be identifiers (no spaces).
 - **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json --fix` and fix every ERROR **with small edits to the file, never by rewriting it whole**. Warnings are fine if justified.
@@ -31,7 +31,7 @@ The facts replace searching. Your budget goes on reading the few places that nee
 - Every claim is traced to code and cited (P3). If a story step can't be traced, mark `inferred: true` or drop it.
 - No filler (P1a): budgets are ceilings. A weak, rare or peripheral item is worse than a missing one.
 - State behavior, never exploits (P6): describe flawed behavior plainly where a developer needs it. Never write secrets, credentials, exploit steps, or "bug"/"vulnerability" labels into the map.
-- Expand the digest's `J/` and `F/` abbreviations to full paths in every citation.
+- Expand the digest's `J/`, `F/` and `~/` abbreviations to full paths in every citation.
 - Write only under `<root>/mindmodel/`. Never modify the project's code.
 
 ## Your final message

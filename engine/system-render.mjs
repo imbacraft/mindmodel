@@ -1,56 +1,12 @@
 #!/usr/bin/env node
-// Validates a system mindmodel against the system scan and renders it. The "how it talks" diagram is computed here
-// from the scan's proven edges, never drawn by the writer, so its limits hold by construction (rules/system-rules.md 3.4).
+// Validates a system mindmodel against the system scan and renders it. The "how it talks" table is computed here
+// from the scan's proven edges, never written by the writer (rules/system-rules.md 3.4).
 // Usage: node system-render.mjs <system-map.json> <folder> [--fix] [--web <base URL> --out <file>]
 import fs from 'node:fs';
 import path from 'node:path';
-import assert from 'node:assert';
 import { fileURLToPath } from 'node:url';
-import { parseCite, resolveCites } from './validate.mjs';
-
-const MAX_BOXES = 12, MAX_LINES = 15;
-
-// One line per pair: every REST call and every producer→consumer channel between two drawn nodes merges into one.
-export function diagram(map, sys, forceDomains = false) {
-  const role = new Map(sys.services.map((s) => [s.name, s.role]));
-  const gateway = sys.services.find((s) => s.calls?.some((c) => c.via === 'gateway'))?.name ?? null;
-  const svc = new Map(map.services.map((s) => [s.name, s]));
-  const drawn = (n) => n === gateway || (svc.has(n) && svc.get(n).tier !== 'peripheral' && !role.get(n));
-  const raw = [];
-  for (const r of sys.rest) if (r.known && r.from !== r.to) raw.push({ a: r.from, b: r.to, kind: 'rest' });
-  for (const c of sys.channels) for (const o of c.out) for (const i of c.in) if (o.service !== i.service) raw.push({ a: o.service, b: i.service, kind: c.kind, name: c.name });
-  const label = (a, b) => map.contracts.find((k) => (k.from === a && k.to.includes(b)) || (k.from === b && k.to.includes(a)))?.name;
-  const merge = (edges, keyOf) => {
-    const out = new Map();
-    for (const e of edges) {
-      const [x, y] = [keyOf(e.a), keyOf(e.b)]; if (!x || !y || x === y) continue;
-      const k = [x, y].sort().join('|'), m = out.get(k) ?? { a: [x, y].sort()[0], b: [x, y].sort()[1], fwd: false, back: false, kinds: new Set(), names: new Set() };
-      if (x === m.a) m.fwd = true; else m.back = true;
-      m.kinds.add(e.kind); if (e.name) m.names.add(e.name); out.set(k, m);
-    }
-    return [...out.values()].map((m) => ({ ...m, kinds: [...m.kinds], names: [...m.names] }));
-  };
-  const services = [...new Set([gateway, ...map.services.map((s) => s.name)])].filter((n) => n && drawn(n));
-  let mode = 'services', nodes = services, edges = merge(raw, (n) => (drawn(n) ? n : null));
-  if (forceDomains || nodes.length > MAX_BOXES || edges.length > MAX_LINES) {
-    mode = 'domains';
-    const dom = (n) => (n === gateway ? 'gateway' : svc.get(n)?.domain ?? null);
-    nodes = [...new Set(services.map(dom))].filter(Boolean);
-    edges = merge(raw, (n) => (drawn(n) ? dom(n) : null));
-  }
-  // Only named contracts label a line; a bare count ("2 channels") tells the reader nothing.
-  for (const e of edges) e.label = mode === 'services' ? label(e.a, e.b) ?? '' : '';
-  const column = (n) => (n === gateway || n === 'gateway' ? -1 : map.domains.findIndex((d) => d.id === (mode === 'domains' ? n : svc.get(n)?.domain)));
-  return { mode, gateway, nodes: nodes.map((n) => ({ id: n, col: column(n), name: mode === 'domains' && n !== 'gateway' ? map.domains.find((d) => d.id === n)?.name ?? n : n })), edges: edges.slice(0, MAX_LINES), dropped: Math.max(0, edges.length - MAX_LINES) };
-}
-{
-  const map = { services: [{ name: 'orders', domain: 'o', tier: 'core' }, { name: 'payment', domain: 'p', tier: 'core' }, { name: 'cfg', domain: 'x', tier: 'supporting' }], domains: [{ id: 'o' }, { id: 'p' }, { id: 'x' }], contracts: [{ name: 'OrderPlaced', from: 'orders', to: ['payment'] }] };
-  const sys = { services: [{ name: 'orders' }, { name: 'payment' }, { name: 'cfg', role: 'config server' }], rest: [{ from: 'payment', to: 'cfg', known: true }], channels: [{ kind: 'kafka', name: 'orders', out: [{ service: 'orders' }], in: [{ service: 'payment' }] }, { kind: 'kafka', name: 'paid', out: [{ service: 'payment' }], in: [{ service: 'orders' }] }] };
-  const d = diagram(map, sys);
-  assert.deepStrictEqual(d.nodes.map((n) => n.id), ['orders', 'payment']); // the config server is plumbing: not drawn
-  assert.equal(d.edges.length, 1); // two topics, both directions: one line
-  assert.ok(d.edges[0].fwd && d.edges[0].back && d.edges[0].label === 'OrderPlaced');
-}
+import assert from 'node:assert';
+import { parseCite, resolveCites, checkSchema } from './validate.mjs';
 
 // "How it talks" as a table: per service, what it calls, what it publishes (and who listens), what it listens to.
 export function talks(map, sys) {
@@ -67,25 +23,43 @@ export function talks(map, sys) {
   }));
 }
 
+// Names the scan could not resolve (rules 3.4), so nobody reads a missing edge as "no connection".
+export const unresolved = (sys) => [
+  ...sys.channels.filter((c) => !c.name).flatMap((c) => [...new Set([...c.out, ...c.in].map((x) => x.service))].map((service) => ({ service, name: c.unresolved, what: `${c.kind} channel` }))),
+  ...sys.rest.filter((r) => !r.known).map((r) => ({ service: r.from, name: r.to, what: 'host' })),
+  ...sys.services.flatMap((s) => (s.unresolvedDest ?? []).map((name) => ({ service: s.name, name, what: 'URL setting' }))),
+];
+assert.deepStrictEqual(unresolved({ channels: [{ kind: 'jms', name: null, unresolved: 'cfg.queue', out: [{ service: 'a' }], in: [] }], rest: [{ from: 'a', to: 'pay-host', known: false }], services: [{ name: 'gw', unresolvedDest: ['order.url'] }] }),
+  [{ service: 'a', name: 'cfg.queue', what: 'jms channel' }, { service: 'a', name: 'pay-host', what: 'host' }, { service: 'gw', name: 'order.url', what: 'URL setting' }]);
+
 export function validateSystem(map, sys, root) {
   const errors = [], warnings = [], err = (m) => errors.push(m), warn = (m) => warnings.push(m);
   resolveCites(map, root);
+  const schema = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/system.schema.json'), 'utf8'));
+  checkSchema(map, schema, schema.$defs ?? {}, '$', err);
+  if (errors.length) return { errors, warnings, stats: {} };
   const known = new Set(sys.services.map((s) => s.name)), domains = new Set(map.domains.map((d) => d.id));
   const listed = new Set(map.services.map((s) => s.name));
   for (const s of map.services) { if (!known.has(s.name)) err(`service "${s.name}" is not in the system scan`); if (!domains.has(s.domain)) err(`service ${s.name}: unknown domain "${s.domain}"`); if (s.tier === 'core' && !s.importance) err(`core service ${s.name}: missing "importance"`); }
   for (const n of known) if (!listed.has(n)) err(`scanned service "${n}" is not placed in any tier`);
   if (map.services.filter((s) => s.tier === 'core').length > 8) err('more than 8 core services');
+  // Budgets from rules/system-rules.md Part 4 (ceilings).
+  const max = (arr, n, what) => { if ((arr?.length ?? 0) > n) err(`${what}: ${arr.length} > budget ${n}`); };
+  max(map.domains, 8, 'domains'); max(map.ownership, 8, 'owner rows'); max(map.contracts, 8, 'key contracts'); max(map.failures, 8, 'failure rows'); max(map.rules, 5, 'rules');
+  if (!map.flows?.length || map.flows.length > 4) err(`flows: ${map.flows?.length ?? 0} outside budget 1-4`);
+  for (const f of map.flows ?? []) max(f.hops, 10, `flow ${f.id} hops`);
   for (const m of map.overview.sentence.matchAll(/\[\[([a-z][a-z0-9-]*)\|/g)) if (!domains.has(m[1])) err(`system sentence: unknown domain "${m[1]}"`);
   const named = new Set([...known, ...sys.rest.map((r) => r.to)]);
   for (const f of map.flows) for (const h of f.hops) for (const n of [h.from, h.to]) if (!named.has(n)) warn(`flow ${f.id}: "${n}" is not a scanned service`);
   // Citations: every one must resolve to a real file and range.
   const walk = (node, where, out) => { if (Array.isArray(node)) node.forEach((n, i) => walk(n, `${where}[${i}]`, out)); else if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) if (k === 'cites' && Array.isArray(v)) v.forEach((c) => out.push([c, where])); else walk(v, `${where}.${k}`, out); return out; };
-  const cites = walk(map, '$', []);
+  const cites = walk(map, '$', []), files = new Map();
   for (const [c, where] of cites) {
     const pc = parseCite(c); if (!pc) { err(`${where}: malformed citation "${c}"`); continue; }
     const abs = path.join(root, pc.file); if (!fs.existsSync(abs)) { err(`${where}: path not found "${pc.file}"`); continue; }
     if (pc.start == null || fs.statSync(abs).isDirectory()) continue;
-    const lines = fs.readFileSync(abs, 'utf8').split('\n');
+    if (!files.has(abs)) files.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
+    const lines = files.get(abs);
     if (pc.end > lines.length) err(`${where}: "${c}" outside file`);
     else if (pc.symbol && !lines.slice(pc.start - 1, pc.end).join('\n').includes(pc.symbol)) err(`${where}: "${c}" does not contain "${pc.symbol}"`);
   }
@@ -106,7 +80,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`${errors.length ? 'FAILED' : 'OK'}: ${errors.length} error(s), ${warnings.length} warning(s)`, stats);
   if (errors.length) process.exit(1);
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const data = JSON.stringify({ ...map, diagram: diagram(map, sys, true), talks: talks(map, sys) }).replace(/</g, '\\u003c');
+  const data = JSON.stringify({ ...map, talks: talks(map, sys), unresolved: unresolved(sys) }).replace(/</g, '\\u003c');
   const html = fs.readFileSync(path.join(here, '../template/system.html'), 'utf8').replace('/*__MINDMODEL_DATA__*/', () => data).replace('__MINDMODEL_ROOT__', () => (web ?? root).replace(/"/g, '\\"'));
   const out = outArg ? path.resolve(outArg) : path.join(path.dirname(mapFile), 'index.html');
   fs.writeFileSync(out, html);

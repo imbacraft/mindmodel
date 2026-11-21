@@ -22,7 +22,7 @@
       }
     },
     "domains": {
-      "type": "array", "maxItems": 8, "description": "In the order business flows through them (the diagram lays them out left to right). Platform/infrastructure last.",
+      "type": "array", "maxItems": 8, "description": "In the order business flows through them (the strip shows them in this order). Platform/infrastructure last.",
       "items": { "type": "object", "required": ["id", "name", "text"], "additionalProperties": false, "properties": { "id": { "$ref": "#/$defs/id" }, "name": { "type": "string" }, "text": { "type": "string" }, "platform": { "type": "boolean" } } }
     },
     "services": {
@@ -36,7 +36,6 @@
           "responsibility": { "type": "string", "description": "What it decides, one line." },
           "owns": { "type": "array", "items": { "type": "string" } },
           "importance": { "type": "string", "description": "Core only: why it ranks here, backed by the scan's dependence numbers." },
-          "exposes": { "type": "string" },
           "map": { "type": "string", "description": "Link to its own mindmodel page, if one exists." },
           "cites": { "$ref": "#/$defs/cites" }
         }
@@ -55,7 +54,7 @@
       }
     },
     "contracts": {
-      "type": "array", "maxItems": 8, "description": "The few contracts the system depends on. Also label the diagram line of their service pair.",
+      "type": "array", "maxItems": 8, "description": "The few contracts the system depends on.",
       "items": { "type": "object", "required": ["name", "kind", "from", "to", "carries", "cites"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "kind": { "enum": ["rest", "kafka", "jms"] }, "from": { "type": "string" }, "to": { "type": "array", "items": { "type": "string" } }, "carries": { "type": "string" }, "cites": { "$ref": "#/$defs/cites" } } }
     },
     "flows": {

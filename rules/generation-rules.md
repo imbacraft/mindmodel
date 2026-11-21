@@ -49,17 +49,17 @@ Work in this order. Later sections depend on earlier ones: everything is written
 
 | Phase | What | Output |
 |---|---|---|
-| 0 | **Collect facts** (deterministic, no judgment): file inventory; modules/packages; frontend apps and routes; entities and their relations; session/cache state the code keeps by name; controllers and their paths; security config; filters/interceptors; scheduled/async/listener/socket handlers; external SDKs and config keys; git activity per path (rename-aware); list of project docs. Exclude generated and tool folders (`target/`, `build/`, `node_modules/`, `.ua/`, `mindmodel/`). | `facts.json` (format defined by the engine's scanner) |
-| 1 | **Read the project's docs.** All titles; fully read the intro docs (README, CLAUDE.md/AGENTS.md) and any doc about architecture, domain, tenancy, flows or security | Notes: vocabulary, intent, stated rules, stated non-goals |
-| 2 | Core concepts (Part 3.3) | concepts + core sentence |
-| 3 | Regions (Part 3.4) | regions + region sentence |
-| 3b | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners, copies, seams |
-| 4 | How a request travels (Part 3.6) | request path |
-| 5 | What runs on its own (Part 3.7) | background table |
-| 6 | Stories: choose, rank, trace (Part 3.9) | stories |
-| 7 | Rules & surprises (Part 3.8). Written after tracing, because most surprises show up while tracing | ranked rules |
-| 8 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
-| 9 | **Critique** against Part 4; fix; **verify** every citation; check budgets; trim (Part 5) | final `mindmodel.json` |
+| 1 | **Collect facts** (deterministic, no judgment): file inventory; modules/packages; frontend apps and routes; entities and their relations; session/cache state the code keeps by name; controllers and their paths; security config; filters/interceptors; scheduled/async/listener/socket handlers; external SDKs and config keys; git activity per path (rename-aware); list of project docs. Exclude generated and tool folders (`target/`, `build/`, `node_modules/`, `.ua/`, `mindmodel/`). | `facts.json` (format defined by the engine's scanner) |
+| 2 | **Read the project's docs.** All titles; fully read the intro docs (README, CLAUDE.md/AGENTS.md) and any doc about architecture, domain, tenancy, flows or security | Notes: vocabulary, intent, stated rules, stated non-goals |
+| 3 | Core concepts (Part 3.3) | concepts + core sentence |
+| 4 | Regions (Part 3.4) | regions + region sentence |
+| 5 | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners, copies, seams |
+| 6 | How a request travels (Part 3.6) | request path |
+| 7 | What runs on its own (Part 3.7) | background table |
+| 8 | Stories: choose, rank, trace (Part 3.9) | stories |
+| 9 | Rules & surprises (Part 3.8). Written after tracing, because most surprises show up while tracing | ranked rules |
+| 10 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
+| 11 | **Critique** against Part 4; fix; **verify** every citation; check budgets; trim (Part 5) | final `mindmodel.json` |
 
 ---
 
@@ -239,7 +239,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - If an item explains user-visible delay ("paid" arrives after the redirect), say it in that row.
 - If the app truly has nothing that runs on its own, say so in the intro: that is itself useful knowledge.
 
-**Checks:** Did every `@Scheduled`, `@Async`, listener and worker found in phase 0 land in some row? Is every schedule copied exactly from the code or config?
+**Checks:** Did every `@Scheduled`, `@Async`, listener and worker found in phase 1 land in some row? Is every schedule copied exactly from the code or config?
 
 ### 3.8 Rules & surprises
 

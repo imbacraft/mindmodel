@@ -44,13 +44,16 @@ assert.equal(humanSchedule('(fixedDelay = 30000)'), '30 s after each run ends');
 // Time windows and retry settings written inside a method (e.g. "older than 5 min").
 const WINDOW = /(?:minus|plus)(Seconds|Minutes|Hours|Days|Weeks)\(\s*(\d+)|Duration\.of(Seconds|Minutes|Hours|Days)\(\s*(\d+)/g;
 const UNIT = { Seconds: 's', Minutes: 'min', Hours: 'h', Days: 'd', Weeks: 'wk' };
-const windowsIn = (lines, m) => [...new Set(lines.slice(m.start - 1, m.end).join('\n').matchAll(WINDOW).map((x) => `${x[2] ?? x[4]} ${UNIT[x[1] ?? x[3]]}`))];
+const windowsIn = (lines, m) => [...new Set([...lines.slice(m.start - 1, m.end).join('\n').matchAll(WINDOW)].map((x) => `${x[2] ?? x[4]} ${UNIT[x[1] ?? x[3]]}`))];
 
 // --- Java: seams, lifecycles, schedules -----------------------------------------------
 export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, endpoints = [] }) {
   const files = java.map((j) => ({ ...j, ix: index(j.text), lines: j.text.split('\n') }));
   const byName = new Map(files.map((f) => [f.name, f]));
-  const implsOf = (t) => files.filter((f) => f.name === t || (f.implements ?? '').split(/\s*,\s*/).map((s) => s.replace(/<.*/, '')).includes(t));
+  // Each type name -> the files that are it or implement it, built once (looked up for every call resolved).
+  const impls = new Map();
+  for (const f of files) for (const n of new Set([f.name, ...(f.implements ?? '').split(/\s*,\s*/).map((s) => s.replace(/<.*/, ''))])) if (n) impls.set(n, [...(impls.get(n) ?? []), f]);
+  const implsOf = (t) => impls.get(t) ?? [];
 
   for (const f of files) {
     f.outside = new Map(); // simple name or field -> label of the outside system it reaches
@@ -66,7 +69,9 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     f.txClass = f.ix.types.some((t) => t.annotations.some((a) => /^Transactional\b/.test(a)));
   }
   // Calls in a method's own body (nested methods such as afterCommit() excluded: they run at another time).
-  const callsIn = (f, m) => {
+  const callCache = new Map();
+  const callsIn = (f, m) => callCache.get(m) ?? callCache.set(m, callsInUncached(f, m)).get(m);
+  const callsInUncached = (f, m) => {
     const nested = f.ix.methods.filter((n) => n !== m && n.open > m.open && n.close < m.close);
     const body = f.ix.src.slice(m.open, m.close);
     return [...body.matchAll(/\b(\w+)\s*\.\s*(\w+)\s*\(/g)].filter((c) => !nested.some((n) => n.open - m.open < c.index && c.index < n.close - m.open))

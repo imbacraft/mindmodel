@@ -239,15 +239,6 @@ footer { margin-top: 48px; color: var(--faint); font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
 html { scroll-behavior: smooth; }
-svg.sysmap { max-width: 980px; }
-svg.sysmap .dom rect { fill: var(--rf, var(--paper)); opacity: .45; stroke: none; }
-svg.sysmap .dom text { font: 600 14px var(--sans); fill: var(--rs, var(--muted)); }
-svg.sysmap .node rect { fill: var(--sheet); stroke: var(--rs, var(--line)); stroke-width: 1.5; }
-svg.sysmap .node text { font: 600 15px var(--sans); fill: var(--ink); }
-svg.sysmap .node:focus { outline: none; } svg.sysmap .node:focus rect { stroke-width: 3; }
-svg.sysmap .link path { fill: none; stroke: var(--muted); stroke-width: 1.8; }
-svg.sysmap .link.kafka path { stroke-dasharray: 7 5; } svg.sysmap .link.jms path { stroke-dasharray: 2 4; }
-svg.sysmap .link.dim { opacity: .12; }
 svg.diagram .msg.undo { stroke: var(--surprise); }
 svg.seq .lname { font-size: 15px; }
 table.talks { min-width: 0; }
@@ -255,19 +246,17 @@ table.talks .tline { margin: 2px 0 6px; }
 table.talks .tdir { color: var(--muted); font-size: 14px; }
 table.talks .tdir code { font-size: 13px; }
 svg.strip { max-width: 100%; }
-svg.strip .sarrow { fill: none; }
 svg.strip .sbox rect { fill: var(--rf); stroke: var(--rs); stroke-width: 1.5; }
 svg.strip .sname { font: 600 18px var(--serif); fill: var(--ink); }
 svg.strip .ssvc { font: 15px var(--sans); fill: var(--muted); }
 svg.strip .ssvc.hub { fill: var(--ink); font-weight: 600; }
-svg.strip .sarrow { stroke: var(--muted); stroke-width: 2; }
+svg.strip .sarrow { fill: none; stroke: var(--muted); stroke-width: 2; }
 svg.strip .snote { font: italic 14px var(--sans); fill: var(--muted); }
 main section > h3 { margin: 36px 0 12px; }
 nav.toc .brand .kindof { display: block; margin-top: 4px; }
 main section .figure, main section .wtc, main section .regions, main section .rules { margin-top: 20px; margin-bottom: 8px; }
 main section .ctx-list { margin-top: 8px; }
 details.story .figure { margin: 4px 0 20px; }
-svg.sysmap .mlabel { font: 13px var(--sans); fill: var(--ink); paint-order: stroke; stroke: var(--sheet); stroke-width: 5px; }
 .svc { margin: 14px 0; padding-top: 10px; border-top: 1px solid var(--line); }
 </style>
 </head>
@@ -368,6 +357,8 @@ add('talks', 'How it talks', `
     return `<tr><td>${chip(t.service)}</td><td>${rest}</td><td>${msgs}</td></tr>`;
   }).join('')}
   </tbody></table></div>
+  ${M.unresolved?.length ? `<p class="lede"><b>Not resolved by the scan</b> (set outside the repos, often in deployment config), so the table may miss these connections:</p>
+  <ul class="ctx-list">${[...new Set(M.unresolved.map((u) => u.service))].map((s) => `<li>${chip(s)} <span>${M.unresolved.filter((u) => u.service === s).map((u) => `<code>${esc(u.name)}</code> (${esc(u.what)})`).join(', ')}</span></li>`).join('')}</ul>` : ''}
   ${M.talks.length > 5 && M.contracts.length ? `<h3>Key contracts</h3>
   <p class="lede">The few messages and APIs the whole system depends on: change one of them and several services break.</p>
   <ul class="ctx-list">${M.contracts.map((c) => `<li><b>${esc(c.name)} <span class="tier">${esc(c.kind)}</span></b><span>${chip(c.from)} → ${c.to.map(chip).join(' ')} ${rich(c.carries)}</span>${cites(c.cites)}</li>`).join('')}</ul>` : ''}`);

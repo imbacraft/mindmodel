@@ -1,13 +1,12 @@
 #!/usr/bin/env node
-// Phase 0 of the generation rules: collect the mechanical facts so the writer reads code only to judge, not to search.
+// Phase 1 of the generation rules: collect the mechanical facts so the writer reads code only to judge, not to search.
 // Usage: node scan.mjs <projectRoot> [outFile]   (default out: <root>/mindmodel/.work/facts.json)
 // Never copies config values (only keys) so secrets cannot leak into facts or the map.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import assert from 'node:assert';
 import { javaFacts, bootFacts, deployables } from './deep.mjs';
-import { gitWindow } from './activity.mjs';
+import { git, gitWindow } from './activity.mjs';
 
 const IGNORE = new Set(['.git', 'node_modules', 'target', 'build', 'bin', 'dist', 'out', '.gradle', '.idea', '.vscode', '.settings', '.ua', 'mindmodel', 'uploads', 'coverage', '.next', 'android', 'ios', '.mvn', 'vendor', '.claude', '.cursor', '.agent']);
 // Compiled and binary files are never read, so don't even list them (wherever a build tool put them).
@@ -85,7 +84,6 @@ assert.equal(routePath("  { path: 'users', component: X },"), null);
 const norm = (p) => ('/' + p).replace(/\/+/g, '/').replace(/\$\{[^}]*\}|\{[^}]*\}|:\w+/g, '{}').replace(/\?.*$/, '').replace(/\/$/, '') || '/';
 assert.strictEqual(norm('/api/orders/${o.id}/items?x=1'), '/api/orders/{}/items');
 const linesMatching = (text, re) => text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
-const git = (root, args) => { try { return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
 
 // --- main ---------------------------------------------------------------------
 export function scan(root) {
@@ -153,7 +151,8 @@ export function scan(root) {
   const pick = (re, list = java) => list.flatMap((j) => linesMatching(j.text, re).map((m) => ({ file: j.p, ...m })));
   const security = pick(/securityMatcher|requestMatchers|antMatchers|mvcMatchers|authorizeHttpRequests|authorizeRequests|permitAll|authenticated\(\)|hasRole|hasAnyRole|hasAuthority|csrf|formLogin|httpBasic|oauth2ResourceServer|sessionCreationPolicy|logout\(|@Order\(/, java.filter((j) => /HttpSecurity|SecurityFilterChain|WebSecurityConfigurerAdapter/.test(j.text)));
   const methodSecurity = java.map((j) => ({ file: j.p, n: (j.text.match(/@(PreAuthorize|Secured|RolesAllowed)\b/g) ?? []).length })).filter((x) => x.n);
-  const interceptors = pick(/addInterceptor|addPathPatterns|excludePathPatterns|\.order\(|FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/);
+  // Registrations and filter classes only: imports, `x = new FilterRegistrationBean<>()` lines and record accessors like item.order() are noise.
+  const interceptors = pick(/addInterceptor|addPathPatterns|excludePathPatterns|(?:public|protected)\s+FilterRegistrationBean|FilterRegistrationBean(?:<[^>]*>)?\s+\w+\s*\(|instanceof FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/).filter((m) => !/^import\s/.test(m.text));
   const contextScopes = pick(/@RequestScope|@SessionScope|@Scope\(|ThreadLocal<|@ControllerAdvice/);
   const exceptionHandlers = java.filter((j) => /@ExceptionHandler/.test(j.text)).map((j) => j.p);
   const background = java.flatMap((j) => j.scheduled.map((s) => ({ ...s, file: j.p, cls: j.name })));
@@ -167,7 +166,9 @@ export function scan(root) {
   const externals = {}; for (const j of java) for (const [k, v] of Object.entries(EXT)) if (new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text)) (externals[v] ??= []).push(j.p);
   const configFiles = files.filter((f) => /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) && /resources/.test(f) && !/\/src\/test\/|[-_]e2e\b|\/e2e\//.test(f));
   const configKeys = configFiles.map((f) => { const t = read(f); const keys = f.endsWith('.properties') ? t.split('\n').map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)]).filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l)).map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`) : t.split('\n').map((l, i) => [l, i + 1]).filter(([l]) => /^\s*[\w-]+:/.test(l)).map(([l, n]) => `${l.trim().split(':')[0]}:${n}`); const db = /jdbc:(\w+)/.exec(t); return { file: R(f), db: db?.[1], keys }; });
-  const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i).slice(0, 60) }));
+  // The project's own modules (named after their folders) and build plugins are not dependencies.
+  const own = new Set([path.basename(root), ...files.filter((f) => /(^|\/)pom\.xml$/.test(f)).map((f) => path.basename(path.dirname(f)))]);
+  const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i && !own.has(s) && !/^maven-.*-plugin$|-maven-plugin$/.test(s)).slice(0, 60) }));
 
   // state: who writes each entity (repository mutations per caller), copies of state
   const repoEntity = new Map(repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]));
@@ -205,7 +206,7 @@ export function scan(root) {
     const dirty = !!git(root, ['status', '--porcelain', '--untracked-files=no']);
     const headDate = git(root, ['log', '-1', '--format=%cI']);
     const total = Number(git(root, ['rev-list', '--count', 'HEAD']));
-    return { head, dirty, headDate, totalCommits: total, window: gitWindow(root) };
+    return { head, dirty, headDate, totalCommits: total, window: gitWindow(root, headDate, total) };
   })();
 
   return {

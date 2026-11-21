@@ -227,7 +227,6 @@
         "required": [
           "id",
           "name",
-          "short",
           "codeNames",
           "what",
           "lifecycle",
@@ -244,11 +243,6 @@
             "type": "string",
             "description": "Plain domain name."
           },
-          "short": {
-            "type": "string",
-            "maxLength": 32,
-            "description": "A gloss of a few words."
-          },
           "codeNames": {
             "type": "array",
             "items": {
@@ -260,6 +254,7 @@
           },
           "notToConfuse": {
             "type": "array",
+            "maxItems": 2,
             "items": {
               "type": "object",
               "required": [
@@ -393,7 +388,7 @@
       }
     },
     "regions": {
-      "description": "The codemap: 4-7 domain capabilities spanning frontend and backend, rendered as text cards in array order (order them along the user's journey), with a shared-infrastructure card last.",
+      "description": "The codemap: at most 6 domain capabilities plus shared infrastructure, spanning frontend and backend, rendered as text cards in array order (order them along the user's journey), with a shared-infrastructure card last.",
       "type": "array",
       "minItems": 1,
       "maxItems": 7,

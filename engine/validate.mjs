@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Validates a mindmodel.json against the PRD rules: shape, budgets (§7), id references, and that every citation resolves (R7, R8).
+// Validates a mindmodel.json against the generation rules: schema, budgets (Part 7), id references, and that every citation resolves.
 // Usage: node validate.mjs <mindmodel.json> [projectRoot]   (projectRoot defaults to the parent of the mindmodel/ folder)
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { index, methodAt } from './java.mjs';
+import { fileURLToPath } from 'node:url';
 import { gitWindow, activityFor } from './activity.mjs';
+
+const SCHEMA = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/mindmodel.schema.json'), 'utf8'));
 
 export function parseCite(c) {
   const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#(\S+))?$/.exec(c);
@@ -16,7 +19,33 @@ assert.deepStrictEqual(parseCite('a/b.java:10-12'), { file: 'a/b.java', start: 1
 assert.deepStrictEqual(parseCite('CLAUDE.md'), { file: 'CLAUDE.md', start: null, end: null, symbol: null });
 assert.deepStrictEqual(parseCite('a/B.java:5#save'), { file: 'a/B.java', start: 5, end: 5, symbol: 'save' });
 
-const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [4, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, parts: 7, coreWords: 3000, copies: 5, seams: 4, runSteps: 3 };
+// The JSON Schema subset our schemas use (type, required, additionalProperties, enum, const, pattern, items,
+// min/maxItems, maxLength, $ref): enough to catch a misspelled field or a wrong enum, with no dependency.
+export function checkSchema(v, s, defs, at, err) {
+  if (s.$ref) return checkSchema(v, defs[s.$ref.split('/').pop()], defs, at, err);
+  const type = Array.isArray(v) ? 'array' : v === null ? 'null' : Number.isInteger(v) ? 'integer' : typeof v;
+  if (s.type && s.type !== type && !(s.type === 'number' && type === 'integer')) return err(`${at}: expected ${s.type}, got ${type}`);
+  if (s.const !== undefined && v !== s.const) err(`${at}: must be ${JSON.stringify(s.const)}`);
+  if (s.enum && !s.enum.includes(v)) err(`${at}: "${v}" is not one of ${s.enum.join(', ')}`);
+  if (s.pattern && typeof v === 'string' && !new RegExp(s.pattern).test(v)) err(`${at}: "${v}" does not match ${s.pattern}`);
+  if (s.maxLength && typeof v === 'string' && v.length > s.maxLength) err(`${at}: longer than ${s.maxLength} chars`);
+  if (type === 'array') {
+    if (s.maxItems != null && v.length > s.maxItems) err(`${at}: ${v.length} items > ${s.maxItems}`);
+    if (s.minItems != null && v.length < s.minItems) err(`${at}: ${v.length} items < ${s.minItems}`);
+    if (s.items) v.forEach((x, i) => checkSchema(x, s.items, defs, `${at}[${i}]`, err));
+  }
+  if (type === 'object' && s.properties) {
+    for (const k of s.required ?? []) if (!(k in v)) err(`${at}: missing "${k}"`);
+    for (const [k, x] of Object.entries(v)) if (s.properties[k]) checkSchema(x, s.properties[k], defs, `${at}.${k}`, err); else if (s.additionalProperties === false) err(`${at}: unknown field "${k}"`);
+  }
+}
+{
+  const e = [], s = { type: 'object', required: ['a'], additionalProperties: false, properties: { a: { enum: ['x'] }, b: { type: 'array', maxItems: 1, items: { type: 'string' } } } };
+  checkSchema({ a: 'y', b: ['p', 2], c: 1 }, s, {}, '$', (m) => e.push(m));
+  assert.deepStrictEqual(e, ['$.a: "y" is not one of x', '$.b: 2 items > 1', '$.b[1]: expected string, got integer', '$: unknown field "c"']);
+}
+
+const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [2, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, parts: 7, coreWords: 3000, copies: 5, seams: 4, runSteps: 3 };
 
 // Fill in or repair line ranges from symbols, in place: "path#method" gets the method's exact range, and a
 // range that misses its #symbol is moved to the method of that name nearest to it. Writers cite methods by
@@ -62,6 +91,8 @@ export function validate(map, root) {
   const errors = [], warnings = [];
   const err = (m) => errors.push(m), warn = (m) => warnings.push(m);
   for (const k of ['purpose', 'context', 'coreSentence', 'concepts', 'state', 'regionSentence', 'regions', 'runtime', 'background', 'rules', 'stories']) if (!map[k]) err(`missing top-level "${k}"`);
+  if (errors.length) return { errors, warnings };
+  checkSchema(map, SCHEMA, SCHEMA.$defs ?? {}, '$', err);
   if (errors.length) return { errors, warnings };
 
   const max = (arr, n, what) => { if ((arr?.length ?? 0) > n) err(`${what}: ${arr.length} > budget ${n}`); };
@@ -162,9 +193,10 @@ export function validate(map, root) {
     if (!pc) { err(`${where}: malformed citation "${c}"`); continue; }
     const abs = path.join(root, pc.file);
     if (!fs.existsSync(abs)) { err(`${where}: path not found "${pc.file}"`); continue; }
-    if (pc.start == null) { if (pc.symbol && !fs.statSync(abs).isDirectory() && !fs.readFileSync(abs, 'utf8').includes(pc.symbol)) err(`${where}: "${c}" does not contain "${pc.symbol}"`); continue; }
-    if (fs.statSync(abs).isDirectory()) { err(`${where}: line given for directory "${c}"`); continue; }
-    if (!lineCount.has(abs)) lineCount.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
+    const dir = fs.statSync(abs).isDirectory();
+    if (!dir && !lineCount.has(abs)) lineCount.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
+    if (pc.start == null) { if (pc.symbol && !dir && !lineCount.get(abs).join('\n').includes(pc.symbol)) err(`${where}: "${c}" does not contain "${pc.symbol}"`); continue; }
+    if (dir) { err(`${where}: line given for directory "${c}"`); continue; }
     const fileLines = lineCount.get(abs), n = fileLines.length;
     if (pc.start < 1 || pc.end < pc.start || pc.end > n) { err(`${where}: "${c}" outside file (${n} lines)`); continue; }
     // #symbol: the cited range must contain it, so a citation can't silently point at the wrong lines
