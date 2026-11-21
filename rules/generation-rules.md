@@ -16,7 +16,7 @@
 | Section | The one question it answers |
 |---|---|
 | Overview | What is this system for, what is it deliberately not, and where does it start? |
-| Context | Who uses it, and what outside systems does it talk to? |
+| People & outside systems | Who does it serve, most important first, and what outside systems does it call? |
 | Core concepts | What are the few things everything else is about, and how do they relate? |
 | Regions | How is the code laid out, and where does each capability live? |
 | State & source of truth | Where does the truth for each concept live, who may change it, and where can copies disagree? |
@@ -58,7 +58,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 | 5 | What runs on its own (Part 3.7) | background table |
 | 6 | Stories: choose, rank, trace (Part 3.9) | stories |
 | 7 | Rules & surprises (Part 3.8). Written after tracing, because most surprises show up while tracing | ranked rules |
-| 8 | Overview and context (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
+| 8 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
 | 9 | **Critique** against Part 4; fix; **verify** every citation; check budgets; trim (Part 5) | final `mindmodel.json` |
 
 ---
@@ -85,21 +85,28 @@ Work in this order. Later sections depend on earlier ones: everything is written
 
 **Checks:** Could someone outside software understand the purpose sentence? Does it name the user and the value? Is every non-goal backed by a stated source? Does every entry point cite the line that defines it? Does every run step come from a file in the repo?
 
-### 3.2 Context
+### 3.2 People & outside systems
 
-**Goal:** the reader knows the people who use the system and every outside system it depends on at runtime.
+**Goal:** the reader knows the people the system serves, most important first, and every outside system it depends on at runtime.
 
-**Where to look:**
-- *Actors:* security roles (role enums, `hasRole`, role checks), URL zones (`/admin`, `/public`, `/api/admin`), how each kind of user is identified (login, token links, nothing), user-type entities.
-- *Externals:* SDK dependencies in the build file (payment, mail, storage, calendar, AI), outbound HTTP clients and their base URLs, config keys naming outside services, the database driver, container/compose services.
+**Find the people by what they do, not only by login.** A kind of person counts if any of these holds (cite it):
+- they **pay** (checkout, subscriptions, invoices: who the money comes from);
+- they **sign in** (security roles, `hasRole`, login flows, user-type entities);
+- they **get a private link or token** (booking, order or reading links, client portals: endpoints with `{token}`);
+- they **receive emails** (who the email templates and send calls address);
+- they **act through their own part of the frontend** or URL zone (admin panel, public site, portal, `/api/admin`).
 
-**Choose:** actors = distinct kinds of people with different access or goals (≤ 7). Externals = systems the code **calls at runtime** (≤ 7). Libraries and build tools are not externals.
+Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say the difference in a few words. Distinct goals or a distinct way of being identified make separate actors (≤ 7).
+
+**Order people by importance:** (1) who pays the business, the primary customer; (2) the people they serve through it (their visitors, clients, bookers, leads); (3) staff and operators last. Within a group, the one more of the code serves comes first. Give each a one-line `importance`: why it ranks there.
+
+**Outside systems:** systems the code **calls at runtime** (≤ 7), ordered by importance: money and data first (payment, database), then what core flows depend on (email, AI, storage, calendar), helpers last (CAPTCHA, geocoding). Libraries and build tools are not externals. Look in SDK dependencies, outbound HTTP clients and their base URLs, config keys naming outside services, the database driver, compose services.
 
 **Actor or concept?** A kind of person is an **actor** here. They also become a **core concept** only if the business is about them (the customer whose orders, bookings or account the system manages). Staff and admin accounts stay actors, even when they have their own tables and CRUD screens.
 
 **Write:** one line each: what they do / what it is used for, with a citation to where the code uses it. If one external plays two roles, say so (a payment provider used both for the platform's own subscription billing and for customers paying the tenants).
 
-**Checks:** Is every external cited at a usage site, not just the dependency file? Is anything listed that the code never calls?
+**Checks:** Did every way of paying, signing in, getting a link or receiving an email lead to an actor? Is the primary customer first and staff last? Is every external cited at a usage site, not just the dependency file? Is anything listed that the code never calls?
 
 ### 3.3 Core concepts (most important; take the most care)
 
@@ -280,7 +287,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 **Goal:** the reader sees the main flows run end to end through real code, which ties concepts, regions and the request path together.
 
 **Choose the candidates:**
-- For each **primary actor** (from Context), find the flows that deliver what they come for: where value is created, money moves, or the core entity is created. Look at entry points that write core concepts, external-payment calls and webhook handlers, and the product's main screens.
+- For each **primary actor** (from People & outside systems), find the flows that deliver what they come for: where value is created, money moves, or the core entity is created. Look at entry points that write core concepts, external-payment calls and webhook handlers, and the product's main screens.
 - Always consider: **how the tenant/customer comes to exist** (signup or onboarding), and **the failure path of the top flow**: what actually happens when it fails (retries, idempotency, cleanup, or, if failures are swallowed, that the flow continues as if it succeeded).
 
 **Qualify.** A story is on the map only if it runs through **the absolute core** of the app. All of these must hold:
@@ -357,7 +364,7 @@ Run this on the whole draft before rendering. Every "no" must be fixed or explic
 2. Region card text that describes behavior instead of layout.
 3. Concept "fields that matter" beyond 3.
 4. Background rows: merge rows with the same purpose.
-5. Context lines for externals the reader rarely meets.
+5. Lines for outside systems the reader rarely meets.
 6. Story steps that don't change any state.
 
 Never cut citations, the core or region sentence, "Not to be confused with", the rule ranking, or the top story.
@@ -386,7 +393,7 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | Element | Budget (a ceiling, never a target) |
 |---|---|
 | Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 3 run steps; ≤ 150 words |
-| Context: actors and externals | ≤ 7 each |
+| People & outside systems | ≤ 7 each, ranked |
 | Core concepts | ≤ 5, one card each, plus 1 core sentence that mentions every concept |
 | Regions | ≤ 6 + Shared infrastructure; ≤ 7 parts each |
 | State & source of truth | 1 row per core concept; ≤ 5 copies; ≤ 4 seams; ≤ 400 words |

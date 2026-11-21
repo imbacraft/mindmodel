@@ -55,6 +55,10 @@
         },
         "cites": {
           "$ref": "#/$defs/cites"
+        },
+        "importance": {
+          "type": "string",
+          "description": "People: one line on why this actor ranks where it does (who pays first, staff last)."
         }
       }
     }

@@ -112,6 +112,8 @@ export function validate(map, root) {
   max(map.state.seams, BUDGET.seams, 'state seams');
   max(map.purpose.boot?.run, BUDGET.runSteps, 'boot run steps');
 
+  map.context.actors.forEach((a) => { if (!a.importance) warn(`actor ${a.id}: missing "importance" (why it ranks here)`); });
+
   // R14: each story touches >=2 regions; regions no flow runs through are reported.
   const covered = new Set();
   for (const st of map.stories) {
