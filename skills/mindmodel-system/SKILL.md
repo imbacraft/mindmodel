@@ -12,7 +12,7 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
 
 ## Steps
 
-1. **Resolve the folder** to an absolute path and check it exists. It should hold the service repos (or modules) side by side. Tuned for Spring services talking over REST, Kafka and JMS.
+1. **Resolve the folder** to an absolute path and check it exists. It should hold the service repos (or modules) side by side. Tuned for Spring and Jakarta EE services talking over REST, Kafka and JMS.
 
 2. **Scan** (deterministic):
    ```bash

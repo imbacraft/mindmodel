@@ -34,21 +34,45 @@ export function parseJava(text) {
   const cls = /^\s*(?:public\s+|abstract\s+|final\s+)*(class|interface|enum|record)\s+(\w+)(?:<[^>{]*>)?(?:\s+extends\s+([\w.<>, ]+?))?(?:\s+implements\s+([\w.<>, ]+?))?\s*[({]/m.exec(text);
   const r = { name: cls?.[2], kind: cls?.[1], extends: cls?.[3]?.trim(), implements: cls?.[4]?.trim(), classLine: cls ? text.slice(0, cls.index).split('\n').length + (cls[0].startsWith('\n') ? 1 : 0) : null, annotations: [] };
   const head = cls ? text.slice(0, cls.index) : '';
-  for (const a of ['Entity', 'Table', 'RestController', 'Controller', 'Service', 'Component', 'Configuration', 'Repository', 'ControllerAdvice', 'EnableWebSecurity', 'EnableMethodSecurity', 'Embeddable', 'MappedSuperclass']) if (ANN(a).test(head)) r.annotations.push(a);
+  for (const a of ['Entity', 'Table', 'RestController', 'Controller', 'Service', 'Component', 'Configuration', 'Repository', 'ControllerAdvice', 'EnableWebSecurity', 'EnableMethodSecurity', 'Embeddable', 'MappedSuperclass',
+    // Jakarta EE: REST resources, EJBs, message-driven beans and CDI beans
+    'Path', 'ApplicationPath', 'Stateless', 'Stateful', 'Singleton', 'MessageDriven', 'Named', 'ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped', 'Startup']) if (ANN(a).test(head)) r.annotations.push(a);
   const table = /@Table\s*\(\s*name\s*=\s*"([^"]+)"/.exec(head); if (table) r.table = table[1];
-  const base = /@RequestMapping\s*\(([^)]*)\)/.exec(head); r.basePath = base ? mappingPath(base[1]) : '';
+  const base = /@RequestMapping\s*\(([^)]*)\)/.exec(head) ?? /@Path\s*\(([^)]*)\)/.exec(head); r.basePath = base ? mappingPath(base[1]) : '';
+  const appPath = /@ApplicationPath\s*\(([^)]*)\)/.exec(head); if (appPath) r.appPath = mappingPath(appPath[1]);
   r.mappings = []; r.fields = []; r.scheduled = []; r.views = [];
+  // The event type a CDI observer takes; @Initialized(ApplicationScoped.class) means it runs at startup.
+  const observed = (rest) => (/@Initialized\s*\(\s*ApplicationScoped/.test(rest) ? 'application start' : rest.replace(/^\s*\([^)]*\)/, '').replace(/@\w+(\([^)]*\))?/g, '').trim().split(/[\s),]/)[0]);
+  // The method declared within a few lines after an annotation: its name and line index.
+  const methodAfter = (i) => { for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) { const mm = /\b(\w+)\s*\(/.exec(lines[j].replace(/@\w+(\([^)]*\))?/g, '')); if (mm && !/^(if|for|while|return)$/.test(mm[1]) && /\)\s*(throws [\w., ]+)?\s*\{?\s*$|\(/.test(lines[j]) && /(public|private|protected|ResponseEntity|String|void|\w+>?)\s+\w+\s*\(/.test(lines[j])) return { name: mm[1], at: j }; } return { name: '', at: i }; };
+  // JAX-RS methods are public and often sit under long @Operation/@ApiResponse blocks: scan to the first line that
+  // starts with a modifier, stopping at the next verb annotation.
+  const jaxrsMethod = (i) => { for (let j = i + 1; j < Math.min(lines.length, i + 80); j++) { if (/^\s*@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b/.test(lines[j])) break; const d = /^\s*(?:(?:public|protected|private|static|final|synchronized|default)\s+)+(?:<[^>]+>\s*)?[\w<>[\],.? ]+?\s+(\w+)\s*\(/.exec(lines[j]); if (d) return { name: d[1], at: j }; } return { name: '', at: i }; };
   lines.forEach((ln, i) => {
+    // JAX-RS: a verb annotation, with the method's own @Path among the annotations around it.
+    const jx = /^\s*@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b(?!\s*\()/.exec(ln);
+    if (jx && i + 1 > (r.classLine ?? 0)) {
+      const { name, at } = jaxrsMethod(i); let s = i; while (s > (r.classLine ?? 0) && i - s < 4 && /^\s*@/.test(lines[s - 1])) s--;
+      const p = lines.slice(s, at + 1).join(' ').match(/@Path\s*\(([^)]*)\)/);
+      r.mappings.push({ verb: jx[1], path: p ? mappingPath(p[1]) : '', line: i + 1, method: name });
+    }
     const m = /@(Get|Post|Put|Delete|Patch|Request|Message)Mapping\b(?:\s*\(([^)]*)\))?/.exec(ln);
     if (m && i + 1 > (r.classLine ?? 0)) {
-      let method = ''; for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) { const mm = /\b(\w+)\s*\(/.exec(lines[j].replace(/@\w+(\([^)]*\))?/g, '')); if (mm && !/^(if|for|while|return)$/.test(mm[1]) && /\)\s*(throws [\w., ]+)?\s*\{?\s*$|\(/.test(lines[j]) && /(public|private|protected|ResponseEntity|String|void|\w+>?)\s+\w+\s*\(/.test(lines[j])) { method = mm[1]; break; } }
+      const method = methodAfter(i).name;
       const verb = VERBS[m[1] + 'Mapping']; const vm = /RequestMethod\.(\w+)/.exec(m[2] ?? '');
       r.mappings.push({ verb: vm ? vm[1] : verb, path: mappingPath(m[2]), line: i + 1, method });
     }
-    const sch = /@(Scheduled|Async|EventListener|TransactionalEventListener|KafkaListener|RabbitListener|JmsListener|SqsListener)\b(\s*\(.*)?/.exec(ln);
-    if (sch) r.scheduled.push({ kind: sch[1], args: (sch[2] ?? '').trim().slice(0, 120), line: i + 1 });
+    const sch = /@(Scheduled|Async|EventListener|TransactionalEventListener|KafkaListener|RabbitListener|JmsListener|SqsListener|Schedule|Asynchronous|Timeout|ObservesAsync|Observes)\b(\s*\(.*)?/.exec(ln);
+    // A CDI observer's args are the event it observes (the parameter after the annotation).
+    if (sch) r.scheduled.push({ kind: sch[1], args: (/^Observes/.test(sch[1]) ? observed(ln.slice(sch.index + sch[0].length - (sch[2] ?? '').length)) : sch[2] ?? '').trim().slice(0, 120), line: i + 1 });
     const rv = /return\s+"((?:redirect:|forward:)?[\w\-/{}.]+)"/.exec(ln); if (rv) r.views.push({ view: rv[1], line: i + 1 });
   });
+  // A message-driven bean listens on the destination in its activation config (or mappedName).
+  if (r.annotations.includes('MessageDriven')) {
+    const dest = /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(head) ?? /mappedName\s*=\s*"([^"]+)"/.exec(head);
+    const on = lines.findIndex((l) => /\bvoid\s+onMessage\s*\(/.test(l));
+    r.scheduled.push({ kind: 'MessageDriven', args: dest?.[1] ?? '', line: on >= 0 ? on + 1 : r.classLine });
+  }
   if (r.annotations.includes('Entity') || r.annotations.includes('Embeddable') || r.annotations.includes('MappedSuperclass')) {
     lines.forEach((ln, i) => {
       const f = /^\s*(?:private|protected|public)\s+([\w.<>, ?]+?)\s+(\w+)\s*(?:=[^;]*)?;/.exec(ln);
@@ -62,6 +86,16 @@ export function parseJava(text) {
     });
   }
   return r;
+}
+{
+  const r = parseJava('@Path("/handling")\n@Stateless\npublic class H {\n  @POST\n  @Path("/reports")\n  @Consumes("application/json")\n  public void submit(Report r) {}\n  @GET\n  public List<X> all() {}\n  public void on(@Observes(during = TransactionPhase.AFTER_SUCCESS) CargoInspected e) {}\n  @Schedule(minute = "*/2", hour = "*")\n  public void scan() {}\n}');
+  assert.deepStrictEqual([r.basePath, r.annotations], ['/handling', ['Path', 'Stateless']]);
+  assert.deepStrictEqual(r.mappings, [{ verb: 'POST', path: '/reports', line: 4, method: 'submit' }, { verb: 'GET', path: '', line: 8, method: 'all' }]);
+  const long = parseJava('@Path("/t")\npublic class T {\n  @GET\n  @Path("template")\n  @Operation(summary = "x", description = "List loans (paged)"\n      + "a"\n      + "b"\n      + "c")\n  @ApiResponse(responseCode = "200")\n  public Page<Data> template(@BeanParam P p) {}\n}');
+  assert.deepStrictEqual(long.mappings, [{ verb: 'GET', path: 'template', line: 3, method: 'template' }]);
+  assert.deepStrictEqual(r.scheduled.map((s) => [s.kind, s.args]), [['Observes', 'CargoInspected'], ['Schedule', '(minute = "*/2", hour = "*")']]);
+  const mdb = parseJava('@MessageDriven(activationConfig = {\n  @ActivationConfigProperty(propertyName = "destinationLookup", propertyValue = "java:app/jms/CargoHandledQueue")})\npublic class C implements MessageListener {\n  public void onMessage(Message m) {}\n}');
+  assert.deepStrictEqual(mdb.scheduled, [{ kind: 'MessageDriven', args: 'java:app/jms/CargoHandledQueue', line: 4 }]);
 }
 assert.deepStrictEqual(parseJava('@RestController\n@RequestMapping("/api/x")\npublic class A {\n  @GetMapping("/{id}")\n  public Foo get(Long id) {\n    return null; }\n}').mappings, [{ verb: 'GET', path: '/{id}', line: 4, method: 'get' }]);
 
@@ -93,35 +127,44 @@ export function scan(root) {
   const byExt = {}; for (const f of files) { const e = path.extname(f).slice(1) || '(none)'; byExt[e] = (byExt[e] ?? 0) + 1; }
 
   // Java model
-  const javaAll = files.filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f)).map((p) => ({ p: R(p), text: read(p), ...parseJava(read(p)) }));
+  const javaAll = files.filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f)).map((p) => { const text = read(p); return { p: R(p), text, ...parseJava(text) }; });
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
   const java = javaAll.filter((j) => !app.isExcluded(j.p));
   const entities = java.filter((j) => j.annotations.includes('Entity'));
   const entityNames = new Set(entities.map((e) => e.name));
-  const controllers = java.filter((j) => j.annotations.includes('RestController') || j.annotations.includes('Controller'));
+  // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
+  const controllers = java.filter((j) => j.annotations.includes('RestController') || j.annotations.includes('Controller') || j.annotations.includes('Path') || (j.annotations.includes('Named') && ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'].some((s) => j.annotations.includes(s))));
   const nonEntity = java.filter((j) => !j.annotations.includes('Entity'));
   const repos = java.filter((j) => /\b(Jpa|Crud|PagingAndSorting)Repository\s*</.test(j.extends ?? '') || /Repository\s*</.test(j.extends ?? ''));
   const repoFor = (n) => repos.find((r) => new RegExp(`Repository\\s*<\\s*${n}\\b`).test(r.extends));
+  // Jakarta EE repositories hold an EntityManager: their entity is the one they name most (X.class, TypedQuery<X>, "X.query").
+  const emRepos = java.filter((j) => /\bEntityManager\s+\w+\s*;/.test(j.text) && /(Repository|Dao)\b/.test(`${j.name} ${j.implements ?? ''}`)).map((j) => {
+    const n = {}; for (const m of j.text.matchAll(/\b(\w+)\.class\b|TypedQuery<(\w+)>|createNamedQuery\(\s*"(\w+)\./g)) { const e = m[1] ?? m[2] ?? m[3]; if (entityNames.has(e)) n[e] = (n[e] ?? 0) + 1; }
+    return { j, entity: Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] };
+  }).filter((x) => x.entity);
 
   // frontend: React/TS and server-rendered views
   const built = (f) => /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) || read(f).split('\n').some((l) => l.length > 3000);
   const fe = files.filter((f) => /\.(tsx?|jsx?|vue|svelte)$/.test(f) && !/\.(test|spec|d)\.[tj]sx?$/.test(f) && !/vendor|slick|jquery|bootstrap/i.test(f) && !built(f)).map((p) => ({ p: R(p), text: read(p) }));
-  const views = files.filter((f) => /\.(jsp|jspf|html|ftl|mustache)$/.test(f) && /(WEB-INF|templates|views)\//.test(f) && !/templates\/(emails?|library)\//.test(f)).map((p) => ({ p: R(p), text: read(p) }));
+  const views = files.filter((f) => ((/\.(jsp|jspf|html|ftl|mustache)$/.test(f) && /(WEB-INF|templates|views)\//.test(f)) || (/\.xhtml$/.test(f) && /src\/main\/webapp\//.test(f))) && !/templates\/(emails?|library)\//.test(f)).map((p) => ({ p: R(p), text: read(p) }));
 
   // entity funnel (R12): score + family flags
   const suffix = (n) => (n.match(/[A-Z][a-z0-9]*$/) ?? [n])[0];
   const famCount = {}; for (const e of entities) famCount[suffix(e.name)] = (famCount[suffix(e.name)] ?? 0) + 1;
   const INFRA = /(Log|Event|Token|Audit|History|PageView|Pending\w*|Failed\w*|Join\w*|Joined\w*|Variant|Mapping)$/;
   const LINE_ITEM = /(Item|Line|Detail|Details)$/;
+  // Each file's identifiers, collected once: a set lookup per entity instead of a regex over every file. Not after @
+  // or a dot, so an entity named Component doesn't count every @Component annotation or stereotype import.
+  const wordSets = new Map(), words = (text) => { let s = wordSets.get(text); if (!s) wordSets.set(text, (s = new Set(text.match(/(?<![@.\w])[A-Za-z_]\w*/g)))); return s; };
   const funnel = entities.map((e) => {
-    const re = new RegExp(`\\b${e.name}\\b`);
-    const relIn = entities.filter((o) => o !== e && re.test(o.text)).length;
-    const refs = nonEntity.filter((j) => re.test(j.text)).length;
-    const ctrl = controllers.filter((j) => re.test(j.text)).length;
-    const svc = nonEntity.filter((j) => /Service(Impl)?$/.test(j.name ?? '') && re.test(j.text)).length;
-    const feRefs = fe.filter((f) => re.test(f.text)).length;
-    const vre = new RegExp(`\\$\\{\\s*${lc(e.name)}(s|List)?[.\\s}]|var\\s*=\\s*"${lc(e.name)}"|modelAttribute\\s*=\\s*"${lc(e.name)}"`);
+    const named = (x) => words(x.text).has(e.name);
+    const relIn = entities.filter((o) => o !== e && named(o)).length;
+    const refs = nonEntity.filter(named).length;
+    const ctrl = controllers.filter(named).length;
+    const svc = nonEntity.filter((j) => /Service(Impl)?$/.test(j.name ?? '') && named(j)).length;
+    const feRefs = fe.filter(named).length;
+    const vre = new RegExp(`[$#]\\{\\s*${lc(e.name)}(s|List)?[.\\s}]|var\\s*=\\s*"${lc(e.name)}"|modelAttribute\\s*=\\s*"${lc(e.name)}"`);
     const viewRefs = views.filter((v) => vre.test(v.text)).length;
     const status = e.fields.some((f) => /^(status|state)$/i.test(f.name) || (f.enumerated && /status|state/i.test(f.type)));
     const family = famCount[suffix(e.name)] >= 3 ? suffix(e.name) : undefined;
@@ -137,7 +180,8 @@ export function scan(root) {
   // endpoints + API join (R11)
   const byName = new Map(java.map((j) => [j.name, j]));
   const inherited = (c, depth = 0) => { const b = byName.get((c.extends ?? '').replace(/<.*/, '').trim()); return b && depth < 3 ? [...b.mappings.map((m) => ({ ...m, from: b })), ...inherited(b, depth + 1)] : []; };
-  const endpoints = controllers.flatMap((c) => [...c.mappings, ...inherited(c)].map((m) => ({ verb: m.verb, path: norm((c.basePath || '') + '/' + (m.path || '')), line: m.line, handler: `${c.name}.${m.method}`, file: m.from ? m.from.p : c.p, inheritedBy: m.from ? c.p : undefined, rest: c.annotations.includes('RestController') })));
+  const restRoot = java.find((j) => j.appPath != null)?.appPath ?? ''; // JAX-RS @ApplicationPath prefixes every resource
+  const endpoints = controllers.flatMap((c) => [...c.mappings, ...inherited(c)].map((m) => ({ verb: m.verb, path: norm((c.annotations.includes('Path') ? restRoot + '/' : '') + (c.basePath || '') + '/' + (m.path || '')), line: m.line, handler: `${c.name}.${m.method}`, file: m.from ? m.from.p : c.p, inheritedBy: m.from ? c.p : undefined, rest: c.annotations.includes('RestController') || c.annotations.includes('Path') })));
   const feCalls = fe.flatMap((f) => f.text.split('\n').flatMap((l, i) => { const m = /["'`](\/api\/[^"'`\s]*)["'`]/.exec(l); if (!m) return []; const around = f.text.split('\n').slice(Math.max(0, i - 3), i + 4).join(' '); const vm = /method:\s*["'](GET|POST|PUT|DELETE|PATCH)["']/i.exec(around); return [{ path: norm(m[1]), verb: vm?.[1]?.toUpperCase(), file: f.p, line: i + 1 }]; }));
   const epByPath = new Map(); for (const e of endpoints) { if (!epByPath.has(e.path)) epByPath.set(e.path, []); epByPath.get(e.path).push(e); }
   const segMatch = (ep, call) => { const a = ep.split('/'), b = call.split('/'); return a.length === b.length && a.every((s, i) => s === '{}' || b[i] === '{}' || s === b[i]); };
@@ -150,19 +194,25 @@ export function scan(root) {
   // runtime machinery
   const pick = (re, list = java) => list.flatMap((j) => linesMatching(j.text, re).map((m) => ({ file: j.p, ...m })));
   const security = pick(/securityMatcher|requestMatchers|antMatchers|mvcMatchers|authorizeHttpRequests|authorizeRequests|permitAll|authenticated\(\)|hasRole|hasAnyRole|hasAuthority|csrf|formLogin|httpBasic|oauth2ResourceServer|sessionCreationPolicy|logout\(|@Order\(/, java.filter((j) => /HttpSecurity|SecurityFilterChain|WebSecurityConfigurerAdapter/.test(j.text)));
+  // Jakarta EE: URL security declared in web.xml.
+  for (const f of files.filter((f) => /WEB-INF\/web\.xml$/.test(f))) { const t = read(f); if (/<security-constraint>/.test(t)) security.push(...linesMatching(t, /<(security-constraint|url-pattern|http-method|role-name|auth-method|transport-guarantee)>/).map((m) => ({ file: R(f), ...m }))); }
   const methodSecurity = java.map((j) => ({ file: j.p, n: (j.text.match(/@(PreAuthorize|Secured|RolesAllowed)\b/g) ?? []).length })).filter((x) => x.n);
   // Registrations and filter classes only: imports, `x = new FilterRegistrationBean<>()` lines and record accessors like item.order() are noise.
-  const interceptors = pick(/addInterceptor|addPathPatterns|excludePathPatterns|(?:public|protected)\s+FilterRegistrationBean|FilterRegistrationBean(?:<[^>]*>)?\s+\w+\s*\(|instanceof FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/).filter((m) => !/^import\s/.test(m.text));
-  const contextScopes = pick(/@RequestScope|@SessionScope|@Scope\(|ThreadLocal<|@ControllerAdvice/);
-  const exceptionHandlers = java.filter((j) => /@ExceptionHandler/.test(j.text)).map((j) => j.p);
+  const interceptors = pick(/ContainerRequestFilter|ContainerResponseFilter|@WebFilter|@AroundInvoke|@Interceptor\b|addInterceptor|addPathPatterns|excludePathPatterns|(?:public|protected)\s+FilterRegistrationBean|FilterRegistrationBean(?:<[^>]*>)?\s+\w+\s*\(|instanceof FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/).filter((m) => !/^import\s/.test(m.text));
+  const contextScopes = pick(/@RequestScoped?\b|@SessionScoped?\b|@ConversationScoped|@ViewScoped|@Scope\(|ThreadLocal<|@ControllerAdvice/);
+  const exceptionHandlers = java.filter((j) => /@ExceptionHandler|implements\s+ExceptionMapper/.test(j.text)).map((j) => j.p);
   const background = java.flatMap((j) => j.scheduled.map((s) => ({ ...s, file: j.p, cls: j.name })));
   const sockets = java.flatMap((j) => j.mappings.filter((m) => m.verb === 'STOMP').map((m) => ({ file: j.p, line: m.line, path: m.path }))).concat(pick(/SessionDisconnectEvent|SessionConnectedEvent|registerStompEndpoints|enableSimpleBroker/));
-  const runners = java.filter((j) => /(CommandLineRunner|ApplicationRunner)/.test(j.implements ?? '')).map((j) => ({ file: j.p, line: j.classLine }));
+  const runners = java.filter((j) => /(CommandLineRunner|ApplicationRunner)/.test(j.implements ?? '') || j.annotations.includes('Startup')).map((j) => ({ file: j.p, line: j.classLine }));
+  // Jakarta Batch: jobs are XML files under META-INF/batch-jobs; JobOperator.start("name") starts them.
+  const batchJobs = files.filter((f) => /META-INF\/batch-jobs\/[\w.-]+\.xml$/.test(f)).map((f) => { const t = read(f), id = /<job\b[^>]*\bid="([^"]+)"/.exec(t)?.[1] ?? path.basename(f, '.xml');
+    const starts = pick(new RegExp(`\\.start\\(\\s*"${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)).map((s) => `${s.file}:${s.line}`);
+    return { kind: 'Batch job', args: `${id}: ${[...t.matchAll(/<(batchlet|reader|processor|writer)\b[^>]*\bref="([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`).join(', ')}${starts.length ? `; started at ${starts.join(', ')}` : ''}`, file: R(f), line: 1 }; });
   const sessionState = pick(/(session|getSession\(\))\.(set|get)Attribute\(\s*"|@SessionAttributes/).concat(views.flatMap((v) => linesMatching(v.text, /sessionScope\.|session\.getAttribute/).map((m) => ({ file: v.p, ...m })))).slice(0, 80);
   const baseClasses = Object.entries(java.reduce((acc, j) => { const b = (j.extends ?? '').replace(/<.*/, ''); if (b && !/Repository$|Exception$|^Object$/.test(b)) acc[b] = (acc[b] ?? 0) + 1; return acc; }, {})).filter(([, n]) => n >= 3).map(([b, n]) => ({ base: b, subclasses: n }));
 
   // externals: SDK imports + config keys (keys only, never values)
-  const EXT = { 'com.stripe': 'Stripe', 'com.google.api': 'Google APIs', 'com.google.cloud': 'Google Cloud', 'software.amazon': 'AWS', 'com.amazonaws': 'AWS', 'com.sendgrid': 'SendGrid', 'brevo': 'Brevo', 'sendinblue': 'Brevo', 'jakarta.mail': 'SMTP mail', 'javax.mail': 'SMTP mail', 'org.springframework.mail': 'SMTP mail', 'org.springframework.kafka': 'Kafka', 'org.springframework.amqp': 'RabbitMQ', 'redis': 'Redis', 'com.twilio': 'Twilio', 'io.minio': 'S3-compatible storage', 'com.openai': 'OpenAI', 'okhttp3': '(HTTP client)', 'org.springframework.web.reactive.function.client': '(HTTP client: WebClient)', 'org.springframework.web.client.RestTemplate': '(HTTP client: RestTemplate)', 'feign': '(HTTP client: Feign)', 'org.springframework.web.client.RestClient': '(HTTP client: RestClient)', 'java.net.http': '(HTTP client: java.net.http)' };
+  const EXT = { 'com.stripe': 'Stripe', 'com.google.api': 'Google APIs', 'com.google.cloud': 'Google Cloud', 'software.amazon': 'AWS', 'com.amazonaws': 'AWS', 'com.sendgrid': 'SendGrid', 'brevo': 'Brevo', 'sendinblue': 'Brevo', 'jakarta.mail': 'SMTP mail', 'javax.mail': 'SMTP mail', 'org.springframework.mail': 'SMTP mail', 'org.springframework.kafka': 'Kafka', 'org.springframework.amqp': 'RabbitMQ', 'redis': 'Redis', 'com.twilio': 'Twilio', 'io.minio': 'S3-compatible storage', 'com.openai': 'OpenAI', 'okhttp3': '(HTTP client)', 'org.springframework.web.reactive.function.client': '(HTTP client: WebClient)', 'org.springframework.web.client.RestTemplate': '(HTTP client: RestTemplate)', 'feign': '(HTTP client: Feign)', 'org.springframework.web.client.RestClient': '(HTTP client: RestClient)', 'java.net.http': '(HTTP client: java.net.http)', 'jakarta.jms': 'JMS', 'javax.jms': 'JMS', 'jakarta.ws.rs.client': '(HTTP client: JAX-RS)', 'javax.ws.rs.client': '(HTTP client: JAX-RS)', 'org.eclipse.microprofile.rest.client': '(HTTP client: MicroProfile)' };
   const externals = {}; for (const j of java) for (const [k, v] of Object.entries(EXT)) if (new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text)) (externals[v] ??= []).push(j.p);
   const configFiles = files.filter((f) => /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) && /resources/.test(f) && !/\/src\/test\/|[-_]e2e\b|\/e2e\//.test(f));
   const configKeys = configFiles.map((f) => { const t = read(f); const keys = f.endsWith('.properties') ? t.split('\n').map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)]).filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l)).map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`) : t.split('\n').map((l, i) => [l, i + 1]).filter(([l]) => /^\s*[\w-]+:/.test(l)).map(([l, n]) => `${l.trim().split(':')[0]}:${n}`); const db = /jdbc:(\w+)/.exec(t); return { file: R(f), db: db?.[1], keys }; });
@@ -171,12 +221,13 @@ export function scan(root) {
   const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i && !own.has(s) && !/^maven-.*-plugin$|-maven-plugin$/.test(s)).slice(0, 60) }));
 
   // state: who writes each entity (repository mutations per caller), copies of state
-  const repoEntity = new Map(repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]));
+  const repoEntity = new Map([...repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]),
+    ...emRepos.flatMap(({ j, entity }) => [j.name, ...(j.implements ?? '').split(/\s*,\s*/).map((s) => s.replace(/<.*/, '')).filter((n) => /(Repository|Dao)$/.test(n))].map((n) => [n, entity]))]);
   const writes = {};
   for (const j of nonEntity) {
     if (repoEntity.has(j.name)) continue;
-    const vars = new Map([...j.text.matchAll(/\b(\w+(?:Repository|Repo))\s+(\w+)\s*[;,)=]/g)].filter((m) => repoEntity.has(m[1])).map((m) => [m[2], repoEntity.get(m[1])]));
-    for (const [v, ent] of vars) for (const m of linesMatching(j.text, new RegExp(`\\b${v}\\.(save\\w*|delete\\w*|update\\w*|insert\\w*)\\(`))) ((writes[ent] ??= {})[j.p] ??= []).push(m.line);
+    const vars = new Map([...j.text.matchAll(/\b(\w+(?:Repository|Repo|Dao))\s+(\w+)\s*[;,)=]/g)].filter((m) => repoEntity.has(m[1])).map((m) => [m[2], repoEntity.get(m[1])]));
+    for (const [v, ent] of vars) for (const m of linesMatching(j.text, new RegExp(`\\b${v}\\.((?:save|delete|update|insert|store|persist|merge|remove)\\w*)\\(`))) ((writes[ent] ??= {})[j.p] ??= []).push(m.line);
   }
   const modifying = repos.flatMap((r) => linesMatching(r.text, /@Modifying/).map((m) => ({ file: r.p, line: m.line, entity: repoEntity.get(r.name) })));
   const caches = pick(/@Cacheable|@CacheEvict|@CachePut|@EnableCaching|expireAfter|\.ttl\(|entryTtl/).concat(fe.flatMap((f) => linesMatching(f.text, /localStorage\.|sessionStorage\.|staleTime|invalidateQueries|configureStore|\bcreate\(\s*\(set|persist\(/).map((m) => ({ file: f.p, ...m })))).slice(0, 80);
@@ -218,7 +269,7 @@ export function scan(root) {
     endpoints, frontend: { files: fe.length, routes, apiCalls: joined.length, unmatchedApiCalls: joined.filter((j) => !j.handler).map((j) => `${j.verb ?? ''} ${j.path} ${j.file}:${j.line}`), apiJoin: joined.filter((j) => j.handler).map((j) => `${j.verb ?? ''} ${j.path} ${j.file}:${j.line} -> ${j.handler}`) },
     views: { count: views.length, returnedBy: viewUse, deadViews },
     runtime: { security, methodSecurity, interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
-    background: { scheduledAsyncListeners: background, sockets, runners },
+    background: { scheduledAsyncListeners: [...background, ...batchJobs], sockets, runners },
     state: { writes: Object.fromEntries(Object.entries(writes).map(([e, byFile]) => [e, Object.entries(byFile).map(([file, lines]) => `${file}:${lines.join(',')}`)])), modifying, caches, seams },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
     seams: deep.seams, lifecycle: deep.lifecycle, schedules: deep.schedules, flows: deep.flows,
@@ -251,7 +302,7 @@ export function summarize(f) {
   const mods = {}; for (const p of f.packages) { const r = p.dir.startsWith(J) ? p.dir.slice(J.length) : p.dir; const [m, ...sub] = r.split('/'); (mods[m || '.'] ??= []).push(`${sub.join('/') || '.'} ${p.javaFiles}`); }
   push(cap(Object.entries(mods).map(([m, subs]) => { const top = subs.map((x) => [x, Number(x.split(' ').pop())]).sort((a, b) => b[1] - a[1]); return `- ${m}: ${top.reduce((n, [, c]) => n + c, 0)} files; ${top.slice(0, 8).map(([x]) => x).join(', ')}${top.length > 8 ? `, +${top.length - 8} folders` : ''}`; }), 30, 'packages'));
   sec(`Entity funnel (${f.entities.count} entities; score = relIn·3 + log refs·4 + controllers + log frontend/views·3 + status·2)`);
-  f.entities.funnel.slice(0, 20).forEach((e, i) => L.push(`${i + 1}. ${e.name} ${e.score} · ${e.file}:${e.line}${e.table ? ' table ' + e.table : ''} · relIn ${e.relIn}, refs ${e.refs}, ctrl ${e.controllers}, svc ${e.services}, fe ${e.frontendFiles}, views ${e.viewFiles}${e.status ? ', status' : ''}${e.flags.length ? ' · ' + e.flags.join(' ') : ''}${e.relations.length ? '\n   rel: ' + e.relations.join('; ') : ''}`));
+  f.entities.funnel.slice(0, 20).forEach((e, i) => L.push(`${i + 1}. ${e.name} ${e.score} · ${e.file}:${e.line}${e.table ? ' table ' + e.table : ''} · relIn ${e.relIn}, refs ${e.refs}, ctrl ${e.controllers}, svc ${e.services}, fe ${e.frontendFiles}, views ${e.viewFiles}${e.status ? ', status' : ''}${e.flags.length ? ' · ' + e.flags.join(' ') : ''}${e.relations.length ? '\n   rel: ' + e.relations.slice(0, 8).join('; ') + (e.relations.length > 8 ? `; +${e.relations.length - 8} more in facts.json` : '') : ''}`));
   if (f.entities.funnel.length > 20) L.push(`rest: ${f.entities.funnel.slice(20).map((e) => `${e.name}(${e.score}${e.flags.length ? ' ' + e.flags.join(' ') : ''})`).join(', ')}`);
   sec('Enums'); push(cap(f.entities.enums.map((e) => `- ${e.name} ${e.file}:${e.line}: ${e.values.join(' ')}`), 40, 'entities.enums'));
   sec(`Controllers (${f.endpoints.length} endpoints)`);
@@ -302,7 +353,7 @@ export function summarize(f) {
   sec('Schedules and retries, computed (plain-language timing; copy into "What runs on its own")');
   push(cap(f.schedules.map((x) => `- ${x}`), 30, 'schedules'));
   sec('Runs on its own (async, listeners, sockets; scheduled jobs are listed above)');
-  push(cap(f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled').map((b) => `- @${b.kind}${b.args ? ' ' + b.args.slice(0, 50) : ''} ${b.file}:${b.line}`), 30, 'background'));
+  push(cap(f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled' && b.kind !== 'Schedule').map((b) => (b.kind === 'Batch job' ? `- batch job ${b.args} ${b.file}` : `- @${b.kind}${b.args ? ' ' + b.args.slice(0, 50) : ''} ${b.file}:${b.line}`)), 30, 'background'));
   for (const s of f.background.sockets) L.push(`- socket ${s.file}:${s.line} ${s.path ?? s.text}`);
   for (const r of f.background.runners) L.push(`- startup runner ${r.file}:${r.line}`);
   const out = ab(L.join('\n')).replace('@@J@@', J).replace('@@F@@', F).split('@@I@@').join(I) + '\n';

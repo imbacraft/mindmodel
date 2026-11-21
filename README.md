@@ -37,7 +37,7 @@ For a system of many services, `/mindmodel-system` maps what happens **between**
 
 **[Open the live system example →](https://imbacraft.github.io/mindmodel/examples/lakeside.html)** The system mindmodel of [Lakeside Mutual](https://github.com/Microservice-API-Patterns/LakesideMutual), a sample insurance company built from Spring Boot services that talk over REST and JMS (ActiveMQ). Every citation links to the code on GitHub at the mapped commit. *Lakeside Mutual is a sample application by the authors of Microservice API Patterns; this example is independent and not affiliated with it.*
 
-Connections are **proven, not guessed**: the scanner matches every send to its listeners and every call to the service it reaches, resolving names from code, config and shared constants. Names it can't resolve (often set only in deployment config) are listed as unresolved. It reads Spring Kafka, Kafka Streams, Spring Cloud Stream, JMS and Eventuate Tram out of the box; if your services wrap Kafka or JMS in a company library, add its patterns in a `mindmodel-system.json` file in the folder.
+Connections are **proven, not guessed**: the scanner matches every send to its listeners and every call to the service it reaches, resolving names from code, config and shared constants. Names it can't resolve (often set only in deployment config) are listed as unresolved. It reads Spring Kafka, Kafka Streams, Spring Cloud Stream, JMS (Spring and Jakarta EE message-driven beans) and Eventuate Tram out of the box; if your services wrap Kafka or JMS in a company library, add its patterns in a `mindmodel-system.json` file in the folder.
 
 ## Install (Claude Code)
 ```
@@ -61,7 +61,7 @@ The page is written to `<project>/mindmodel/index.html` (or `<folder>/mindmodel-
 - git (optional; used for the "changes often / rarely" badges)
 
 ### Best results
-v1 is tuned for **Spring/Java backends** with **React, Vue, Svelte or Angular** SPAs or **server-rendered (JSP/Thymeleaf)** frontends. File-based routing (Next.js, Nuxt, SvelteKit) is not read yet. Other stacks work with generic signals and give weaker results.
+v1 is tuned for **Java backends on Spring or Jakarta EE** (JAX-RS, EJB, CDI, JMS, Jakarta Batch) with **React, Vue, Svelte or Angular** SPAs or **server-rendered (JSP/Thymeleaf/JSF)** frontends. File-based routing (Next.js, Nuxt, SvelteKit) is not read yet. Other stacks work with generic signals and give weaker results.
 
 ## How it works
 1. **Pre-flight** (`engine/preflight.mjs`): checks the code is a clean, current state. Uncommitted changes, being behind the remote, a detached HEAD or a non-default branch make it ask you to confirm before continuing.

@@ -12,7 +12,7 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
 
 ## Steps
 
-1. **Resolve the project root** (`$ARGUMENTS` or the working directory) to an absolute path, and check it exists. v1 is tuned for Spring/Java backends with React, Vue, Svelte or Angular SPAs, or server-rendered (JSP/Thymeleaf) frontends. For other stacks, say that results may be weaker, then continue.
+1. **Resolve the project root** (`$ARGUMENTS` or the working directory) to an absolute path, and check it exists. v1 is tuned for Java backends on Spring or Jakarta EE with React, Vue, Svelte or Angular SPAs, or server-rendered (JSP/Thymeleaf/JSF) frontends. For other stacks, say that results may be weaker, then continue.
 
 2. **Pre-flight: check the code is a clean, current state.**
    ```bash

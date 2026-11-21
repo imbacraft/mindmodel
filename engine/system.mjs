@@ -51,6 +51,18 @@ export function messaging(text, patterns = BUILTIN) {
   assert.deepStrictEqual(messaging(t).map((x) => `${x.kind}:${x.dir}:${x.expr}`), ['kafka:in:"orders"', 'kafka:out:"payment-orders"', 'kafka:in:"stock-orders"', 'kafka:out:"orders"', 'jms:in:"${q.audit:audit}"', 'jms:out:"invoices"', 'kafka:in:KitchenServiceChannels.COMMAND_CHANNEL', 'kafka:out:Consumer.class', 'kafka:in:K.CH']);
 }
 
+// Jakarta EE JMS, which line patterns can't read: a message-driven bean's destination sits in a multi-line activation
+// config, and a sender sends to a field injected by JNDI name (@Resource(lookup = "...")). Both sides use the JNDI name.
+export function jakartaJms(text) {
+  const lineAt = (i) => text.slice(0, i).split('\n').length, out = [];
+  if (/@MessageDriven\b/.test(text)) { const d = /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(text) ?? /mappedName\s*=\s*"([^"]+)"/.exec(text); if (d) out.push({ kind: 'jms', dir: 'in', name: d[1], line: lineAt(d.index) }); }
+  const jndi = new Map([...text.matchAll(/@Resource\s*\(\s*(?:lookup|name|mappedName)\s*=\s*"([^"]+)"\s*\)\s*(?:(?:private|protected|public|final)\s+)*[\w.]+\s+(\w+)\s*;/g)].map((m) => [m[2], m[1]]));
+  if (jndi.size) for (const m of text.matchAll(/\.send\s*\(\s*(\w+)\s*,/g)) if (jndi.has(m[1])) out.push({ kind: 'jms', dir: 'out', name: jndi.get(m[1]), line: lineAt(m.index) });
+  return out;
+}
+assert.deepStrictEqual(jakartaJms('@MessageDriven(activationConfig = {\n  @ActivationConfigProperty(\n    propertyName = "destinationLookup",\n    propertyValue = "java:app/jms/Q")})\nclass C {}'), [{ kind: 'jms', dir: 'in', name: 'java:app/jms/Q', line: 3 }]);
+assert.deepStrictEqual(jakartaJms('@Resource(lookup = "java:app/jms/Q")\nprivate Destination q;\nvoid f() { ctx.createProducer()\n  .send(q, x); }'), [{ kind: 'jms', dir: 'out', name: 'java:app/jms/Q', line: 4 }]);
+
 // Folder-wide index for resolving channel expressions: string constants (Class.NAME) and class names to FQNs.
 export function codeIndex(files) {
   const constants = new Map(), fqn = new Map(), aggregateOf = new Map();
@@ -125,7 +137,9 @@ export function findServices(folder) {
 
 // --- the system scan ---------------------------------------------------------------
 const javaFiles = (dir) => { const out = []; const walk = (d) => { if (!fs.existsSync(d)) return; for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) { if (!/^(test|target|build)$/.test(e.name)) walk(p); } else if (e.name.endsWith('.java')) out.push(p); } }; walk(path.join(dir, 'src/main')); return out; };
-const isApp = (dir) => javaFiles(dir).some((f) => { const t = fs.readFileSync(f, 'utf8'); return /static\s+void\s+main\s*\(/.test(t) && /SpringApplication|@SpringBootApplication|@SpringBootConfiguration/.test(t); });
+// An app is a Spring Boot main, or a Jakarta EE / MicroProfile deployable (a WAR or EAR, or a server plugin in its build).
+const eeApp = (dir) => { const p = path.join(dir, 'pom.xml'); if (!fs.existsSync(p)) return false; const t = fs.readFileSync(p, 'utf8'); return !/<packaging>\s*pom\s*</.test(t) && /<packaging>\s*(war|ear)\s*<|quarkus-maven-plugin|liberty-maven-plugin|wildfly(-jar)?-maven-plugin|payara-micro-maven-plugin|tomee-maven-plugin/.test(t); };
+const isApp = (dir) => eeApp(dir) || javaFiles(dir).some((f) => { const t = fs.readFileSync(f, 'utf8'); return /static\s+void\s+main\s*\(/.test(t) && /SpringApplication|@SpringBootApplication|@SpringBootConfiguration/.test(t); });
 
 export function systemScan(folder) {
   const modules = findServices(folder);
@@ -149,6 +163,7 @@ export function systemScan(folder) {
     for (const f of java) {
       const t = fs.readFileSync(f, 'utf8'), r = path.relative(folder, f);
       for (const x of messaging(t, patterns)) { const res = channelName(x, t, keys, ix); msgs.push({ kind: x.kind, dir: x.dir, line: x.line, ...res, raw: x.expr, cite: `${r}:${x.line}` }); }
+      for (const x of jakartaJms(t)) msgs.push({ ...x, via: 'JNDI name', raw: x.name, cite: `${r}:${x.line}` });
       for (const c of restCalls(t)) calls.push({ ...c, cite: `${r}:${c.line}` });
     }
     for (const [k, v] of keys) { const u = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::(\d+))?(?=[:/]|$)/.exec(v.value); if (u && u[1] !== 'www' && k !== 'server.port') calls.push({ host: u[1] === 'localhost' ? `localhost:${u[2]}` : u[1], path: '', via: 'config', cite: `${v.file}:${v.line}` }); }

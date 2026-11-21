@@ -7,6 +7,10 @@ import { index, methodAt } from './java.mjs';
 
 // Cite methods by name only: `validate.mjs --fix` fills in the exact range, and the digest stays short.
 const cite = (file, m) => `${file}#${m.name}`;
+// Spring and Jakarta EE spellings of the same ideas.
+const WRITE = /^(save|delete|update|insert|store|persist|merge|remove)/, ASYNC = /^(Async|Asynchronous)\b/, JOB = /^(Scheduled|Schedule)\b/;
+// A transaction attribute that suspends or skips the transaction.
+const NO_TX = /^(Transactional|TransactionAttribute)\b.*\b(NOT_SUPPORTED|NEVER|SUPPORTS)\b/;
 const KNOWN = { RestTemplate: 'HTTP', WebClient: 'HTTP', RestClient: 'HTTP', HttpClient: 'HTTP', JavaMailSender: 'mail', MailSender: 'mail', KafkaTemplate: 'Kafka', RabbitTemplate: 'RabbitMQ', JmsTemplate: 'JMS', SqsTemplate: 'SQS' };
 
 // --- time in plain words ----------------------------------------------------------
@@ -27,6 +31,8 @@ export function humanCron(expr) {
   return `cron "${expr}"`;
 }
 export function humanSchedule(args) {
+  // EJB @Schedule: calendar attributes, each defaulting as the spec says (second 0, minute 0, hour 0, every day).
+  if (/\b(second|minute|hour|dayOfMonth|month|dayOfWeek)\s*=\s*"/.test(args)) { const a = (k, d) => new RegExp(`\\b${k}\\s*=\\s*"([^"]*)"`).exec(args)?.[1] ?? d; return humanCron(`${a('second', '0')} ${a('minute', '0')} ${a('hour', '0')} ${a('dayOfMonth', '*')} ${a('month', '*')} ${a('dayOfWeek', '*')}`); }
   const num = (k) => { const m = new RegExp(`\\b${k}\\s*=\\s*([\\d_]+)L?`).exec(args); return m ? Number(m[1].replace(/_/g, '')) : null; };
   const parts = [];
   const cron = /cron\s*=\s*"([^"]+)"/.exec(args); if (cron) parts.push(/^\$\{/.test(cron[1]) ? `cron from config ${cron[1]}` : humanCron(cron[1]));
@@ -40,6 +46,8 @@ assert.equal(humanCron('0 0 3 * * *'), 'daily 03:00');
 assert.equal(humanCron('0 */15 * * * *'), 'every 15 min');
 assert.equal(humanSchedule('(fixedRate = 600_000)'), 'every 10 min');
 assert.equal(humanSchedule('(fixedDelay = 30000)'), '30 s after each run ends');
+assert.equal(humanSchedule('(minute = "*/2", hour = "*")'), 'every 2 min');
+assert.equal(humanSchedule('(hour = "3")'), 'daily 03:00');
 
 // Time windows and retry settings written inside a method (e.g. "older than 5 min").
 const WINDOW = /(?:minus|plus)(Seconds|Minutes|Hours|Days|Weeks)\(\s*(\d+)|Duration\.of(Seconds|Minutes|Hours|Days)\(\s*(\d+)/g;
@@ -66,7 +74,14 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     for (const m of f.ix.src.matchAll(/(?:^|[;{}])\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:private|protected|public|final|static)\s+)*([A-Z][\w.]*)(?:<[^;=(){}]*>)?\s+(\w+)\s*(?=[;=])/g))
       if (!inMethod(m.index + m[0].length)) f.fields.set(m[2], m[1].split('.').pop());
     for (const [v, t] of f.fields) { if (KNOWN[t]) f.outside.set(v, KNOWN[t]); else if (f.outside.has(t)) f.outside.set(v, f.outside.get(t)); }
-    f.txClass = f.ix.types.some((t) => t.annotations.some((a) => /^Transactional\b/.test(a)));
+    f.txClass = f.ix.types.some((t) => t.annotations.some((a) => /^Transactional\b/.test(a) && !NO_TX.test(a)));
+    // EJBs are transactional by default (container-managed, REQUIRED) unless the class opts out.
+    // Read from the text: an activationConfig = { ... } array hides the class's own annotations from the brace index.
+    const ejb = /import\s+(jakarta|javax)\.ejb\.(\*|Stateless|Stateful|Singleton|MessageDriven)\b/.test(f.text) && /@(Stateless|Stateful|Singleton|MessageDriven)\b/.test(f.text);
+    f.mdb = ejb && /@MessageDriven\b/.test(f.text);
+    if (ejb && !f.ix.types.some((t) => t.annotations.some((a) => NO_TX.test(a) || /^TransactionManagement\b.*\bBEAN\b/.test(a)))) f.txClass = true;
+    // Under JTA (EJBs, jakarta.transaction) a JMS send joins the transaction: it is delivered only on commit.
+    f.jta = ejb || /import\s+(jakarta|javax)\.transaction\.(Transactional|\*)/.test(f.text);
   }
   // Calls in a method's own body (nested methods such as afterCommit() excluded: they run at another time).
   const callCache = new Map();
@@ -97,23 +112,24 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     }
     return res;
   };
-  const savesOf = (f, m) => reach(f, m).flatMap((r) => callsIn(f, r).filter((c) => /^(save|delete|update|insert)/.test(c.method) && repoEntity.has(f.fields.get(c.recv))).map((c) => ({ line: c.line, what: `${repoEntity.get(f.fields.get(c.recv))} ${c.method}` })));
-  const isTx = (f, m) => m.annotations.some((a) => /^Transactional\b/.test(a) && !/readOnly\s*=\s*true/.test(a)) || (f.txClass && m.isPublic);
+  const savesOf = (f, m) => reach(f, m).flatMap((r) => callsIn(f, r).filter((c) => WRITE.test(c.method) && repoEntity.has(f.fields.get(c.recv))).map((c) => ({ line: c.line, what: `${repoEntity.get(f.fields.get(c.recv))} ${c.method}` })));
+  const isTx = (f, m) => !m.annotations.some((a) => NO_TX.test(a)) && (m.annotations.some((a) => /^(Transactional|TransactionAttribute)\b/.test(a) && !/readOnly\s*=\s*true/.test(a)) || (f.txClass && m.isPublic));
+  const enlisted = (f, what) => f.jta && /^JMS /.test(what);
 
   const seams = [];
   for (const f of files) for (const m of f.ix.methods) {
     if (!isTx(f, m)) continue;
     const here = cite(f.p, m), out = [], span = reach(f, m);
     const via = (r) => (r === m ? '' : ` in ${r.name}`);
-    for (const r of span) for (const c of direct(f, r)) out.push(`calls ${c.what} at :${c.line}${via(r)}`);
+    for (const r of span) for (const c of direct(f, r)) if (!enlisted(f, c.what)) out.push(`calls ${c.what} at :${c.line}${via(r)}`);
     for (const r of span) for (const c of callsIn(f, r)) for (const { g, m: t } of targets(f, c)) {
-      if (t.annotations.some((a) => /^Async\b/.test(a))) out.push(`starts @Async ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
-      else for (const d of direct(g, t)) out.push(`calls ${d.what} via ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
+      if (t.annotations.some((a) => ASYNC.test(a))) out.push(`starts @Async ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
+      else for (const d of direct(g, t)) if (!enlisted(f, d.what) && !enlisted(g, d.what)) out.push(`calls ${d.what} via ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
     }
     if (out.length) seams.push(`OUTSIDE CALL IN TRANSACTION ${f.name}.${m.name} ${here}: ${[...new Set(out)].join('; ')}. If the transaction rolls back after this, the outside side stays done.`);
     if (m.annotations.some((a) => /REQUIRES_NEW/.test(a))) seams.push(`NEW TRANSACTION ${f.name}.${m.name} ${here}: commits on its own, even if the caller rolls back.`);
     for (const n of f.ix.methods.filter((n) => n.name === 'afterCommit' && span.some((r) => n.open > r.open && n.close < r.close))) {
-      const then = callsIn(f, n).flatMap((c) => targets(f, c).map(({ g, m: t }) => `${g.name}.${t.name}${t.annotations.some((a) => /^Async\b/.test(a)) ? ' (@Async)' : ''}`));
+      const then = callsIn(f, n).flatMap((c) => targets(f, c).map(({ g, m: t }) => `${g.name}.${t.name}${t.annotations.some((a) => ASYNC.test(a)) ? ' (@Async)' : ''}`));
       seams.push(`AFTER COMMIT ${f.name}.${m.name} ${here}: afterCommit at :${n.start} runs ${then.join(', ') || 'code'} only once the transaction has committed; if that fails, the commit is not undone.`);
     }
   }
@@ -125,8 +141,9 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     seams.push(`OUTSIDE CALL THEN SAVE, NO TRANSACTION ${f.name}.${m.name} ${cite(f.p, m)}: ${[...new Set(out.map((o) => `${o.what} at :${o.line}`))].slice(0, 3).join('; ')}; then ${[...new Set(saves.map((x) => `${x.what} at :${x.line}`))].slice(0, 3).join('; ')}. If a save fails, the outside side stays done.`);
   }
   for (const f of files) for (const m of f.ix.methods) {
+    if (m.annotations.some((a) => /^Observes(Async)?\b.*AFTER_(SUCCESS|COMPLETION)/.test(a))) seams.push(`AFTER-COMMIT OBSERVER ${f.name}.${m.name} ${cite(f.p, m)}: runs after the firing transaction commits; if it fails, the commit is not undone.`);
     if (m.annotations.some((a) => /^TransactionalEventListener\b/.test(a))) seams.push(`AFTER-COMMIT LISTENER ${f.name}.${m.name} ${cite(f.p, m)}: runs after the publishing transaction commits.`);
-    if (!m.annotations.some((a) => /^Scheduled\b/.test(a))) continue;
+    if (!m.annotations.some((a) => JOB.test(a))) continue;
     const dels = callsIn(f, m).filter((c) => /^delete/.test(c.method) && repoEntity.has(f.fields.get(c.recv)));
     for (const c of dels) seams.push(`JOB DELETES ${repoEntity.get(f.fields.get(c.recv))} rows ${f.name}.${m.name} ${cite(f.p, m)} (${c.method} at :${c.line}): check whether an outside callback can still arrive for a deleted row.`);
   }
@@ -195,8 +212,8 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   // Schedules and retries in plain words, with the time windows each job uses.
   const schedules = [];
   for (const f of files) for (const m of f.ix.methods) {
-    const sch = m.annotations.find((a) => /^Scheduled\b/.test(a));
-    const raw = sch && f.lines.slice(Math.max(0, m.start - 6), m.start).reverse().find((l) => /@Scheduled/.test(l));
+    const sch = m.annotations.find((a) => JOB.test(a));
+    const raw = sch && f.lines.slice(Math.max(0, m.start - 6), m.start).reverse().find((l) => /@Schedul(e|ed)\b/.test(l));
     if (sch) { const w = windowsIn(f.lines, m); schedules.push(`${f.name}.${m.name} ${cite(f.p, m)}: ${humanSchedule(raw ?? sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`); }
     const retry = f.lines.slice(Math.max(0, m.start - 6), m.start).join(' ').match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);
     if (retry) {
@@ -216,8 +233,8 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     for (const c of calls) {
       if (f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method)) steps.push({ line: c.line, text: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` });
       else if (conditionalNames.has(c.method) && repoEntity.has(f.fields.get(c.recv))) steps.push({ line: c.line, text: `conditional ${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
-      else if (/^(save|delete|update|insert)/.test(c.method) && repoEntity.has(f.fields.get(c.recv))) steps.push({ line: c.line, text: `${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
-      else for (const { g, m: t } of targets(f, c).slice(0, 1)) steps.push({ line: c.line, into: () => { if (t.annotations.some((a) => /^Async\b/.test(a))) ev.push(`async ${g.name}.${t.name}`); else if (depth) walk(g, t, depth - 1, seen, ev); } });
+      else if (WRITE.test(c.method) && repoEntity.has(f.fields.get(c.recv))) steps.push({ line: c.line, text: `${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
+      else for (const { g, m: t } of targets(f, c).slice(0, 1)) steps.push({ line: c.line, into: () => { if (t.annotations.some((a) => ASYNC.test(a))) ev.push(`async ${g.name}.${t.name}`); else if (depth) walk(g, t, depth - 1, seen, ev); } });
     }
     for (const c of local) for (const n of f.ix.methods.filter((n) => n.name === c.name && n !== m && !(n.open > m.open && n.close < m.close)).slice(0, 1)) steps.push({ line: c.line, into: () => walk(f, n, depth, seen, ev) });
     if (statusRe) f.lines.slice(m.start - 1, m.end).forEach((l, i) => { const x = statusRe.exec(l); if (x) steps.push({ line: m.start + i, text: `→ ${x[2]}` }); });
@@ -229,7 +246,8 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     const f = files.find((x) => x.p === e.file), m = f && f.ix.methods.find((mm) => mm.start >= e.line && mm.start <= e.line + 6);
     if (m) entries.push({ label: `${e.verb} ${e.path}`, f, m });
   }
-  for (const f of files) for (const m of f.ix.methods) if (m.annotations.some((a) => /^Scheduled\b/.test(a))) entries.push({ label: 'job', f, m });
+  for (const f of files) for (const m of f.ix.methods) if (m.annotations.some((a) => JOB.test(a))) entries.push({ label: 'job', f, m });
+  for (const f of files.filter((f) => f.mdb)) for (const m of f.ix.methods.filter((m) => m.name === 'onMessage')) entries.push({ label: 'message', f, m });
   const core = shortlist ? [...shortlist] : [];
   const flows = entries.map(({ label, f, m }) => {
     const ev = []; walk(f, m, 3, new Set(), ev);
@@ -237,7 +255,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     const score = ev.filter((x) => /\(\)$/.test(x)).length * 3 + ev.filter((x) => /^→/.test(x)).length * 2 + ev.filter((x) => core.some((c) => x.includes(c))).length * 2 + ev.length;
     const steps = ev.reduce((acc, x) => { const last = acc[acc.length - 1]; if (last && last.x === x) last.n++; else acc.push({ x, n: 1 }); return acc; }, []).map(({ x, n }) => (n > 1 ? `${x} ×${n}` : x));
     return { score, line: `${label} ${cite(f.p, m)}${tx}: ${steps.join('; ')}`, ev, file: f.p };
-  }).filter((x) => x.ev.some((e) => !/^(save|delete|update|insert) /.test(e) || core.some((c) => e.includes(c))) && x.ev.length >= 2).sort((a, b) => b.score - a.score);
+  }).filter((x) => x.ev.some((e) => !/^(save|delete|update|insert|store|persist|merge|remove) /.test(e) || core.some((c) => e.includes(c))) && x.ev.length >= 2).sort((a, b) => b.score - a.score);
   // Variety: identical chains collapse to one, and no controller contributes more than two.
   const seenChain = new Set(), perFile = {}, picked = [];
   for (const x of flows) { const sig = x.ev.join('|'); if (seenChain.has(sig) || (perFile[x.file] ?? 0) >= 2) continue; seenChain.add(sig); perFile[x.file] = (perFile[x.file] ?? 0) + 1; picked.push(x); }
@@ -293,6 +311,33 @@ export function configKeys(text, props = false) {
   assert.equal(k.get('spring.datasource.url').value, '${DB_URL}');
 }
 
+// Jakarta EE and MicroProfile apps have no main(): a server plugin in the build runs them. Profiles that are not
+// active by default hold alternative servers, not the default run.
+const RUNTIMES = [[/quarkus-maven-plugin/, 'quarkus:dev', 'Quarkus', 8080], [/liberty-maven-plugin/, 'liberty:run', 'Open Liberty', 9080], [/wildfly(-jar)?-maven-plugin/, 'wildfly:run', 'WildFly', 8080],
+  [/payara-micro-maven-plugin/, 'payara-micro:start', 'Payara Micro', 8080], [/tomee-maven-plugin/, 'tomee:run', 'TomEE', 8080], [/cargo-maven\d?-plugin/, 'cargo:run', null, 8080]];
+export function eeBoot(pom, B, mvn, prefix = '') {
+  const profiles = [...pom.matchAll(/<profile>[\s\S]*?<\/profile>/g)].map((m) => ({ text: m[0], from: m.index, to: m.index + m[0].length, id: /<id>([^<]+)/.exec(m[0])?.[1], on: /<activeByDefault>\s*true/.test(m[0]) }));
+  const off = profiles.filter((p) => !p.on), inOff = (i) => off.some((p) => i >= p.from && i < p.to);
+  const first = (re) => [...pom.matchAll(new RegExp(re.source, 'g'))].find((m) => !inOff(m.index));
+  const rt = RUNTIMES.map((r) => ({ r, m: first(r[0]) })).filter((x) => x.m).sort((a, b) => a.m.index - b.m.index)[0];
+  const packaging = /<packaging>\s*(war|ear)\s*</.exec(pom)?.[1];
+  if (!rt && !packaging) return null;
+  const own = pom.replace(/<parent>[\s\S]*?<\/parent>/, ''), fin = /<finalName>([^<$]+)<\/finalName>/.exec(own)?.[1], name = fin ?? /<artifactId>([^<]+)<\/artifactId>/.exec(own)?.[1] ?? 'the app';
+  if (!rt) return [`run: no server plugin in ${B}: build with ${prefix}${mvn} clean package and deploy target/${name}.${packaging} to a Jakarta EE server`];
+  const [, goal, label, port] = rt.r, line = pom.slice(0, rt.m.index).split('\n').length;
+  const c = /<containerId>\s*([a-z]+)/.exec(pom.slice(rt.m.index, rt.m.index + 2000))?.[1], server = label ?? (c ? c[0].toUpperCase() + c.slice(1) : 'the configured server');
+  const out = [`run: ${prefix}${mvn} ${/:dev$/.test(goal) ? '' : 'clean package '}${goal} (${B}:${line}): runs the app in ${server}`,
+    `url: http://localhost:${port}/${label === 'Quarkus' ? '' : `${name}/`} (${server}'s default port${label === 'Quarkus' ? '' : '; context root = the WAR name'})`];
+  const alt = off.filter((p) => p.id).map((p) => ({ p, r: RUNTIMES.find((r) => r[0].test(p.text)) })).filter((x) => x.r);
+  if (alt.length) out.push(`other servers (Maven profiles): ${alt.map(({ p, r }) => `-P${p.id} ${r[1]}`).join(', ')}`);
+  return out;
+}
+{
+  const pom = '<project><artifactId>shop</artifactId><packaging>war</packaging><build><finalName>shop</finalName></build><profiles>\n<profile><id>payara</id><activation><activeByDefault>true</activeByDefault></activation>\n<plugin><artifactId>cargo-maven3-plugin</artifactId><containerId>payara</containerId></plugin></profile>\n<profile><id>openliberty</id><plugin><artifactId>liberty-maven-plugin</artifactId></plugin></profile></profiles></project>';
+  assert.deepStrictEqual(eeBoot(pom, 'pom.xml', './mvnw'), ['run: ./mvnw clean package cargo:run (pom.xml:3): runs the app in Payara', "url: http://localhost:8080/shop/ (Payara's default port; context root = the WAR name)", 'other servers (Maven profiles): -Popenliberty liberty:run']);
+  assert.equal(eeBoot('<project><packaging>jar</packaging></project>', 'pom.xml', 'mvn'), null);
+}
+
 export function bootFacts({ root, files, rel, git, app }) {
   const read = (p) => fs.readFileSync(p, 'utf8');
   const lineOf = (text, re) => { const i = text.split('\n').findIndex((l) => re.test(l)); return i < 0 ? null : i + 1; };
@@ -302,6 +347,7 @@ export function bootFacts({ root, files, rel, git, app }) {
   const out = [];
   const wrapper = fs.existsSync(path.join(dir, gradle ? 'gradlew' : 'mvnw'));
   const prefix = path.dirname(B) === '.' ? '' : `cd ${path.dirname(B)} && `;
+  if (!app?.primary && !gradle) { const ee = eeBoot(b, B, wrapper ? './mvnw' : 'mvn', prefix); if (ee) return ee; }
   // A separate module only if it has its own build file; otherwise it is just a source folder of the root build.
   const ownBuild = (m) => files.some((f) => new RegExp(`^${m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(pom\\.xml|build\\.gradle(\\.kts)?)$`).test(rel(f)));
   const mod = app?.primary && app.primary.module !== '.' && app.primary.module !== path.dirname(B) && ownBuild(app.primary.module) ? app.primary.module : null;
