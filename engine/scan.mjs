@@ -162,7 +162,7 @@ export function scan(root) {
   // externals: SDK imports + config keys (keys only, never values)
   const EXT = { 'com.stripe': 'Stripe', 'com.google.api': 'Google APIs', 'com.google.cloud': 'Google Cloud', 'software.amazon': 'AWS', 'com.amazonaws': 'AWS', 'com.sendgrid': 'SendGrid', 'brevo': 'Brevo', 'sendinblue': 'Brevo', 'jakarta.mail': 'SMTP mail', 'javax.mail': 'SMTP mail', 'org.springframework.mail': 'SMTP mail', 'org.springframework.kafka': 'Kafka', 'org.springframework.amqp': 'RabbitMQ', 'redis': 'Redis', 'com.twilio': 'Twilio', 'io.minio': 'S3-compatible storage', 'com.openai': 'OpenAI', 'okhttp3': '(HTTP client)', 'org.springframework.web.reactive.function.client': '(HTTP client: WebClient)', 'org.springframework.web.client.RestTemplate': '(HTTP client: RestTemplate)', 'feign': '(HTTP client: Feign)', 'org.springframework.web.client.RestClient': '(HTTP client: RestClient)', 'java.net.http': '(HTTP client: java.net.http)' };
   const externals = {}; for (const j of java) for (const [k, v] of Object.entries(EXT)) if (new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text)) (externals[v] ??= []).push(j.p);
-  const configFiles = files.filter((f) => /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) && /resources/.test(f));
+  const configFiles = files.filter((f) => /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) && /resources/.test(f) && !/\/src\/test\/|[-_]e2e\b|\/e2e\//.test(f));
   const configKeys = configFiles.map((f) => { const t = read(f); const keys = f.endsWith('.properties') ? t.split('\n').map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)]).filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l)).map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`) : t.split('\n').map((l, i) => [l, i + 1]).filter(([l]) => /^\s*[\w-]+:/.test(l)).map(([l, n]) => `${l.trim().split(':')[0]}:${n}`); const db = /jdbc:(\w+)/.exec(t); return { file: R(f), db: db?.[1], keys }; });
   const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i).slice(0, 60) }));
 
@@ -231,17 +231,21 @@ export function summarize(f) {
   const push = (lines) => L.push(...lines);
   const prefix = (list) => { if (!list.length) return ''; let p = list[0]; for (const s of list) while (!s.startsWith(p)) p = p.slice(0, p.lastIndexOf('/', p.length - 2) + 1); return p; };
   const J = prefix(f.packages.map((p) => p.dir + '/')), F = prefix(f.frontend.routes.map((r) => r.file).concat(f.frontend.apiJoin.map((s) => s.split(' ').find((x) => x.includes(':')) ?? '')).filter(Boolean));
-  const ab = (s) => String(s).split(J).join(J.length > 8 ? 'J/' : J).split(F).join(F.length > 8 ? 'F/' : F);
+  // Multi-module repos repeat "<module>/src/main/java/<org package>/" in every path: shorten that inner part to "~/".
+  const innerCount = {}; for (const p of f.packages) { const m = /src\/main\/java\/((?:[a-z0-9_]+\/){1,3})/.exec(p.dir + '/'); if (m) for (let k = 1; k <= m[1].split('/').length - 1; k++) { const pre = 'src/main/java/' + m[1].split('/').slice(0, k).join('/') + '/'; innerCount[pre] = (innerCount[pre] ?? 0) + p.javaFiles; } }
+  const total = f.packages.reduce((n, p) => n + p.javaFiles, 0);
+  const I = J.length > 8 ? '' : Object.entries(innerCount).filter(([, n]) => n >= total * 0.6).sort((a, b) => b[0].length - a[0].length)[0]?.[0] ?? '';
+  const ab = (s) => { let t = String(s).split(J).join(J.length > 8 ? 'J/' : J).split(F).join(F.length > 8 ? 'F/' : F); return I ? t.split(I).join('~/') : t; };
   L.push(`# facts for ${path.basename(f.root)} (scanned ${f.scannedAt})`, 'Paths are relative to the project root. Details: facts.json (search it, don\'t read it whole).');
-  if (J.length > 8) L.push('**J/ = @@J@@**'); if (F.length > 8) L.push('**F/ = @@F@@**'); L.push('Expand J/ and F/ to the full path in every citation.');
+  if (J.length > 8) L.push('**J/ = @@J@@**'); if (I) L.push('**~/ = @@I@@** (inside each module: "mod/~/x" means "mod/@@I@@x")'); if (F.length > 8) L.push('**F/ = @@F@@**'); L.push('Expand J/, F/ and ~/ to the full path in every citation.');
   sec('Git'); L.push(f.git ? `HEAD ${f.git.head}${f.git.dirty ? ' + local changes' : ''}; ${f.git.totalCommits} commits; activity window: ${f.git.window ? `${f.git.window.since} (${f.git.window.commits} commits)` : 'none (too few commits)'}` : 'no git history');
-  sec('Build & externals'); for (const b of f.build) L.push(`- ${b.file}: ${b.deps.join(', ')}`);
+  sec('Build & externals'); push(cap(f.build.map((b) => `- ${b.file}: ${b.deps.slice(0, 20).join(', ')}${b.deps.length > 20 ? `, +${b.deps.length - 20}` : ''}`), 8, 'build'));
   for (const [k, v] of Object.entries(f.externals.sdkImports)) L.push(`- ${k}: ${v.join(', ')}`);
   for (const c of f.externals.config) L.push(`- config ${c.file}${c.db ? ` (db: ${c.db})` : ''}: ${c.keys.length} keys (names only in facts.json)`);
   sec(`Docs (${f.docs.length})`); push(cap(f.docs.map((d) => `- ${d.file} (${d.kb} KB)${d.title ? ' · ' + d.title : ''}`), 40, 'docs'));
   sec('Packages (java files per module/subfolder)');
   const mods = {}; for (const p of f.packages) { const r = p.dir.startsWith(J) ? p.dir.slice(J.length) : p.dir; const [m, ...sub] = r.split('/'); (mods[m || '.'] ??= []).push(`${sub.join('/') || '.'} ${p.javaFiles}`); }
-  push(cap(Object.entries(mods).map(([m, subs]) => `- ${m}: ${subs.slice(0, 25).join(', ')}${subs.length > 25 ? `, +${subs.length - 25}` : ''}`), 40, 'packages'));
+  push(cap(Object.entries(mods).map(([m, subs]) => { const top = subs.map((x) => [x, Number(x.split(' ').pop())]).sort((a, b) => b[1] - a[1]); return `- ${m}: ${top.reduce((n, [, c]) => n + c, 0)} files; ${top.slice(0, 8).map(([x]) => x).join(', ')}${top.length > 8 ? `, +${top.length - 8} folders` : ''}`; }), 30, 'packages'));
   sec(`Entity funnel (${f.entities.count} entities; score = relIn·3 + log refs·4 + controllers + log frontend/views·3 + status·2)`);
   f.entities.funnel.slice(0, 20).forEach((e, i) => L.push(`${i + 1}. ${e.name} ${e.score} · ${e.file}:${e.line}${e.table ? ' table ' + e.table : ''} · relIn ${e.relIn}, refs ${e.refs}, ctrl ${e.controllers}, svc ${e.services}, fe ${e.frontendFiles}, views ${e.viewFiles}${e.status ? ', status' : ''}${e.flags.length ? ' · ' + e.flags.join(' ') : ''}${e.relations.length ? '\n   rel: ' + e.relations.join('; ') : ''}`));
   if (f.entities.funnel.length > 20) L.push(`rest: ${f.entities.funnel.slice(20).map((e) => `${e.name}(${e.score}${e.flags.length ? ' ' + e.flags.join(' ') : ''})`).join(', ')}`);
@@ -267,7 +271,7 @@ export function summarize(f) {
   for (const l of f.boot.computed) L.push(`- ${l}`);
   sec('Boot details (entry points, profile switches)');
   for (const m of f.boot.mains) L.push(`- main ${m.file}:${m.line ?? ''}`);
-  for (const e of f.boot.frontend) L.push(`- frontend ${e.file}: ${e.lines.map((l) => `${l.line} ${l.text}`).join(' | ')}`);
+  for (const e of f.boot.frontend.slice(0, 6)) L.push(`- frontend ${e.file}: ${e.lines.slice(0, 4).map((l) => `${l.line} ${l.text.slice(0, 80)}`).join(' | ')}`);
   if (f.boot.profiles.length) L.push(`- profile configs: ${f.boot.profiles.join(', ')}`);
   for (const s of f.boot.switches.slice(0, 12)) L.push(`- switch ${s.file}:${s.line} ${s.text}`);
   for (const c of f.boot.compose) L.push(`- compose ${c.file}: ${c.services.join(', ')}`);
@@ -294,10 +298,10 @@ export function summarize(f) {
   sec('Schedules and retries, computed (plain-language timing; copy into "What runs on its own")');
   push(cap(f.schedules.map((x) => `- ${x}`), 30, 'schedules'));
   sec('Runs on its own (async, listeners, sockets; scheduled jobs are listed above)');
-  push(cap(f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled').map((b) => `- @${b.kind}${b.args ? ' ' + b.args : ''} ${b.file}:${b.line}`), 30, 'background'));
+  push(cap(f.background.scheduledAsyncListeners.filter((b) => b.kind !== 'Scheduled').map((b) => `- @${b.kind}${b.args ? ' ' + b.args.slice(0, 50) : ''} ${b.file}:${b.line}`), 30, 'background'));
   for (const s of f.background.sockets) L.push(`- socket ${s.file}:${s.line} ${s.path ?? s.text}`);
   for (const r of f.background.runners) L.push(`- startup runner ${r.file}:${r.line}`);
-  const out = ab(L.join('\n')).replace('@@J@@', J).replace('@@F@@', F) + '\n';
+  const out = ab(L.join('\n')).replace('@@J@@', J).replace('@@F@@', F).split('@@I@@').join(I) + '\n';
   return out.length > 70_000 ? out.replace('\n', `\n**Over the 70 KB digest budget (${Math.round(out.length / 1024)} KB): read sections selectively.**\n`) : out;
 }
 
