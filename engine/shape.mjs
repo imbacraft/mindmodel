@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Prints the mindmodel.json shape compactly (field names, types, required marks) from the schema,
 // so the writer reads ~1/4 of the schema's size. The validator still enforces the full schema.
-// Usage: node shape.mjs
+// Usage: node shape.mjs [system]   (no argument: the single-app schema)
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
@@ -25,7 +25,7 @@ export function shape(node, defs, depth = 0) {
 assert.equal(shape({ type: 'object', required: ['a'], properties: { a: { type: 'string' }, b: { type: 'array', items: { type: 'integer' } } } }, {}), '{\n  a: string\n  b?: [integer]\n}');
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const schema = JSON.parse(fs.readFileSync(path.join(here, '../schema/mindmodel.schema.json'), 'utf8'));
+  const schema = JSON.parse(fs.readFileSync(path.join(here, `../schema/${process.argv[2] === 'system' ? 'system' : 'mindmodel'}.schema.json`), 'utf8'));
   console.log('// "?" = optional. cite = "path", "path:line" or "path:start-end", optionally "#symbol". [[id|text]] links a concept/region in sentences.');
-  console.log(shape(schema, schema.$defs));
+  console.log(shape(schema, schema.$defs ?? {}));
 }
