@@ -250,7 +250,7 @@ html { scroll-behavior: smooth; }
     <div class="app" id="app"></div>
     <ol id="toc"></ol>
     <div class="tools">
-      <label class="linkmode">Open code in<br><select id="linkmode"><option value="vscode">VS Code</option><option value="idea">IntelliJ IDEA</option><option value="none">Show path only</option></select></label>
+      <label class="linkmode">Open code in<br><select id="linkmode"><option value="vscode">VS Code</option><option value="idea">IntelliJ IDEA</option></select></label>
       <button id="theme" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg></button>
     </div>
   </nav>
@@ -272,7 +272,8 @@ const richPlain = (s) => esc(s).replace(/(\/api\/[\w\-/{}.…]*[\w}…]|\b[A-Z][
 // `text` in backticks is code as written; the rest gets automatic code signalling.
 const rich = (s) => String(s ?? '').split(/`([^`]+)`/).map((p, i) => (i % 2 ? `<code>${esc(p)}</code>` : richPlain(p))).join('');
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
-let linkMode = store.get('mindmodel.links', 'vscode');
+// An old saved "path only" choice falls back to VS Code.
+let linkMode = store.get('mindmodel.links', 'vscode') === 'idea' ? 'idea' : 'vscode';
 
 const regionIdx = new Map(M.regions.map((r, i) => [r.id, i]));
 const region = (id) => M.regions[regionIdx.get(id)];
