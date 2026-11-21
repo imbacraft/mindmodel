@@ -34,7 +34,7 @@ The page is written to `<project>/mindmodel/index.html`; open it in any browser,
 - git (optional; used for the "changes often / rarely" badges)
 
 ### Best results
-v1 is tuned for **Spring/Java backends** with **React** or **server-rendered (JSP/Thymeleaf)** frontends. Other stacks work with generic signals and give weaker results.
+v1 is tuned for **Spring/Java backends** with **React, Vue, Svelte or Angular** SPAs or **server-rendered (JSP/Thymeleaf)** frontends. File-based routing (Next.js, Nuxt, SvelteKit) is not read yet. Other stacks work with generic signals and give weaker results.
 
 ## How it works
 0. **Pre-flight** (`engine/preflight.mjs`): checks the code is a clean, current state. Uncommitted changes, being behind the remote, a detached HEAD or a non-default branch make it ask you to confirm before continuing.

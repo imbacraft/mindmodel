@@ -64,6 +64,21 @@ export function parseJava(text) {
 }
 assert.deepStrictEqual(parseJava('@RestController\n@RequestMapping("/api/x")\npublic class A {\n  @GetMapping("/{id}")\n  public Foo get(Long id) {\n    return null; }\n}').mappings, [{ verb: 'GET', path: '/{id}', line: 4, method: 'get' }]);
 
+// --- frontend routes ----------------------------------------------------------
+// Angular route arrays use paths without a leading slash, so they're only trusted in files that declare routes.
+const isAngularRoutes = (text) => /\bRoutes\b|RouterModule\.for(Root|Child)|provideRouter\(/.test(text) && /@angular\/router/.test(text);
+export function routePath(line, angular = false) {
+  const m = /<Route[^>]*\bpath=["'{`]+([^"'}`]+)/.exec(line) ?? /\bpath:\s*["'](\/[^"']*)["']/.exec(line);
+  if (m) return m[1];
+  const a = angular && /\bpath:\s*["']([^"'/][^"']*|)["']/.exec(line);
+  return a ? '/' + a[1] : null;
+}
+assert.equal(routePath('<Route path="/orders/:id" element={<Order/>} />'), '/orders/:id');
+assert.equal(routePath("  { path: '/cart', component: Cart },"), '/cart');
+assert.equal(routePath("  { path: 'users/:id', component: UserComponent },", true), '/users/:id');
+assert.equal(routePath("  { path: '', component: HomeComponent },", true), '/');
+assert.equal(routePath("  { path: 'users', component: X },"), null);
+
 // --- helpers ------------------------------------------------------------------
 const norm = (p) => ('/' + p).replace(/\/+/g, '/').replace(/\$\{[^}]*\}|\{[^}]*\}|:\w+/g, '{}').replace(/\?.*$/, '').replace(/\/$/, '') || '/';
 assert.strictEqual(norm('/api/orders/${o.id}/items?x=1'), '/api/orders/{}/items');
@@ -88,7 +103,7 @@ export function scan(root) {
 
   // frontend: React/TS and server-rendered views
   const built = (f) => /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) || read(f).split('\n').some((l) => l.length > 3000);
-  const fe = files.filter((f) => /\.(tsx?|jsx?)$/.test(f) && !/\.(test|spec|d)\.[tj]sx?$/.test(f) && !/vendor|slick|jquery|bootstrap/i.test(f) && !built(f)).map((p) => ({ p: R(p), text: read(p) }));
+  const fe = files.filter((f) => /\.(tsx?|jsx?|vue|svelte)$/.test(f) && !/\.(test|spec|d)\.[tj]sx?$/.test(f) && !/vendor|slick|jquery|bootstrap/i.test(f) && !built(f)).map((p) => ({ p: R(p), text: read(p) }));
   const views = files.filter((f) => /\.(jsp|jspf|html|ftl|mustache)$/.test(f) && /(WEB-INF|templates|views)\//.test(f) && !/templates\/(emails?|library)\//.test(f)).map((p) => ({ p: R(p), text: read(p) }));
 
   // entity funnel (R12): score + family flags
@@ -147,7 +162,7 @@ export function scan(root) {
   const externals = {}; for (const j of java) for (const [k, v] of Object.entries(EXT)) if (new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text)) (externals[v] ??= []).push(j.p);
   const configFiles = files.filter((f) => /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) && /resources/.test(f));
   const configKeys = configFiles.map((f) => { const t = read(f); const keys = f.endsWith('.properties') ? t.split('\n').map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)]).filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l)).map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`) : t.split('\n').map((l, i) => [l, i + 1]).filter(([l]) => /^\s*[\w-]+:/.test(l)).map(([l, n]) => `${l.trim().split(':')[0]}:${n}`); const db = /jdbc:(\w+)/.exec(t); return { file: R(f), db: db?.[1], keys }; });
-  const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|vue)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i).slice(0, 60) }));
+  const buildFiles = files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => ({ file: R(f), deps: (read(f).match(/(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g) ?? []).map((s) => s.replace(/<\/?artifactId>|"/g, '')).filter((s, i, a) => a.indexOf(s) === i).slice(0, 60) }));
 
   // state: who writes each entity (repository mutations per caller), copies of state, transaction seams
   const repoEntity = new Map(repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]));
@@ -165,13 +180,13 @@ export function scan(root) {
   // boot: entry points, profile switches, how to run locally
   const mains = java.filter((j) => /@SpringBootApplication/.test(j.text)).map((j) => ({ file: j.p, line: linesMatching(j.text, /static\s+void\s+main\s*\(/)[0]?.line }));
   const switches = pick(/@Profile\(|@ConditionalOnProperty\(|@ConditionalOnMissingBean|spring\.profiles\.active/).concat(configFiles.flatMap((f) => linesMatching(read(f), /profiles?\.active|on-profile/).map((m) => ({ file: R(f), ...m }))));
-  const feEntries = files.filter((f) => /(^|\/)(vite\.config\.\w+|index\.html|src\/main\.[jt]sx?|src\/index\.[jt]sx?)$/.test(R(f)) && !/node_modules|resources\/(static|templates)/.test(R(f))).map((f) => ({ file: R(f), lines: linesMatching(read(f), /port|proxy|target|createRoot|render\(|type="module"/).slice(0, 8) }));
+  const feEntries = files.filter((f) => /(^|\/)(vite\.config\.\w+|index\.html|src\/main\.[jt]sx?|src\/index\.[jt]sx?|angular\.json|proxy\.conf\.json)$/.test(R(f)) && !/node_modules|resources\/(static|templates)/.test(R(f))).map((f) => ({ file: R(f), lines: linesMatching(read(f), /port|proxy|target|createRoot|render\(|type="module"|bootstrapApplication|bootstrapModule|createApp|new App\(|mount\(|"main":|"browser":/).slice(0, 8) }));
   const compose = files.filter((f) => /(^|\/)(docker-)?compose[\w.-]*\.ya?ml$/.test(R(f))).map((f) => ({ file: R(f), services: linesMatching(read(f), /^  [\w-]+:\s*$/).map((m) => `${m.text.replace(':', '')}:${m.line}`) }));
   const scripts = files.filter((f) => /(^|\/)package\.json$/.test(R(f)) && R(f).split('/').length <= 3).map((f) => { try { return { file: R(f), scripts: JSON.parse(read(f)).scripts ?? {} }; } catch { return { file: R(f), scripts: {} }; } });
   const profiles = configFiles.map((f) => R(f)).filter((f) => /application-[\w]+\./.test(f));
 
   // frontend routes
-  const routes = fe.flatMap((f) => f.text.split('\n').flatMap((l, i) => { const m = /<Route[^>]*\bpath=["'{`]+([^"'}`]+)/.exec(l) ?? /\bpath:\s*["'](\/[^"']*)["']/.exec(l); return m ? [{ path: m[1], file: f.p, line: i + 1 }] : []; }));
+  const routes = fe.flatMap((f) => { const ng = isAngularRoutes(f.text); return f.text.split('\n').flatMap((l, i) => { const p = routePath(l, ng); return p == null ? [] : [{ path: p, file: f.p, line: i + 1 }]; }); });
 
   // docs
   const docs = files.filter((f) => /\.(md|adoc|rst)$/i.test(f)).map((f) => { const t = read(f); return { file: R(f), kb: Math.round(t.length / 102.4) / 10, title: (/^#\s+(.+)$/m.exec(t)?.[1] ?? '').slice(0, 90) }; });
