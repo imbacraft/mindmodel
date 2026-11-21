@@ -1,0 +1,16 @@
+{
+  "root": "~/Projects/test-apps",
+  "web": "https://example.invalid/blob/HEAD",
+  "apps": [
+    { "name": "hertzbeat", "map": "mindmodel/mindmodel.json" },
+    { "name": "fineract" },
+    { "name": "cargotracker" }
+  ],
+  "systems": [
+    { "name": "lakeside", "map": "mindmodel-system/system-map.json" },
+    { "name": "ftgo", "map": "mindmodel-system/system-map.json" },
+    { "name": "petclinic-ms", "map": "mindmodel-system/system-map.json" },
+    { "name": "piomin-kafka", "map": "mindmodel-system/system-map.json" },
+    { "name": "cargotracker" }
+  ]
+}

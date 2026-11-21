@@ -22,3 +22,6 @@ node_modules/
 .vscode/
 *.swp
 *.log
+
+# --- Local test snapshots (built from locally cloned test apps) ------------------
+test/snapshots/

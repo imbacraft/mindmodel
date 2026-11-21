@@ -15,17 +15,37 @@ export function shape(node, defs, depth = 0) {
   if (node.const !== undefined) return JSON.stringify(node.const);
   if (node.type === 'array') return `[${node.items ? shape(node.items, defs, depth) : ''}]`;
   if (node.type === 'object' && node.properties) {
-    const pad = '  '.repeat(depth + 1), req = new Set(node.required ?? []);
+    const pad = '  '.repeat(depth + 1),
+      req = new Set(node.required ?? []);
     const note = (v) => (v.description ? `  // ${v.description}` : '');
-    const lines = Object.entries(node.properties).map(([k, v]) => `${pad}${k}${req.has(k) ? '' : '?'}: ${shape(v, defs, depth + 1)}${note(v)}`);
+    const lines = Object.entries(node.properties).map(
+      ([k, v]) => `${pad}${k}${req.has(k) ? '' : '?'}: ${shape(v, defs, depth + 1)}${note(v)}`,
+    );
     return `{\n${lines.join('\n')}\n${'  '.repeat(depth)}}`;
   }
   return node.type ?? 'any';
 }
-assert.equal(shape({ type: 'object', required: ['a'], properties: { a: { type: 'string' }, b: { type: 'array', items: { type: 'integer' } } } }, {}), '{\n  a: string\n  b?: [integer]\n}');
+assert.equal(
+  shape(
+    {
+      type: 'object',
+      required: ['a'],
+      properties: { a: { type: 'string' }, b: { type: 'array', items: { type: 'integer' } } },
+    },
+    {},
+  ),
+  '{\n  a: string\n  b?: [integer]\n}',
+);
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const schema = JSON.parse(fs.readFileSync(path.join(here, `../schema/${process.argv[2] === 'system' ? 'system' : 'mindmodel'}.schema.json`), 'utf8'));
-  console.log('// "?" = optional. cite = "path", "path:line" or "path:start-end", optionally "#symbol". [[id|text]] links a concept/region in sentences.');
+  const schema = JSON.parse(
+    fs.readFileSync(
+      path.join(here, `../schema/${process.argv[2] === 'system' ? 'system' : 'mindmodel'}.schema.json`),
+      'utf8',
+    ),
+  );
+  console.log(
+    '// "?" = optional. cite = "path", "path:line" or "path:start-end", optionally "#symbol". [[id|text]] links a concept/region in sentences.',
+  );
   console.log(shape(schema, schema.$defs ?? {}));
 }
