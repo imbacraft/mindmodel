@@ -56,7 +56,7 @@ export function resolveCites(map, root) {
     const pc = parseCite(c); if (!pc?.symbol) return c;
     const abs = path.join(root, pc.file); if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return c;
     const { lines, ix } = load(abs);
-    if (pc.start != null && lines.slice(pc.start - 1, pc.end).join('\n').includes(pc.symbol)) return c;
+    if (pc.start != null && pc.end <= lines.length && lines.slice(pc.start - 1, pc.end).join('\n').includes(pc.symbol)) return c;
     const named = ix ? [...ix.methods, ...ix.types].filter((m) => m.name === pc.symbol) : [];
     if (named.length) { const near = pc.start == null ? named[0] : named.sort((a, b) => Math.abs(a.start - pc.start) - Math.abs(b.start - pc.start))[0]; return `${pc.file}:${near.start}-${near.end}#${pc.symbol}`; }
     if (pc.start == null) { const i = lines.findIndex((l) => l.includes(pc.symbol)); if (i >= 0) { const m = ix && methodAt(ix, i + 1); return m ? `${pc.file}:${m.start}-${m.end}#${pc.symbol}` : `${pc.file}:${i + 1}#${pc.symbol}`; } }

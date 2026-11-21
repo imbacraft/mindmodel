@@ -18,6 +18,7 @@ You produce `<folder>/mindmodel-system/system-map.json`: what a developer must c
 
 ## Work efficiently
 - **Between, not inside.** Open a service's code only to explain a hop, an ownership claim or a failure mechanism. Read by method or line range, never whole files over 300 lines.
+- **Commands the user's permissions can check:** absolute paths, no `cd`, no shell variables; change the map with Edit, never `sed -i`. A refused command costs a turn.
 - **Keep turns few:** batch reads; collect several ranges in one command.
 - **Don't draw the diagram.** The renderer computes the domain strip and the talks table from the scan (plumbing left out). You choose each service's domain and tier, order the domains as business flows through them, and name the key contracts.
 - **Cite with `path#method`** where you can; `--fix` fills in ranges.
