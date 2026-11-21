@@ -179,7 +179,7 @@ export function scan(root) {
   const sdkFiles = new Set(java.filter((j) => Object.keys(EXT).some((k) => new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text))).map((j) => j.p));
   const seams = pick(/@Transactional\b|@TransactionalEventListener|publishEvent\(|TransactionSynchronization|kafkaTemplate\.send|rabbitTemplate\.convertAndSend/, java.filter((j) => sdkFiles.has(j.p) || /publishEvent\(|@TransactionalEventListener|TransactionSynchronization/.test(j.text))).slice(0, 60);
 
-  const deep = javaFacts({ java, repoEntity, EXT, enums, entities, shortlist: new Set(funnel.slice(0, 15).map((e) => e.name)) });
+  const deep = javaFacts({ java, repoEntity, EXT, enums, entities, shortlist: new Set(funnel.slice(0, 15).map((e) => e.name)), endpoints });
   const bootComputed = bootFacts({ root, files, rel: R, git });
 
   // boot: entry points, profile switches, how to run locally
@@ -217,7 +217,7 @@ export function scan(root) {
     background: { scheduledAsyncListeners: background, sockets, runners },
     state: { writes: Object.fromEntries(Object.entries(writes).map(([e, byFile]) => [e, Object.entries(byFile).map(([file, lines]) => `${file}:${lines.join(',')}`)])), modifying, caches, seams },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
-    seams: deep.seams, lifecycle: deep.lifecycle, schedules: deep.schedules,
+    seams: deep.seams, lifecycle: deep.lifecycle, schedules: deep.schedules, flows: deep.flows,
     externals: { sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])), config: configKeys },
   };
 }
@@ -287,6 +287,8 @@ export function summarize(f) {
   const seamRank = (x) => (/NO TRANSACTION/.test(x) ? 4 : /^OUTSIDE CALL IN/.test(x) ? 3 : /^JOB DELETES|^AFTER COMMIT/.test(x) ? 2 : 1) + (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(x) ? 2 : 0);
   push(cap([...f.seams].sort((a, b) => seamRank(b) - seamRank(a)).map((x) => `- ${x}`), 30, 'seams'));
   if (!f.seams.length) L.push('- none found');
+  sec('Flow skeletons, computed (entry point → what happens, in order; start stories here and open only the methods you need)');
+  push(cap(f.flows.map((x) => `- ${x}`), 12, 'flows'));
   sec('Lifecycles, computed (every place each status is set; cite these instead of searching)');
   push(cap(f.lifecycle.map((x) => (x.startsWith('  ') ? `  -${x.slice(1)}` : `- ${x}`)), 80, 'lifecycle'));
   sec('Schedules and retries, computed (plain-language timing; copy into "What runs on its own")');

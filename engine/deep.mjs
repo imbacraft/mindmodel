@@ -47,7 +47,7 @@ const UNIT = { Seconds: 's', Minutes: 'min', Hours: 'h', Days: 'd', Weeks: 'wk' 
 const windowsIn = (lines, m) => [...new Set(lines.slice(m.start - 1, m.end).join('\n').matchAll(WINDOW).map((x) => `${x[2] ?? x[4]} ${UNIT[x[1] ?? x[3]]}`))];
 
 // --- Java: seams, lifecycles, schedules -----------------------------------------------
-export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist }) {
+export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, endpoints = [] }) {
   const files = java.map((j) => ({ ...j, ix: index(j.text), lines: j.text.split('\n') }));
   const byName = new Map(files.map((f) => [f.name, f]));
   const implsOf = (t) => files.filter((f) => f.name === t || (f.implements ?? '').split(/\s*,\s*/).map((s) => s.replace(/<.*/, '')).includes(t));
@@ -174,7 +174,41 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist })
       schedules.push(`RETRY ${f.name}.${m.name} ${cite(f.p, m)}: ${a ?? 3} attempts${d ? `, first wait ${humanMs(Number(d))}` : ''}${x ? ` ×${x}` : ''}`);
     }
   }
-  return { seams, lifecycle, schedules };
+  // Flow skeletons: from each state-changing entry point (endpoint or scheduled job), the ordered chain of what
+  // actually happens: outside effects, saves, status changes, async hand-offs. The writer reads only the methods it
+  // needs to explain, instead of whole files. Ranked by how much of the core they touch; the top 12 go in the digest.
+  const statusRe = statusEnums.size ? new RegExp(`(?:set\\w*(?:Status|State)\\s*\\(|\\.\\w*(?:status|State|state)\\s*\\(|(?:status|State|state)\\s*=\\s*)(${[...statusEnums.keys()].join('|')})\\.([A-Z][A-Z0-9_]*)`) : null;
+  const walk = (f, m, depth, seen, ev) => {
+    if (seen.has(m) || ev.length >= 12) return; seen.add(m);
+    const calls = [...callsIn(f, m)];
+    const local = [...f.ix.src.slice(m.open, m.close).matchAll(/(?:^|[^.\w])(\w+)\s*\(/g)].map((c) => ({ name: c[1], line: f.ix.lineOf(m.open + c.index) }));
+    const steps = [];
+    for (const c of calls) {
+      if (f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method)) steps.push({ line: c.line, text: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` });
+      else if (conditionalNames.has(c.method) && repoEntity.has(f.fields.get(c.recv))) steps.push({ line: c.line, text: `conditional ${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
+      else if (/^(save|delete|update|insert)/.test(c.method) && repoEntity.has(f.fields.get(c.recv))) steps.push({ line: c.line, text: `${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
+      else for (const { g, m: t } of targets(f, c).slice(0, 1)) steps.push({ line: c.line, into: () => { if (t.annotations.some((a) => /^Async\b/.test(a))) ev.push(`async ${g.name}.${t.name}`); else if (depth) walk(g, t, depth - 1, seen, ev); } });
+    }
+    for (const c of local) for (const n of f.ix.methods.filter((n) => n.name === c.name && n !== m && !(n.open > m.open && n.close < m.close)).slice(0, 1)) steps.push({ line: c.line, into: () => walk(f, n, depth, seen, ev) });
+    if (statusRe) f.lines.slice(m.start - 1, m.end).forEach((l, i) => { const x = statusRe.exec(l); if (x) steps.push({ line: m.start + i, text: `→ ${x[2]}` }); });
+    for (const n of f.ix.methods.filter((n) => n.name === 'afterCommit' && n.open > m.open && n.close < m.close)) steps.push({ line: n.start, into: () => { ev.push('after commit:'); walk(f, n, depth, seen, ev); } });
+    for (const st of steps.sort((a, b) => a.line - b.line)) { if (ev.length >= 12) break; if (st.text) ev.push(st.text); else st.into(); }
+  };
+  const entries = [];
+  for (const e of endpoints.filter((e) => /POST|PUT|PATCH|DELETE|ANY/.test(e.verb))) {
+    const f = files.find((x) => x.p === e.file), m = f && f.ix.methods.find((mm) => mm.start >= e.line && mm.start <= e.line + 6);
+    if (m) entries.push({ label: `${e.verb} ${e.path}`, f, m });
+  }
+  for (const f of files) for (const m of f.ix.methods) if (m.annotations.some((a) => /^Scheduled\b/.test(a))) entries.push({ label: 'job', f, m });
+  const core = shortlist ? [...shortlist] : [];
+  const flows = entries.map(({ label, f, m }) => {
+    const ev = []; walk(f, m, 3, new Set(), ev);
+    const tx = isTx(f, m) ? ' [tx]' : '';
+    const score = ev.filter((x) => /\(\)$/.test(x)).length * 3 + ev.filter((x) => /^→/.test(x)).length * 2 + ev.filter((x) => core.some((c) => x.includes(c))).length * 2 + ev.length;
+    const steps = ev.reduce((acc, x) => { const last = acc[acc.length - 1]; if (last && last.x === x) last.n++; else acc.push({ x, n: 1 }); return acc; }, []).map(({ x, n }) => (n > 1 ? `${x} ×${n}` : x));
+    return { score, line: `${label} ${cite(f.p, m)}${tx}: ${steps.join('; ')}`, ev };
+  }).filter((x) => x.ev.some((e) => !/^(save|delete|update|insert) /.test(e) || core.some((c) => e.includes(c))) && x.ev.length >= 2).sort((a, b) => b.score - a.score);
+  return { seams, lifecycle, schedules, flows: flows.map((x) => x.line) };
 }
 
 // --- Boot: the one way to run the whole app locally ---------------------------------
