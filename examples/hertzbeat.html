@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>mindmodel</title>
+<style>
+/* Layout concept: an atlas page. A sticky legend (contents) on the left, prose in a ~68ch column,
+   words first. Region colour = region identity everywhere. */
+:root {
+  color-scheme: light;
+  --paper: #f4f5f2;
+  --sheet: #fbfbf9;
+  --ink: #1c2530;
+  --muted: #5d6774;
+  --faint: #8a939e;
+  --line: #d9ddd5;
+  --accent: #2552c4;
+  --accent-soft: #e3eafb;
+  --surprise: #a24a12;
+  --surprise-soft: #f8e9dd;
+  --code-bg: #eceee9;
+  --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --r0f: hsl(212 62% 93%); --r0s: hsl(212 48% 36%);
+  --r1f: hsl(165 42% 91%); --r1s: hsl(168 50% 27%);
+  --r2f: hsl(38 75% 91%);  --r2s: hsl(32 62% 33%);
+  --r3f: hsl(280 40% 93%); --r3s: hsl(280 34% 40%);
+  --r4f: hsl(352 60% 94%); --r4s: hsl(352 46% 40%);
+  --r5f: hsl(92 34% 90%);  --r5s: hsl(96 36% 28%);
+  --r6f: hsl(190 40% 91%); --r6s: hsl(192 50% 28%);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #13171c; --sheet: #181d23; --ink: #e5e8eb; --muted: #b6bec7; --faint: #77818c; --line: #2b323b;
+    --accent: #86a8ff; --accent-soft: #1f2a44; --surprise: #f0a56f; --surprise-soft: #3a2618; --code-bg: #222830;
+    --r0f: hsl(212 30% 20%); --r0s: hsl(212 70% 76%);
+    --r1f: hsl(166 26% 18%); --r1s: hsl(166 50% 66%);
+    --r2f: hsl(36 30% 18%);  --r2s: hsl(38 75% 68%);
+    --r3f: hsl(280 22% 21%); --r3s: hsl(280 55% 78%);
+    --r4f: hsl(352 26% 20%); --r4s: hsl(352 70% 78%);
+    --r5f: hsl(94 20% 18%);  --r5s: hsl(94 42% 66%);
+    --r6f: hsl(190 24% 18%); --r6s: hsl(190 50% 66%);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #13171c; --sheet: #181d23; --ink: #e5e8eb; --muted: #b6bec7; --faint: #77818c; --line: #2b323b;
+  --accent: #86a8ff; --accent-soft: #1f2a44; --surprise: #f0a56f; --surprise-soft: #3a2618; --code-bg: #222830;
+  --r0f: hsl(212 30% 20%); --r0s: hsl(212 70% 76%);
+  --r1f: hsl(166 26% 18%); --r1s: hsl(166 50% 66%);
+  --r2f: hsl(36 30% 18%);  --r2s: hsl(38 75% 68%);
+  --r3f: hsl(280 22% 21%); --r3s: hsl(280 55% 78%);
+  --r4f: hsl(352 26% 20%); --r4s: hsl(352 70% 78%);
+  --r5f: hsl(94 20% 18%);  --r5s: hsl(94 42% 66%);
+  --r6f: hsl(190 24% 18%); --r6s: hsl(190 50% 66%);
+}
+* { box-sizing: border-box; }
+html { background: var(--paper); }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 18px/1.6 var(--sans); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 32px 96px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(24px + env(safe-area-inset-top, 0px)); align-self: start; font-size: 15px; }
+nav.toc .brand { font: 600 13px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin-bottom: 18px; }
+nav.toc .brand + .app { font: 600 18px/1.3 var(--serif); color: var(--ink); margin: -8px 0 18px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: toc; }
+nav.toc a { display: grid; grid-template-columns: 22px 1fr; padding: 5px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; counter-increment: toc; }
+nav.toc a::before { content: counter(toc); color: var(--faint); font: 13px/1.9 var(--mono); }
+nav.toc a:hover, nav.toc a.on { background: var(--sheet); color: var(--ink); }
+#theme { margin-top: 24px; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--sheet); color: var(--muted); cursor: pointer; }
+#theme:hover { color: var(--ink); border-color: var(--muted); }
+#theme svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#theme .sun, .is-dark #theme .moon { display: none; }
+.is-dark #theme .sun { display: block; }
+nav.toc .tools { margin-top: 22px; display: grid; gap: 8px; color: var(--faint); font-size: 13px; }
+nav.toc select, nav.toc button { font: inherit; color: var(--ink); background: var(--sheet); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+main { min-width: 0; }
+section { padding-block: 40px 8px; border-top: 1px solid var(--line); }
+section:first-of-type { border-top: 0; padding-top: 0; }
+.eyebrow { font: 600 13px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0 0 14px; }
+h1, h2, h3, h4 { font-family: var(--serif); font-weight: 600; text-wrap: balance; margin: 0; }
+h2 { font-size: 31px; line-height: 1.15; margin-bottom: 10px; }
+h3 { font-size: 22px; line-height: 1.25; }
+h4 { font: 600 13px/1.2 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 18px 0 8px; }
+p { margin: 0 0 12px; }
+.lede { max-width: 68ch; color: var(--muted); }
+.prose { max-width: 68ch; }
+code { font: .86em/1.4 var(--mono); background: var(--code-bg); padding: .08em .32em; border-radius: 4px; overflow-wrap: anywhere; }
+.purpose { font: 400 clamp(24px, 3.1vw, 34px)/1.3 var(--serif); max-width: 30ch; margin: 6px 0 18px; text-wrap: pretty; }
+.metaphor { font: italic 19px/1.55 var(--serif); color: var(--muted); max-width: 62ch; }
+.nongoals { max-width: 66ch; margin: 16px 0 0; color: var(--ink); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--faint); font-size: 14px; margin-top: 18px; }
+.budget { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 600 13px/1 var(--sans); padding: 6px 10px; border-radius: 999px; background: var(--sheet); border: 1px solid var(--line); color: var(--muted); }
+.cite { font: 13px/1.4 var(--mono); color: var(--faint); text-decoration: none; white-space: nowrap; }
+.cite:hover { color: var(--accent); text-decoration: underline; }
+.cites { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 600 13px/1 var(--sans); padding: 4px 8px; border-radius: 999px; background: var(--rf); color: var(--rs); white-space: nowrap; border: 0; cursor: pointer; }
+.chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--rs); }
+.chip:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.boot { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px 28px; margin-top: 24px; }
+.cols2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+.ctx-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.ctx-list b { display: block; font-family: var(--serif); font-size: 18px; }
+.ctx-list .importance { margin: 2px 0 4px; font-size: 16px; }
+.ctx-list span { color: var(--muted); font-size: 18px; }
+
+/* Cast */
+.cast { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; margin-top: 20px; }
+.card { background: var(--sheet); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; }
+.card .names { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+.card .names code { font-size: 13px; }
+.card .what { font-size: 18px; }
+.confuse { font-size: 16px; color: var(--muted); margin: 0; padding-left: 18px; }
+.confuse li + li { margin-top: 6px; }
+.confuse b { color: var(--ink); }
+.life { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.life li { display: grid; grid-template-columns: 14px 1fr; gap: 10px; }
+.life li::before { content: ""; width: 9px; height: 9px; margin-top: 7px; border-radius: 50%; border: 2px solid var(--accent); }
+.life .state { font: 600 13px/1.4 var(--mono); color: var(--ink); display: block; }
+.life .t { font-size: 16px; color: var(--muted); }
+dl.fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; font-size: 16px; }
+dl.fields dt { font: 13.5px/1.6 var(--mono); }
+dl.fields dd { margin: 0; color: var(--muted); }
+.rule { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); font-size: 16px; }
+.rule b { font: 600 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 6px; }
+.lives { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 16px; color: var(--muted); margin-top: 12px; }
+.lives span:nth-child(odd) { color: var(--faint); }
+.rel { font-size: 16px; color: var(--muted); margin: 0; padding-left: 18px; }
+
+/* Diagrams: only where they encode something text can't. Today: the main-flow sequence (order across systems). */
+.figure { background: var(--sheet); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-top: 18px; }
+.figure figcaption { font-size: 14px; color: var(--faint); padding: 2px 4px 10px; }
+.svgbox { overflow-x: auto; }
+svg.diagram { display: block; width: 100%; height: auto; }
+svg.seq { min-width: 760px; }
+svg.diagram .arrow { fill: var(--muted); }
+svg.diagram .lane rect { fill: var(--paper); stroke: var(--line); }
+svg.diagram .lname { font: 600 22px var(--serif); fill: var(--ink); }
+svg.diagram .ltext { font: 16px var(--sans); fill: var(--faint); }
+svg.diagram .life { stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 3 5; }
+svg.diagram .msg { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+svg.diagram .msg.async { stroke-dasharray: 6 5; }
+svg.diagram .mlabel { font: 19px var(--sans); fill: var(--ink); paint-order: stroke; stroke: var(--sheet); stroke-width: 6px; stroke-linejoin: round; }
+svg.diagram .num circle { fill: var(--accent); }
+svg.diagram .num text { font: 700 16px var(--sans); fill: var(--sheet); text-anchor: middle; dominant-baseline: central; }
+svg.diagram .gap line { stroke: var(--surprise); stroke-dasharray: 2 4; stroke-width: 1.5; }
+svg.diagram .gap text { font: 600 16px var(--sans); letter-spacing: .08em; text-transform: uppercase; fill: var(--surprise); paint-order: stroke; stroke: var(--sheet); stroke-width: 6px; }
+svg.diagram .row.hot .mlabel { font-weight: 700; }
+svg.diagram .row.hot .msg { stroke: var(--accent); stroke-width: 2.5; }
+svg.diagram .row.dim { opacity: .35; }
+.core { font: 400 clamp(19px, 2.2vw, 23px)/1.55 var(--serif); max-width: 46ch; margin: 18px 0 4px; padding: 16px 20px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); text-wrap: pretty; }
+.core a { color: var(--ink); font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.core a:hover { color: var(--accent); }
+.flow-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; margin-top: 20px; max-width: 80ch; }
+.regions { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 18px; margin-top: 20px; }
+.region-card { padding: 18px 20px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); scroll-margin-top: 24px; }
+.region-card.flash { box-shadow: 0 0 0 2px var(--rs); }
+.card-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+.act { font: 600 13px/1 var(--sans); padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.act.often { color: var(--surprise); border-color: var(--surprise); background: var(--surprise-soft); }
+.act.rarely { color: var(--faint); border-style: dashed; }
+.region-card .code { font: 13px/1.5 var(--mono); color: var(--faint); margin: 6px 0 10px; overflow-wrap: anywhere; }
+.region-card ul.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.region-card ul.parts li { font-size: 16px; }
+.region-card ul.parts b { display: block; }
+.tier { font: 600 13px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); margin-left: 6px; }
+.owns { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.owns a { font: 600 13px/1 var(--sans); padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--muted); text-decoration: none; }
+.owns a:hover { color: var(--ink); border-color: var(--ink); }
+.card { scroll-margin-top: 24px; }
+.card.flash { box-shadow: 0 0 0 2px var(--accent); }
+
+/* Plot, rules, stories */
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: st; }
+ol.steps > li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; counter-increment: st; }
+ol.steps > li::before { content: counter(st); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--accent); color: var(--sheet); font: 700 14px/1 var(--sans); margin-top: 1px; }
+ol.steps > li.hot::before { outline: 3px solid var(--accent-soft); }
+ol.steps .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+.inferred { font: 600 13px/1 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--surprise); border: 1px dashed var(--surprise); border-radius: 4px; padding: 3px 6px; }
+.rules { display: grid; gap: 14px; margin-top: 16px; max-width: 80ch; }
+.rules .r { display: grid; grid-template-columns: 96px 1fr; gap: 14px; padding: 16px 18px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); }
+.kind { font: 700 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; padding: 6px 8px; border-radius: 6px; align-self: start; text-align: center; }
+.kind.rule { background: var(--accent-soft); color: var(--accent); }
+.kind.surprise { background: var(--surprise-soft); color: var(--surprise); }
+details.story { background: var(--sheet); border: 1px solid var(--line); border-radius: 14px; margin-top: 16px; }
+details.story > summary { cursor: pointer; list-style: none; padding: 18px 22px; display: grid; gap: 6px; }
+details.story > summary::-webkit-details-marker { display: none; }
+details.story > summary h3::after { content: " +"; color: var(--faint); font-family: var(--sans); }
+details.story[open] > summary h3::after { content: " –"; }
+details.story .body { padding: 0 22px 22px; }
+.setup { color: var(--muted); max-width: 72ch; margin: 0; }
+.story-route { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0; }
+.takeaways { margin-top: 18px; padding: 14px 16px; border-radius: 10px; background: var(--accent-soft); }
+.takeaways b { font: 600 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.takeaways ul { margin: 8px 0 0; padding-left: 18px; }
+.storykind { display: flex; align-items: center; gap: 8px; font: 700 13px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.rank { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1.5px solid var(--ink); color: var(--ink); font: 700 14px/1 var(--sans); letter-spacing: 0; }
+.rank-col { display: grid; justify-items: center; align-content: start; gap: 8px; }
+.importance { font-style: italic; color: var(--muted); margin-bottom: 8px; }
+.wtc { overflow-x: auto; margin-top: 16px; }
+.wtc table { width: 100%; border-collapse: collapse; font-size: 18px; min-width: 620px; }
+.wtc th, .wtc td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); }
+.wtc th { font: 600 13px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+#state h3 { margin: 32px 0 10px; }
+#state .rules h3 { margin: 0 0 6px; }
+#state .kind { display: inline-block; white-space: nowrap; margin-top: 6px; }
+#state .wtc td { line-height: 1.5; }
+#state .wtc td > div { margin-top: 6px; }
+.wtc .also { color: var(--muted); font-size: 16px; }
+footer { margin-top: 48px; color: var(--faint); font-size: 14px; }
+
+#mbar, #scrim { display: none; }
+@media (max-width: 980px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-top: calc(72px + env(safe-area-inset-top, 0px)); }
+  /* Phones: a sticky bar names the current section; tapping it opens the contents as a bottom sheet. */
+  #mbar { display: flex; align-items: center; gap: 10px; position: fixed; top: 0; left: 0; right: 0; z-index: 20; padding: calc(12px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px max(16px, env(safe-area-inset-left, 0px)); font: 600 16px/1.2 var(--sans); color: var(--ink); background: var(--paper); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+  #mbar-num { color: var(--faint); font: 14px/1 var(--mono); }
+  #mbar svg { width: 18px; height: 18px; margin-left: auto; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #scrim { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / .4); }
+  #scrim:not([hidden]) { display: block; }
+  nav.toc { position: fixed; left: 0; right: 0; bottom: 0; top: auto; z-index: 30; max-height: 80vh; overflow-y: auto; min-width: 0; padding: 20px max(20px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) max(20px, env(safe-area-inset-left, 0px)); background: var(--sheet); border-radius: 16px 16px 0 0; box-shadow: 0 -8px 30px rgb(0 0 0 / .25); transform: translateY(105%); visibility: hidden; transition: transform .25s ease, visibility 0s .25s; }
+  nav.toc.open { transform: none; visibility: visible; transition: transform .25s ease; }
+  nav.toc a { padding: 10px 8px; font-size: 17px; }
+  @media (prefers-reduced-motion: reduce) { nav.toc, nav.toc.open { transition: none; } }
+  /* Phones can't open a desktop editor, so the link setting is hidden there. */
+  nav.toc .linkmode { display: none; }
+  #theme { margin-top: 8px; }
+  section, .card, .region-card { scroll-margin-top: calc(64px + env(safe-area-inset-top, 0px)); }
+  .map-grid { grid-template-columns: 1fr; }
+  .zoom { border-left: 0; border-top: 1px solid var(--line); padding: 14px 4px 4px; }
+}
+@media (max-width: 640px) {
+  .cols2 { grid-template-columns: 1fr; }
+  .cast { grid-template-columns: 1fr; }
+  .rules .r { grid-template-columns: 1fr; }
+  h2 { font-size: 27px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+<button id="mbar" type="button" aria-controls="sheet" aria-expanded="false"><span id="mbar-num"></span><span id="mbar-label">Contents</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></button>
+<div id="scrim" hidden></div>
+<div class="wrap">
+  <nav class="toc" id="sheet" aria-label="Contents">
+    <div class="brand">mindmodel</div>
+    <div class="app" id="app"></div>
+    <ol id="toc"></ol>
+    <div class="tools">
+      <label class="linkmode">Open code in<br><select id="linkmode"><option value="vscode">VS Code</option><option value="idea">IntelliJ IDEA</option><option value="none">Show path only</option></select></label>
+      <button id="theme" type="button" aria-label="Switch to dark theme" title="Switch to dark theme"><svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg><svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg></button>
+    </div>
+  </nav>
+  <main id="main"></main>
+</div>
+<script id="mindmodel-data" type="application/json">{"version":"0.6","project":{"name":"Apache HertzBeat","commit":"1c283e55","generatedAt":"2026-11-21","stack":"Java / Spring Boot multi-module backend, React + Vite web-app"},"purpose":{"text":"HertzBeat lets an operations team watch their servers, databases and services without installing agents: it collects their metrics on a schedule, raises alerts when thresholds are crossed and sends those alerts to people over email, chat and webhooks. It is open-source software, so no money moves through it.","cites":["README.md:24-34"],"boot":{"entries":[{"name":"Backend (hertzbeat-startup)","text":"Spring Boot main class; serves the API and the built web UI on port 1157 with profile prod. The spring.application.name setting reads ${PID} with no default.","cites":["hertzbeat-startup/src/main/java/org/apache/hertzbeat/startup/HertzBeatApplication.java:66","hertzbeat-startup/src/main/resources/application.yml:14-21"]},{"name":"Frontend (web-app)","text":"web-app/index.html loads /src/app/main.tsx; the Vite dev server runs on port 4200 and proxies API calls to the backend.","cites":["web-app/index.html:27","web-app/package.json","web-app/vite.config.ts:33-55"]}],"run":[{"cmd":"mvn clean install -DskipTests","note":"From the project root; then start hertzbeat-startup (HertzBeatApplication), profile prod. The prod profile has no separate profile file.","cites":["CONTRIBUTING.md:39"]},{"cmd":"corepack pnpm@10.9.0 install --frozen-lockfile && corepack pnpm@10.9.0 dev","note":"In web-app, after the backend is up.","cites":["README.md:113"]}]}},"context":{"actors":[{"id":"operator","name":"Operator (admin / user / guest)","text":"Signs in to the web UI to set up monitors, alert rules and notification rules. Roles admin, user and guest differ by which API methods sureness.yml lets them call.","cites":["hertzbeat-startup/src/main/resources/sureness.yml:22-30"],"importance":"The only person who signs in; the whole product serves them."},{"id":"receiver","name":"Alert recipient","text":"Gets alert notifications by email, chat app, SMS or webhook through a notification receiver.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:180-204#sendNotify"],"importance":"Who the alerts are for; often the operator's on-call colleagues."},{"id":"public","name":"Status page visitor","text":"Reads a public status page with no login (/api/status/page/public/**).","cites":["hertzbeat-startup/src/main/resources/sureness.yml:263"],"importance":"Peripheral: a read-only side channel."}],"externals":[{"id":"db","name":"Relational database (H2 by default; MySQL or PostgreSQL)","text":"Holds monitors, collectors, rules and alerts.","cites":["hertzbeat-startup/src/main/resources/application.yml"],"importance":"Source of truth for every concept."},{"id":"tsdb","name":"Time-series store (Greptime, VictoriaMetrics, IoTDB, TDengine, InfluxDB...)","text":"Stores collected metric history; one of nine AbstractHistoryDataStorage implementations is active.","cites":["hertzbeat-warehouse/src/main/java/org/apache/hertzbeat/warehouse/store/DataStorageDispatch.java:83-108#startPersistentDataStorage"],"importance":"Where every collected sample ends up."},{"id":"targets","name":"Monitored targets","text":"The servers, databases and sites the collectors reach over HTTP, JDBC, SSH, SNMP, JMX and more (36 AbstractCollect subclasses).","cites":["hertzbeat-collector"],"importance":"What the product exists to watch."},{"id":"notify","name":"Notification channels (SMTP, Slack, FeiShu, WeCom, DingTalk, webhooks...)","text":"17 AbstractAlertNotifyHandlerImpl subclasses send rendered alerts out.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/impl/AbstractAlertNotifyHandlerImpl.java","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/impl/EmailAlertNotifyHandlerImpl.java"],"importance":"Delivers the product's output."},{"id":"queue","name":"Kafka or Redis (optional data queue)","text":"Replaces the in-memory queue between collection, alerting and storage when configured.","cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/queue/impl/KafkaCommonDataQueue.java:57","hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/queue/impl/RedisCommonDataQueue.java:47"],"importance":"Optional; only in scaled-out setups."},{"id":"grafana","name":"Grafana","text":"Gets a dashboard created when a Prometheus monitor asks for one.","cites":["hertzbeat-grafana/src/main/java/org/apache/hertzbeat/grafana/service/DashboardService.java:89-172#createOrUpdateDashboard"],"importance":"Helper for one monitor type."},{"id":"llm","name":"OpenAI-compatible LLM","text":"Backs the AI chat and SOP features.","cites":["hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfig.java"],"importance":"Optional add-on."}]},"coreSentence":{"text":"A [[collector|collector]] runs the scheduled job of each [[monitor|monitor]]; every result is checked against [[rule|alert rules]], which raise [[alert|alerts]]; and each stored alert is sent out through the matching [[notice|notification rules]].","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:178-255#addMonitor","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:380-443#afterThresholdRuleMatch","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:180-204#sendNotify"]},"concepts":[{"id":"monitor","name":"Monitor","short":"one watched target","codeNames":["Monitor","Param","Job"],"what":"One target being watched (a MySQL server, a website), built from a monitor template (app) plus parameter values, and turned into a cyclic collect job.","lifecycle":[{"state":"Pending","text":"Created as Pending; the first collect result owns availability.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:234"]},{"state":"Paused","text":"Pausing marks it paused and cancels its job.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:688-694","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/entity/OldMonitorStatusWriteModelService.java:45-54#findAndMarkManagedMonitorsPaused"]},{"state":"Re-enabled","text":"Enabling sets Pending again and issues a new job.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/entity/OldMonitorStatusWriteModelService.java:56-65#findAndMarkPausedMonitorsPending","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:754-759"]},{"state":"Deleted","text":"Deletion removes it with its params and binds.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:583-607#deleteMonitors"]}],"relations":[{"to":"collector","label":"is pinned to (optional)","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:238"]}],"keyFields":[{"name":"status","text":"0 Paused, 1 Up, 2 Down, 3 Pending"},{"name":"jobId","text":"the collect job running it"},{"name":"app","text":"monitor template name"},{"name":"labels","text":"used for alert matching"}],"lives":{"entity":"Monitor","table":"hzb_monitor","api":"/api/monitor, /api/monitors","frontend":"web-app/src/features/monitor"},"cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/manager/Monitor.java:64"]},{"id":"collector","name":"Collector","short":"a node that runs jobs","codeNames":["Collector","CollectorMonitorBind"],"what":"A process that runs collect jobs; the built-in main collector inside the backend, plus remote collectors that connect over Netty.","lifecycle":[{"state":"Online","text":"Created or set online when it connects.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:106-108#collectorGoOnline"]},{"state":"Offline","text":"Set offline, removed from the hash ring and its jobs rebalanced.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:211-224#collectorGoOffline"]}],"relations":[],"keyFields":[{"name":"name","text":"identity"},{"name":"status","text":"online/offline"}],"lives":{"entity":"Collector","table":"hzb_collector","api":"/api/collector"},"cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/manager/Collector.java:54"]},{"id":"rule","name":"Alert rule","short":"a threshold","codeNames":["AlertDefine"],"what":"A threshold expression over a metric, with a required number of consecutive hits before it fires.","lifecycle":[{"state":"Active","text":"Evaluated against every metrics result in real time, or on a schedule for periodic rules.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:160-289#calculate"]}],"relations":[{"to":"alert","label":"raises","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:380-443#afterThresholdRuleMatch"]}],"keyFields":[{"name":"times","text":"hits needed to fire"},{"name":"template","text":"alert content"}],"lives":{"entity":"AlertDefine","table":"hzb_alert_define","api":"/api/alert/define"},"cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/AlertDefine.java:56"]},{"id":"alert","name":"Alert","short":"a raised problem","codeNames":["SingleAlert","GroupAlert"],"what":"A problem raised by a rule or an external source; single alerts are grouped by labels into a group alert, which is what gets stored and sent.","notToConfuse":[{"name":"SingleAlert vs GroupAlert","how":"SingleAlert is one fingerprinted problem; GroupAlert bundles single alerts that share group labels and is the unit that is stored and notified."}],"lifecycle":[{"state":"pending","text":"First hit when the rule needs more than one; held in memory only.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:416-426"]},{"state":"firing","text":"Reached the required hits; sent into the reduce pipeline.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:433-441"]},{"state":"resolved","text":"The rule stops matching; sent again as resolved.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:363-374#handleRecoveredAlert"]}],"relations":[{"to":"notice","label":"is sent through","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:180-204#sendNotify"]}],"keyFields":[{"name":"workspaceId","text":"scopes every alert"},{"name":"fingerprint","text":"unique per workspace"},{"name":"status","text":"pending/firing/resolved/acknowledged"}],"rule":{"text":"Fingerprint is unique per workspace (unique index workspace_id,fingerprint).","cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/SingleAlert.java:53"]},"lives":{"entity":"SingleAlert, GroupAlert","table":"hzb_alert_single, hzb_alert_group","api":"/api/alerts","frontend":"web-app/src/features/alert"},"cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/SingleAlert.java:61","hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/GroupAlert.java:63"]},{"id":"notice","name":"Notification rule","short":"who gets which alert","codeNames":["NoticeRule","NoticeReceiver","NoticeTemplate"],"what":"Matches alerts to receivers (a channel and address) and a message template.","lifecycle":[{"state":"Configured","text":"Created and edited by the operator; read at dispatch time.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/controller/NoticeConfigController.java"]}],"relations":[],"keyFields":[{"name":"receiverId","text":"list of receivers"},{"name":"templateId","text":"message template"}],"lives":{"entity":"NoticeRule, NoticeReceiver, NoticeTemplate","table":"hzb_notice_rule, hzb_notice_receiver, hzb_notice_template","api":"/api/notice"},"cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/NoticeRule.java:63","hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/NoticeReceiver.java:56"]}],"regionSentence":{"text":"One Spring Boot app (hertzbeat-startup) assembles Maven modules: [[setup|Monitor setup]] and [[sched|Collection scheduling]] live in hertzbeat-manager, [[store|Metric storage]] in hertzbeat-warehouse, [[alerting|Alerting]] and [[notify|Notifications]] in hertzbeat-alerter, each with a feature folder in web-app/src/features, and [[infra|Shared infrastructure]] in the common modules, manager config and web-app/src/core.","cites":["hertzbeat-startup/pom.xml"]},"regions":[{"id":"setup","name":"Monitor setup","codeName":"hertzbeat-manager controller/service · web-app/src/features/monitor","role":"Create, edit, pause and delete monitors and their templates.","text":"MonitorController and MonitorsController front MonitorServiceImpl, which validates params against the template YAML in resources/define and hands a Job to the scheduler.","owns":["monitor"],"parts":[{"name":"Monitor API","tier":"backend","text":"Single and bulk monitor endpoints.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/controller/MonitorController.java:67-72#addNewMonitor"]},{"name":"Monitor templates","tier":"backend","text":"app-*.yml definitions.","cites":["hertzbeat-manager/src/main/resources/define/app-mysql.yml"]},{"name":"Monitor editor","tier":"frontend","text":"Form posting to /api/monitor.","cites":["web-app/src/features/monitor/api/monitor-editor-api.ts:73"]}],"paths":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/controller","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service","hertzbeat-manager/src/main/resources/define","web-app/src/features/monitor"],"activity":{"commits":28,"of":200,"since":"2026-05-20"}},{"id":"sched","name":"Collection scheduling","codeName":"hertzbeat-manager scheduler","role":"Assign jobs to collectors and receive their results.","text":"CollectorJobScheduler keeps a consistent-hash ring of collectors and dispatches jobs over Netty; results come back through processors that put them on the data queue.","owns":["collector"],"parts":[{"name":"Job dispatch","tier":"backend","text":"Add, update, cancel jobs.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:431-458#addAsyncCollectJob"]},{"name":"Result intake","tier":"backend","text":"Cyclic results onto the queue.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/netty/process/CollectCyclicDataResponseProcessor.java:46"]}],"paths":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler"],"activity":{"commits":4,"of":200,"since":"2026-05-20"}},{"id":"store","name":"Metric storage","codeName":"hertzbeat-warehouse","role":"Persist and query metric history and realtime values.","text":"DataStorageDispatch drains the queue into the configured time-series store; DataQueryController and MetricsDataController serve reads.","owns":[],"parts":[{"name":"Storage threads","tier":"backend","text":"Queue to TSDB.","cites":["hertzbeat-warehouse/src/main/java/org/apache/hertzbeat/warehouse/store/DataStorageDispatch.java:83-108#startPersistentDataStorage"]}],"paths":["hertzbeat-warehouse"],"activity":{"commits":17,"of":200,"since":"2026-05-20"}},{"id":"alerting","name":"Alerting","codeName":"hertzbeat-alerter calculate/reduce · web-app/src/features/alert","role":"Evaluate rules and turn hits into grouped, inhibited, silenced alerts.","text":"Calculators read the queue; AlarmCommonReduce fingerprints alerts and runs them through group, inhibit and silence reducers.","owns":["rule","alert"],"parts":[{"name":"Realtime calculator","tier":"backend","text":"3 threads over the queue.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:130-158#startCalculate"]},{"name":"Reduce pipeline","tier":"backend","text":"Group, inhibit, silence.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmCommonReduce.java:100-102#reduceAndSendAlarm"]},{"name":"Alert center","tier":"frontend","text":"Alert list and actions.","cites":["web-app/src/features/alert"]}],"paths":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/controller","web-app/src/features/alert"],"activity":{"commits":13,"of":200,"since":"2026-05-20"}},{"id":"notify","name":"Notifications","codeName":"hertzbeat-alerter notice","role":"Store each group alert and send it to matching receivers.","text":"AlertNoticeDispatch stores the group alert, then runs notify handlers per receiver type on a worker pool.","owns":["notice"],"parts":[{"name":"Dispatch","tier":"backend","text":"Store then notify.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:123-130#dispatchAlarm"]},{"name":"Channel handlers","tier":"backend","text":"17 handler classes.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/impl/AbstractAlertNotifyHandlerImpl.java"]}],"paths":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice"],"activity":{"commits":9,"of":200,"since":"2026-05-20"}},{"id":"infra","name":"Shared infrastructure","codeName":"hertzbeat-common-*, manager/config, startup, web-app/src/core","role":"Entities, data queue, security, HTTP client.","text":"Entities live in hertzbeat-common-spring; the CommonDataQueue has in-memory, Kafka and Redis variants; security is Sureness plus manager config filters.","owns":[],"parts":[{"name":"Data queue","tier":"backend","text":"Picked by property.","cites":["hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/queue/impl/InMemoryCommonDataQueue.java:40"]},{"name":"Security","tier":"backend","text":"Filters and token checks.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/config/ApiTokenValidationFilter.java:96-137#preHandle"]},{"name":"HTTP client","tier":"frontend","text":"apiFetch.","cites":["web-app/src/core/http/http-client.ts:43#apiFetch"]}],"paths":["hertzbeat-common-core","hertzbeat-common-spring","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/config","hertzbeat-startup","web-app/src/core"],"activity":{"commits":52,"of":200,"since":"2026-05-20"}}],"runtime":{"title":"How an API call travels","lanes":[{"id":"browser","name":"Browser","text":"web-app"},{"id":"backend","name":"Backend","text":"hertzbeat-startup"},{"id":"db","name":"Database","text":"relational DB"}],"steps":[{"region":"infra","from":"browser","to":"backend","label":"apiFetch sends cookie (same-origin)","text":"All calls go through apiFetch with same-origin credentials; a 401 triggers a session refresh.","cites":["web-app/src/core/http/http-client.ts:43#apiFetch"]},{"region":"infra","from":"backend","to":"backend","label":"UI cookie bridged to a token","text":"UiSessionCookieAuthenticationFilter reads the HttpOnly access cookie and hands it to Sureness.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/ui/session/UiSessionCookieAuthenticationFilter.java:59-87#doFilterInternal"]},{"region":"infra","from":"backend","to":"backend","label":"Sureness checks path, method, role","text":"sureness.yml maps api===method===roles; /api/setup/**, /api/account/auth/**, /api/push/**, /api/status/page/public/** and UI page routes are excluded from auth.","cites":["hertzbeat-startup/src/main/resources/sureness.yml:22-30","hertzbeat-startup/src/main/resources/sureness.yml:250-263"]},{"region":"infra","from":"backend","to":"backend","label":"Bind workspace, check managed tokens","text":"For /api/**, ApiTokenValidationFilter binds the workspace into a ThreadLocal and validates managed API tokens; it clears the context after the request.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/config/ApiTokenValidationConfiguration.java:38","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/config/ApiTokenValidationFilter.java:96-137#preHandle"]},{"region":"setup","from":"backend","to":"db","label":"Service runs in a transaction","text":"Controllers wrap results in Message; service classes are @Transactional(rollbackFor = Exception.class).","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:99"]},{"region":"infra","from":"backend","to":"browser","label":"Message envelope back","text":"The frontend unwraps the Message envelope in api-message.ts.","cites":["web-app/src/core/http/api-message.ts:70#apiMessagePost"]}]},"background":{"intro":"Collection and alerting run entirely off-request in worker threads; workspace context is not request-bound there, so system alerts are stamped with the default workspace in code.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmCommonReduce.java:104-106#reduceAndSendSystemAlarm"],"items":[{"region":"sched","name":"Reschedule monitors at startup","when":"on startup","what":"Brings the main collector online and re-issues a job for every non-paused monitor.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/SchedulerInit.java:95-105"]},{"region":"sched","name":"Collector join / leave","when":"on connect / disconnect","what":"Marks the collector online or offline and rebalances jobs over the hash ring.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:211-224#collectorGoOffline","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:227-271#reBalanceCollectorAssignJobs"]},{"region":"alerting","name":"Realtime alert calculation","when":"continuously, 3 threads","what":"Polls the queue, forwards each result to storage, then evaluates rules.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:130-158#startCalculate"]},{"region":"alerting","name":"Periodic alert rules","when":"per rule schedule","what":"Evaluates periodic rules, started by a lifecycle bean.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/periodic/PeriodicAlertRuleSchedulerLifecycle.java"]},{"region":"store","name":"Metric persistence","when":"continuously","what":"Drains metrics, logs and collection events into storage.","cites":["hertzbeat-warehouse/src/main/java/org/apache/hertzbeat/warehouse/store/DataStorageDispatch.java:83-108#startPersistentDataStorage"]},{"region":"notify","name":"Alert notification","when":"after the alert transaction commits","what":"Notification, plugins and SSE broadcast run per stored group alert on a worker pool.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:132-146#dispatchAfterStore"]},{"region":"infra","name":"AI SOP schedules","when":"every 1 min","what":"Runs due AI SOP schedules.","cites":["hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/schedule/SopScheduleExecutor.java:78-98#checkAndExecuteDueSchedules"]},{"region":"infra","name":"Config change listeners","when":"after config commit","what":"Apply system and object-store config after the saving transaction commits.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/SystemGeneralConfigServiceImpl.java:112-116#applyCommittedConfig","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/ObjectStoreConfigServiceImpl.java:111-114#applyCommittedConfig"]}]},"rules":[{"kind":"rule","title":"Every alert belongs to a workspace","text":"The reduce pipeline rejects alerts without a workspace; system-generated alerts are put in the default workspace. Queries and deletes on alerts filter by workspace_id, so pass the workspace from AuthTokenRequestContext, never from labels.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmCommonReduce.java:100-102#reduceAndSendAlarm","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmCommonReduce.java:153-157#requireWorkspace","hertzbeat-common-spring/src/main/java/org/apache/hertzbeat/common/entity/alerter/SingleAlert.java:53-66"],"importance":"Medium reach (all alerting), Severe damage: alerts leak between workspaces."},{"kind":"surprise","title":"Notifications are fire-and-forget after commit","text":"A group alert is stored first; notification runs only after commit, on a worker pool, and a failed or rejected send is only logged. Nothing retries it.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:132-146#dispatchAfterStore","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:180-204#sendNotify"],"importance":"Medium reach (every alert), High damage: an alert is recorded but nobody is told."},{"kind":"surprise","title":"Pending and firing state lives in memory","text":"Hit counts and firing alerts are kept in AlarmCacheManager maps; only alerts that reach the reduce pipeline get stored. A firing alert is not re-sent while still firing.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/AlarmCacheManager.java:58-59","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:386-390"],"importance":"Medium reach (alerting), Medium damage: confusing alert counts after a restart."},{"kind":"surprise","title":"A new monitor shows Pending, not Up","text":"addMonitor saves status Pending without probing; the cyclic job owns the first availability result. Detect is a separate call.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:231-236","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:168-174#detectMonitor"],"importance":"Low reach (monitor setup), Low damage: wasted debugging."},{"kind":"rule","title":"Collect results feed storage before alerting","text":"The calculator forwards each result to storage before evaluating rules, so storage keeps flowing under alert backpressure; keep that order when changing the loop.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:130-158#startCalculate"],"importance":"Low reach (one loop), High damage: stalled metric history."}],"stories":[{"id":"add","kind":"usage","title":"An operator adds a MySQL monitor","setup":"Dana, an admin, adds a monitor with app mysql (app-mysql.yml) and no pinned collector.","steps":[{"region":"setup","text":"The monitor editor posts the form to /api/monitor.","cites":["web-app/src/features/monitor/api/monitor-editor-api.ts:73"]},{"region":"setup","text":"MonitorController validates the params against the template and calls addMonitor.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/controller/MonitorController.java:67-72#addNewMonitor"]},{"region":"setup","text":"addMonitor builds a cyclic Job from the template and params and sets the monitor to Pending.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:178-255#addMonitor"]},{"region":"sched","text":"The job is handed to the scheduler, which picks a collector from the hash ring and dispatches it, before the rows are saved.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:235-236","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:431-458#addAsyncCollectJob"]},{"region":"setup","text":"The monitor, its params and collector bind are saved; if saving fails the job is cancelled and the error rethrown.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:238-254"]}],"takeaways":["Monitor setup hands off to Collection scheduling inside one transaction.","A Monitor starts Pending until its first result."],"importance":"Creates the Monitor everything else depends on."},{"id":"alert","kind":"usage","title":"A threshold breach reaches a recipient","setup":"Dana's mysql monitor has an alert rule needing 3 hits.","steps":[{"region":"sched","text":"The collector's cyclic result arrives and is put on the data queue.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/netty/process/CollectCyclicDataResponseProcessor.java:46"]},{"region":"alerting","text":"A calculator thread forwards it to storage and evaluates the rules.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:130-158#startCalculate"]},{"region":"alerting","text":"The first hit creates a pending alert in memory; the third turns it firing and sends it to the reduce pipeline.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:380-443#afterThresholdRuleMatch"]},{"region":"alerting","text":"AlarmCommonReduce stamps the workspace and fingerprint; group, inhibit and silence reducers decide whether it continues.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmCommonReduce.java:100-102#reduceAndSendAlarm","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmInhibitReduce.java:221","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/reduce/AlarmSilenceReduce.java:92"]},{"region":"notify","text":"The group alert is stored; after commit, matching notification rules pick receivers and templates and send on a worker pool; failures are only logged.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:123-130#dispatchAlarm","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:180-204#sendNotify"]},{"region":"alerting","text":"When the rule stops matching, the alert is sent again as resolved.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/realtime/MetricsRealTimeAlertCalculator.java:363-374#handleRecoveredAlert"]}],"takeaways":["Collector to Alert to Notification rule, all off-request.","See the rules on workspaces and fire-and-forget notifications."],"importance":"The product's core value: telling someone a target is unhealthy."}],"state":{"intro":"The relational database is the truth for every concept; alert hit counts live in memory until firing.","owners":[{"concept":"monitor","truth":"database","writer":"setup","gate":"MonitorServiceImpl writes through the Old*WriteModelService classes.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:178-255#addMonitor","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/entity/OldMonitorStatusWriteModelService.java:67-72#saveMonitorStatusChanges"]},{"concept":"collector","truth":"database","writer":"sched","gate":"CollectorJobScheduler online/offline.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/scheduler/CollectorJobScheduler.java:106-108#collectorGoOnline"]},{"concept":"rule","truth":"database","writer":"alerting","gate":"AlertDefine controllers and service.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/controller/AlertDefineController.java"]},{"concept":"alert","truth":"database, with pending/firing counts only in memory","writer":"notify","gate":"AlertStoreHandler.store from dispatchAlarm.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:123-130#dispatchAlarm"],"others":[{"region":"alerting","text":"Alert center endpoints change status and delete alerts directly, scoped by workspace.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/controller/AlertsController.java:194-209#applyAlertDefinesStatus","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/controller/AlertsController.java:177-189#deleteAlerts"]}]},{"concept":"notice","truth":"database","writer":"notify","gate":"NoticeConfigController.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/controller/NoticeConfigController.java"]}],"copies":[{"name":"Alarm cache","holds":"pending and firing alerts per rule and fingerprint","wins":"the cache decides whether to send","stale":"held in process memory; not shared across nodes","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/calculate/AlarmCacheManager.java:58-59"]},{"name":"Frontend query cache","holds":"API results","wins":"server","stale":"default staleTime 15 s","cites":["web-app/src/app/refine/refine-runtime.tsx:46"]}],"seams":[{"span":"collect job dispatched → monitor row saved","text":"addMonitor dispatches the job before saving the monitor.","onFailure":"A save exception cancels the job; a rollback after the catch would leave the job running.","cites":["hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:235-254"]},{"span":"Grafana dashboard created → monitor transaction commits","text":"For Prometheus monitors the Grafana call runs inside the transaction.","onFailure":"If the transaction rolls back, the dashboard stays in Grafana.","cites":["hertzbeat-grafana/src/main/java/org/apache/hertzbeat/grafana/service/DashboardService.java:89-172#createOrUpdateDashboard","hertzbeat-manager/src/main/java/org/apache/hertzbeat/manager/service/impl/MonitorServiceImpl.java:243-246"]},{"span":"group alert stored → notifications sent","text":"Notify runs after commit.","onFailure":"Nothing: failures are logged, no retry.","cites":["hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:132-146#dispatchAfterStore","hertzbeat-alerter/src/main/java/org/apache/hertzbeat/alert/notice/AlertNoticeDispatch.java:180-204#sendNotify"]}]}}</script>
+<script>
+(() => {
+const ROOT = "https://github.com/apache/hertzbeat/blob/1c283e55909e2a11efb17b0481dd1a84f843f731".replace(/\/$/, "");
+// A published page links citations to the code on the web; the editor picker only applies to local pages.
+const WEB = /^https?:\/\//.test(ROOT);
+const M = JSON.parse(document.getElementById('mindmodel-data').textContent);
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Signalling: identifiers, enum values and API paths render as code so they read as beacons.
+// Backticks only (names, sentences): code where the writer marked it, nothing automatic.
+const ticks = (s) => String(s ?? '').split(/`([^`]+)`/).map((p, i) => (i % 2 ? `<code>${esc(p)}</code>` : esc(p))).join('');
+const richPlain = (s) => esc(s).replace(/(\/api\/[\w\-/{}.…]*[\w}…]|\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+(?:\.[a-zA-Z]+)?(?:\(\))?|\b[a-z]+[A-Z][A-Za-z]+(?:\(\))?|\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|\*[A-Z][a-z]+)/g, '<code>$1</code>');
+// `text` in backticks is code as written; the rest gets automatic code signalling.
+const rich = (s) => String(s ?? '').split(/`([^`]+)`/).map((p, i) => (i % 2 ? `<code>${esc(p)}</code>` : richPlain(p))).join('');
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+let linkMode = store.get('mindmodel.links', 'vscode');
+
+const regionIdx = new Map(M.regions.map((r, i) => [r.id, i]));
+const region = (id) => M.regions[regionIdx.get(id)];
+const rvars = (id) => { const i = regionIdx.get(id) ?? 0; return `--rf:var(--r${i % 7}f);--rs:var(--r${i % 7}s)`; };
+const chip = (id) => { const r = region(id); return r ? `<button type="button" class="chip" data-region="${r.id}" style="${rvars(r.id)}">${esc(r.name)}</button>` : ''; };
+const concept = (id) => M.concepts.find((c) => c.id === id);
+const conceptName = (id) => concept(id)?.name ?? id;
+// [[id|text]] in the core sentence links the text to that concept's card.
+const linkSentence = (t, prefix) => ticks(t).replace(/\[\[([a-z][a-z0-9-]*)\|([^\]]+)\]\]/g, (_, id, txt) => `<a href="#${prefix}-${id}">${txt}</a>`);
+const coreSentence = (t) => linkSentence(t, 'concept');
+// Activity badge: share of recent commits that touched the region.
+const activity = (a) => { if (!a) return ''; const p = a.commits / a.of; const [cls, label] = p >= 0.25 ? ['often', 'Changes often'] : p < 0.1 ? ['rarely', 'Rarely changes'] : ['sometimes', 'Changes sometimes'];
+  return `<span class="act ${cls}" title="${a.commits} of ${a.of} commits since ${esc(a.since)}">${label} · ${a.commits}/${a.of}</span>`; };
+
+function href(c) {
+  const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#\S+)?$/.exec(c); if (!m) return null;
+  const abs = `${ROOT}/${m[1]}`, line = m[2] || 1;
+  if (WEB) return `${abs}${m[2] ? `#L${m[2]}${m[3] ? `-L${m[3]}` : ''}` : ''}`;
+  if (linkMode === 'vscode') return `vscode://file${abs.startsWith('/') ? '' : '/'}${abs}:${line}`;
+  if (linkMode === 'idea') return `idea://open?file=${encodeURIComponent(abs)}&line=${line}`;
+  return null;
+}
+const short = (c) => { const [p, l] = c.replace(/#\S+$/, '').split(/:(?=\d)/); const parts = p.split('/'); const name = parts.pop() || parts.pop(); return l ? `${name}:${l}` : name; };
+const cite = (c) => { const h = href(c), plain = c.replace(/#\S+$/, ''); return h ? `<a class="cite" href="${esc(h)}" title="${esc(plain)}">${esc(short(c))}</a>` : `<span class="cite" title="${esc(plain)}">${esc(plain)}</span>`; };
+const cites = (list) => list?.length ? `<div class="cites">${list.map(cite).join('')}</div>` : '';
+
+$('#app').textContent = M.project.name;
+const sections = [];
+const add = (id, label, html) => sections.push({ id, label, html });
+
+add('purpose', 'Overview', `
+  <p class="eyebrow">${esc(M.project.name)}</p>
+  <p class="purpose">${esc(M.purpose.text)}</p>
+  ${M.purpose.metaphor ? `<p class="metaphor">${esc(M.purpose.metaphor)}</p>` : ''}
+  ${cites(M.purpose.cites)}
+  ${M.purpose.nonGoals ? `<p class="nongoals">${rich(M.purpose.nonGoals.text)}</p>${cites(M.purpose.nonGoals.cites)}` : ''}
+  ${(() => { const b = M.purpose.boot; if (!b) return '';
+    const col = (h, list, f) => list?.length ? `<div><h4>${h}</h4><ul class="ctx-list">${list.map(f).join('')}</ul></div>` : '';
+    return `<div class="boot">
+    ${col('Where it starts', b.entries, (e) => `<li><b>${esc(e.name)}</b><span>${rich(e.text)}</span>${cites(e.cites)}</li>`)}
+    ${col('Run it locally', b.run, (e) => `<li><code>${esc(e.cmd)}</code>${e.note ? `<span>${rich(e.note)}</span>` : ''}${cites(e.cites)}</li>`)}
+  </div>`; })()}
+  <div class="budget">
+    <span class="pill">${M.concepts.length} core concepts</span><span class="pill">${M.regions.length} regions</span>
+    <span class="pill">request path · ${M.runtime.steps.length} steps</span><span class="pill">${M.stories.length} stories</span>
+    <span class="pill">Core map ≈ 15 min · stories ≈ 20 min</span>
+  </div>
+  <div class="meta"><span>${esc(M.project.stack ?? '')}</span><span>commit ${esc(M.project.commit)}</span><span>generated ${esc(M.project.generatedAt)}</span></div>`);
+
+add('context', 'People & outside systems', `
+  <h2>People and outside systems</h2>
+  <div class="cols2">
+    <div><h4>People, most important first</h4><ul class="ctx-list">${M.context.actors.map((a) => `<li><b>${esc(a.name)}</b>${a.importance ? `<p class="importance">${rich(a.importance)}</p>` : ''}<span>${rich(a.text)}</span>${cites(a.cites)}</li>`).join('')}</ul></div>
+    <div><h4>Outside systems</h4><ul class="ctx-list">${M.context.externals.map((a) => `<li><b>${esc(a.name)}</b><span>${rich(a.text)}</span>${cites(a.cites)}</li>`).join('')}</ul></div>
+  </div>`);
+
+add('concepts', 'Core concepts', `
+  <h2>Core concepts: the ${M.concepts.length} things everything else is about</h2>
+  <p class="lede">Learn these first. The rest of the map is told in their names. Select a concept in the sentence to read its card.</p>
+  <p class="core">${coreSentence(M.coreSentence.text)}</p>${cites(M.coreSentence.cites)}
+  <div class="cast">${M.concepts.map((c) => `
+    <article class="card" id="concept-${c.id}">
+      <h3>${esc(c.name)}</h3>
+      <div class="names">${c.codeNames.map((n) => `<code>${esc(n)}</code>`).join('')}</div>
+      <p class="what">${rich(c.what)}</p>
+      ${c.notToConfuse?.length ? `<h4>Not to be confused with</h4><ul class="confuse">${c.notToConfuse.map((n) => `<li><b>${ticks(n.name)}.</b> ${rich(n.how)}</li>`).join('')}</ul>` : ''}
+      <h4>Lifecycle</h4><ol class="life">${c.lifecycle.map((l) => `<li><div><span class="state">${esc(l.state)}</span><span class="t">${rich(l.text)}</span>${cites(l.cites)}</div></li>`).join('')}</ol>
+      <h4>Fields that matter</h4><dl class="fields">${c.keyFields.map((f) => `<dt>${esc(f.name)}</dt><dd>${rich(f.text)}</dd>`).join('')}</dl>
+      ${c.relations?.length ? `<h4>Relations</h4><ul class="rel">${c.relations.map((r) => `<li>${esc(c.name)} ${esc(r.label)} → <a href="#concept-${r.to}">${esc(conceptName(r.to))}</a>${cites(r.cites)}</li>`).join('')}</ul>` : ''}
+      ${c.rule ? `<div class="rule"><b>Its rule</b>${rich(c.rule.text)}${cites(c.rule.cites)}</div>` : ''}
+      <div class="lives">${Object.entries(c.lives || {}).map(([k, v]) => `<span>${esc(k)}</span><span>${rich(v)}</span>`).join('')}</div>
+      ${cites(c.cites)}
+    </article>`).join('')}</div>`);
+
+add('regions', 'Regions', `
+  <h2>Regions: where the code lives</h2>
+  <p class="lede">The codebase in ${M.regions.length} areas, in the order a professional meets them. Each is one capability end to end, its React pages and its Spring code together. The badge shows how often a region changed recently, i.e. where you are likely to work.</p>
+  <p class="core">${linkSentence(M.regionSentence.text, 'region')}</p>${cites(M.regionSentence.cites)}
+  <div class="regions">${M.regions.map((r) => `
+    <article class="region-card" id="region-${r.id}" style="${rvars(r.id)}">
+      <div class="card-top">${chip(r.id)}${activity(r.activity)}</div>
+      <div class="code">${esc(r.codeName ?? '')}</div>
+      <p><b>${rich(r.role)}</b></p>
+      ${r.text ? `<p>${rich(r.text)}</p>` : ''}
+      ${r.owns?.length ? `<div class="owns">${r.owns.map((o) => `<a href="#concept-${o}">${esc(conceptName(o))}</a>`).join('')}</div>` : ''}
+      ${r.parts?.length ? `<h4>Inside</h4><ul class="parts">${r.parts.map((x) => `<li><b>${rich(x.name)}<span class="tier">${esc(x.tier ?? '')}</span></b>${rich(x.text)}${cites(x.cites)}</li>`).join('')}</ul>` : ''}
+    </article>`).join('')}</div>`);
+
+add('state', 'State & source of truth', `
+  <h2>State and source of truth</h2>
+  <p class="lede">${M.state.intro ? rich(M.state.intro) : 'Where the truth for each concept lives, which code may change it, and where a copy or a later step can disagree with it.'}</p>${cites(M.state.cites)}
+  <div class="wtc"><table><thead><tr><th>Concept</th><th>Truth</th><th>Written by</th><th>Every change passes</th></tr></thead><tbody>
+  ${M.state.owners.map((o) => `<tr><td><a href="#concept-${o.concept}"><b>${esc(conceptName(o.concept))}</b></a>${o.others?.length ? '<div><span class="kind surprise">shared write</span></div>' : ''}</td><td>${rich(o.truth)}</td><td>${chip(o.writer)}${(o.others ?? []).map((w) => `<div class="also">also ${chip(w.region)} ${rich(w.text)}${cites(w.cites)}</div>`).join('')}</td><td>${rich(o.gate)}${cites(o.cites)}</td></tr>`).join('')}
+  </tbody></table></div>
+  ${M.state.copies?.length ? `<h3>Copies that can disagree</h3><ul class="ctx-list">${M.state.copies.map((c) => `<li><b>${esc(c.name)}</b><span>${rich(c.holds)} ${rich(c.wins)} ${rich(c.stale)}</span>${cites(c.cites)}</li>`).join('')}</ul>` : ''}
+  ${M.state.seams?.length ? `<h3>Steps that can half-succeed</h3><p class="lede">One action, several steps that don't commit together. If a later step fails, the earlier ones stay done.</p><div class="rules">${M.state.seams.map((m) => `<div class="r"><div class="rank-col"><span class="kind surprise">split</span></div><div><h3>${esc(m.span)}</h3><p>${rich(m.text)}</p><p class="importance"><b>If a later step fails:</b> ${rich(m.onFailure)}</p>${cites(m.cites)}</div></div>`).join('')}</div>` : ''}`);
+
+add('flow', 'How a request travels', `
+  <h2>${esc(M.runtime.title)}</h2>
+  <p class="lede">The path every API call takes, whatever the feature. Know it once and you know where any request can be stopped, which website it belongs to, and why every query is scoped. Hover a step to find it in the picture.</p>
+  <figure class="figure"><div class="svgbox"><svg class="diagram seq" id="seq" role="img" aria-label="Sequence of a request"></svg></div></figure>
+  <div class="flow-grid"><ol class="steps" id="flowSteps">${M.runtime.steps.map((s, i) => `<li data-step="${i}"><div><div class="head">${chip(s.region)}</div>${rich(s.text)}${cites(s.cites)}</div></li>`).join('')}</ol></div>`);
+
+add('background', 'What runs on its own', `
+  <h2>What runs on its own</h2>
+  <p class="lede">${rich(M.background.intro)}</p>${cites(M.background.cites)}
+  <div class="wtc"><table><thead><tr><th>What</th><th>When</th><th>Region</th></tr></thead><tbody>
+  ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td style="white-space:nowrap">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
+  </tbody></table></div>`);
+
+add('rules', 'Rules & surprises', `
+  <h2>Rules and surprises</h2>
+  <p class="lede">What you would get wrong by reading the code naively, most important first: ranked by how much of the code a rule touches and how bad it is when broken.</p>
+  <div class="rules">${M.rules.map((r, i) => `<div class="r"><div class="rank-col"><span class="rank">${i + 1}</span><span class="kind ${r.kind}">${r.kind}</span></div><div><h3>${esc(r.title)}</h3><p class="importance">${rich(r.importance)}</p><p>${rich(r.text)}</p>${cites(r.cites)}</div></div>`).join('')}</div>`);
+
+add('stories', 'Stories', `
+  <h2>Stories: the main flows, most important first</h2>
+  <p class="lede">Ranked by how central the flow is to what the product does and how much of the system it runs through. Simulated scenarios with real code paths. Only the people and the values are made up; every step is traced and cited. Steps marked <span class="inferred">inferred</span> were not traced.</p>
+  ${M.stories.map((st, i) => `
+    <details class="story" id="story-${st.id}" ${i === 0 ? 'open' : ''}>
+      <summary><span class="storykind"><span class="rank">${i + 1}</span> ${st.kind === 'failure' ? 'failure path' : 'flow'}</span><h3>${esc(st.title)}</h3><p class="importance">${rich(st.importance)}</p><p class="setup">${rich(st.setup)}</p>
+        <div class="story-route">${[...new Set(st.steps.map((s) => s.region))].map(chip).join('')}</div></summary>
+      <div class="body">
+        <ol class="steps">${st.steps.map((s) => `<li><div><div class="head">${chip(s.region)}${s.inferred ? '<span class="inferred">inferred</span>' : ''}</div>${rich(s.text)}${cites(s.cites)}</div></li>`).join('')}</ol>
+        <div class="takeaways"><b>What you now know</b><ul>${st.takeaways.map((t) => `<li>${rich(t)}</li>`).join('')}</ul></div>
+      </div>
+    </details>`).join('')}`);
+
+add('end', '', `<footer>Generated by mindmodel from <code>mindmodel/mindmodel.json</code>. Every citation points to the code at commit ${esc(M.project.commit)}.</footer>`);
+
+$('#main').innerHTML = sections.map((s) => `<section id="${s.id}">${s.html}</section>`).join('');
+$('#toc').innerHTML = sections.filter((s) => s.label).map((s) => `<li><a href="#${s.id}">${esc(s.label)}</a></li>`).join('');
+
+// ---- SVG helpers ----
+const NS = 'http://www.w3.org/2000/svg';
+const el = (parent, tag, attrs = {}) => { const e = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); parent.appendChild(e); return e; };
+const arrowhead = (svg, id) => { const m = el(el(svg, 'defs'), 'marker', { id, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }); el(m, 'path', { d: 'M0,0 L10,5 L0,10 z', class: 'arrow' }); };
+const flash = (node) => { node.scrollIntoView({ behavior: 'smooth', block: 'start' }); node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 1600); };
+
+// ---- Main flow as a sequence diagram: lanes are the systems, rows are steps, dashed = asynchronous ----
+(function sequence() {
+  const svg = $('#seq'); arrowhead(svg, 'ah-s');
+  const lanes = M.runtime.lanes, steps = M.runtime.steps;
+  // Lane descriptions wrap onto as many lines as they need (no cropping); the header grows to fit the longest.
+  const wrap = (t, max = 30) => t.split(/\s+/).reduce((ls, w) => { const last = ls[ls.length - 1]; if (last && (last + ' ' + w).length <= max) ls[ls.length - 1] = last + ' ' + w; else ls.push(w); return ls; }, []);
+  const descs = Object.fromEntries(lanes.map((l) => [l.id, wrap(l.text.replace(/`/g, ''))]));
+  const LH = 20, HEAD = 52 + LH * Math.max(1, ...Object.values(descs).map((d) => d.length));
+  const LW = 360, PADX = 150, TOP = HEAD + 38, ROW = 72, GAP = 48;
+  const lx = Object.fromEntries(lanes.map((l, i) => [l.id, PADX + i * LW]));
+  const firstAsync = steps.findIndex((s) => s.async);
+  const rowY = steps.map((s, i) => TOP + 34 + i * ROW + (firstAsync >= 0 && i >= firstAsync ? GAP : 0));
+  const bottom = rowY[rowY.length - 1] + 40;
+  const VW = PADX * 2 + (lanes.length - 1) * LW;
+  svg.setAttribute('viewBox', `0 0 ${VW} ${bottom + 10}`);
+  for (const l of lanes) {
+    const g = el(svg, 'g', { class: 'lane' }), x = lx[l.id];
+    el(g, 'rect', { x: x - 150, y: 10, width: 300, height: HEAD, rx: 10 });
+    el(g, 'text', { x, y: 40, class: 'lname', 'text-anchor': 'middle' }).textContent = l.name;
+    descs[l.id].forEach((line, k) => { el(g, 'text', { x, y: 64 + k * LH, class: 'ltext', 'text-anchor': 'middle' }).textContent = line; });
+    el(svg, 'line', { x1: x, y1: 10 + HEAD, x2: x, y2: bottom, class: 'life' });
+  }
+  if (firstAsync >= 0) {
+    const y = rowY[firstAsync] - GAP / 2 - 14, g = el(svg, 'g', { class: 'gap' });
+    el(g, 'line', { x1: 20, y1: y, x2: VW - 20, y2: y });
+    el(g, 'text', { x: VW / 2, y: y + 4, 'text-anchor': 'middle' }).textContent = 'later, asynchronously: the visitor is already gone';
+  }
+  steps.forEach((s, i) => {
+    const g = el(svg, 'g', { class: 'row', 'data-step': i }), y = rowY[i], x1 = lx[s.from], x2 = lx[s.to];
+    const cls = 'msg' + (s.async ? ' async' : '');
+    if (x1 === x2) { // work inside one system: a small loop on its lifeline
+      el(g, 'path', { d: `M${x1},${y - 8} h34 v16 h-32`, class: cls, 'marker-end': 'url(#ah-s)' });
+      el(g, 'text', { x: x1 + 46, y: y + 6, class: 'mlabel' }).textContent = s.label;
+    } else {
+      const dir = Math.sign(x2 - x1);
+      el(g, 'path', { d: `M${x1},${y} L${x2 - dir * 3},${y}`, class: cls, 'marker-end': 'url(#ah-s)' });
+      el(g, 'text', { x: (x1 + x2) / 2, y: y - 11, class: 'mlabel', 'text-anchor': 'middle' }).textContent = s.label;
+    }
+    const n = el(g, 'g', { class: 'num' }), nx = Math.min(x1, x2) - (x1 === x2 ? 26 : 24);
+    el(n, 'circle', { cx: nx, cy: y, r: 14 }); el(n, 'text', { x: nx, y }).textContent = i + 1;
+  });
+  document.querySelectorAll('#flowSteps > li').forEach((li) => {
+    const on = (v) => { li.classList.toggle('hot', v); svg.querySelectorAll('.row').forEach((r) => { r.classList.toggle('hot', v && r.dataset.step === li.dataset.step); r.classList.toggle('dim', v && r.dataset.step !== li.dataset.step); }); };
+    li.addEventListener('mouseenter', () => on(true)); li.addEventListener('mouseleave', () => on(false));
+  });
+})();
+
+document.addEventListener('click', (e) => { const c = e.target.closest('.chip'); if (c) flash($(`#region-${c.dataset.region}`)); });
+
+// toc highlight
+const links = [...document.querySelectorAll('#toc a')];
+// Phone contents sheet: open from the bar, close on a pick, the backdrop or Escape.
+const sheet = $('#sheet'), mbar = $('#mbar'), scrim = $('#scrim');
+const setSheet = (open) => { sheet.classList.toggle('open', open); scrim.hidden = !open; mbar.setAttribute('aria-expanded', open); if (open) sheet.querySelector('a.on, a')?.focus({ focusVisible: false }); };
+mbar.addEventListener('click', () => setSheet(!sheet.classList.contains('open')));
+scrim.addEventListener('click', () => setSheet(false));
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheet.classList.contains('open')) { setSheet(false); mbar.focus(); } });
+links.forEach((a, i) => a.addEventListener('click', () => setSheet(false)));
+const showCurrent = (a) => { $('#mbar-num').textContent = links.indexOf(a) + 1; $('#mbar-label').textContent = a.textContent; };
+showCurrent(links[0]);
+const io = new IntersectionObserver((es) => es.forEach((en) => { if (en.isIntersecting) links.forEach((a) => { const on = a.getAttribute('href') === `#${en.target.id}`; a.classList.toggle('on', on); if (on) showCurrent(a); }); }), { rootMargin: '-40% 0px -55% 0px' });
+document.querySelectorAll('main section').forEach((s) => io.observe(s));
+
+// tools
+if (WEB) $('label.linkmode').hidden = true;
+const lm = $('#linkmode'); lm.value = linkMode;
+lm.addEventListener('change', () => { linkMode = lm.value; store.set('mindmodel.links', linkMode); location.reload(); });
+const savedTheme = store.get('mindmodel.theme', ''); if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+// The button shows the theme you'll switch to: a moon in light mode, a sun in dark mode.
+const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+const syncTheme = () => { const d = isDark(), label = `Switch to ${d ? 'light' : 'dark'} theme`; document.documentElement.classList.toggle('is-dark', d); $('#theme').setAttribute('aria-label', label); $('#theme').title = label; };
+syncTheme(); matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
+$('#theme').addEventListener('click', () => {
+  document.documentElement.dataset.theme = isDark() ? 'light' : 'dark'; store.set('mindmodel.theme', document.documentElement.dataset.theme); syncTheme();
+});
+document.title = `mindmodel · ${M.project.name}`;
+})();
+</script>
+</body>
+</html>

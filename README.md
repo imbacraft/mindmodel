@@ -4,6 +4,12 @@
 
 It is deliberately *not* complete. Graph tools show hundreds of nodes; mindmodel shows only what a developer must carry in their head, and every claim on the page is traced to a cited line of code.
 
+## Example
+
+[![mindmodel of Apache HertzBeat](examples/hertzbeat.png)](examples/hertzbeat.html)
+
+The mindmodel of [Apache HertzBeat](https://github.com/apache/hertzbeat), a monitoring platform of about 316k lines of Java and 199k of TypeScript, generated in about 5 minutes. Download [`examples/hertzbeat.html`](examples/hertzbeat.html) and open it in a browser: every citation links to the code on GitHub at the mapped commit. HertzBeat is an Apache Software Foundation project; this page is an independent example and is not affiliated with it.
+
 ## What the page contains
 1. **Overview:** what the system is for, what it deliberately is not, where it starts, and the one way to run it locally.
 2. **People & outside systems:** who it serves, most important first, and which outside systems it calls.

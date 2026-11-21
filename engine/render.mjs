@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Renders mindmodel.json into a single offline index.html using the fixed template. Refuses to render an invalid map.
-// Usage: node render.mjs <mindmodel.json> [projectRoot]
+// Usage: node render.mjs <mindmodel.json> [projectRoot] [--web <base URL> --out <file>]
+// --web publishes a shareable page: citations link to the code on the web (e.g. a GitHub blob URL at a commit)
+// and no local path is embedded.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validate } from './validate.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const file = path.resolve(process.argv[2] ?? 'mindmodel/mindmodel.json');
-const root = path.resolve(process.argv[3] ?? path.join(path.dirname(file), '..'));
+const args = process.argv.slice(2), opt = (k) => { const i = args.indexOf(k); return i >= 0 ? args.splice(i, 2)[1] : null; };
+const web = opt('--web'), outArg = opt('--out');
+const file = path.resolve(args[0] ?? 'mindmodel/mindmodel.json');
+const root = path.resolve(args[1] ?? path.join(path.dirname(file), '..'));
 const map = JSON.parse(fs.readFileSync(file, 'utf8'));
 
 const { errors, warnings } = validate(map, root);
@@ -18,7 +22,7 @@ if (errors.length) { errors.forEach((e) => console.log(`ERROR ${e}`)); process.e
 const template = fs.readFileSync(path.join(here, '../template/template.html'), 'utf8');
 // '<' is escaped so map text can never close the <script> tag it lives in.
 const data = JSON.stringify(map).replace(/</g, '\\u003c');
-const html = template.replace('/*__MINDMODEL_DATA__*/', () => data).replace('__MINDMODEL_ROOT__', () => root.replace(/\\/g, '/').replace(/"/g, '\\"'));
-const out = path.join(path.dirname(file), 'index.html');
+const html = template.replace('/*__MINDMODEL_DATA__*/', () => data).replace('__MINDMODEL_ROOT__', () => (web ?? root).replace(/\\/g, '/').replace(/"/g, '\\"'));
+const out = outArg ? path.resolve(outArg) : path.join(path.dirname(file), 'index.html');
 fs.writeFileSync(out, html);
 console.log(`wrote ${out} (${(html.length / 1024).toFixed(0)} KB)`);
