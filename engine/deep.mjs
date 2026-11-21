@@ -191,7 +191,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     }
     for (const c of local) for (const n of f.ix.methods.filter((n) => n.name === c.name && n !== m && !(n.open > m.open && n.close < m.close)).slice(0, 1)) steps.push({ line: c.line, into: () => walk(f, n, depth, seen, ev) });
     if (statusRe) f.lines.slice(m.start - 1, m.end).forEach((l, i) => { const x = statusRe.exec(l); if (x) steps.push({ line: m.start + i, text: `→ ${x[2]}` }); });
-    for (const n of f.ix.methods.filter((n) => n.name === 'afterCommit' && n.open > m.open && n.close < m.close)) steps.push({ line: n.start, into: () => { ev.push('after commit:'); walk(f, n, depth, seen, ev); } });
+    for (const n of f.ix.methods.filter((n) => n.name === 'afterCommit' && n.open > m.open && n.close < m.close)) steps.push({ line: n.start, into: () => { const at = ev.length; ev.push('after commit:'); walk(f, n, depth, seen, ev); if (ev.length === at + 1) ev.pop(); } });
     for (const st of steps.sort((a, b) => a.line - b.line)) { if (ev.length >= 12) break; if (st.text) ev.push(st.text); else st.into(); }
   };
   const entries = [];
@@ -206,9 +206,41 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     const tx = isTx(f, m) ? ' [tx]' : '';
     const score = ev.filter((x) => /\(\)$/.test(x)).length * 3 + ev.filter((x) => /^→/.test(x)).length * 2 + ev.filter((x) => core.some((c) => x.includes(c))).length * 2 + ev.length;
     const steps = ev.reduce((acc, x) => { const last = acc[acc.length - 1]; if (last && last.x === x) last.n++; else acc.push({ x, n: 1 }); return acc; }, []).map(({ x, n }) => (n > 1 ? `${x} ×${n}` : x));
-    return { score, line: `${label} ${cite(f.p, m)}${tx}: ${steps.join('; ')}`, ev };
+    return { score, line: `${label} ${cite(f.p, m)}${tx}: ${steps.join('; ')}`, ev, file: f.p };
   }).filter((x) => x.ev.some((e) => !/^(save|delete|update|insert) /.test(e) || core.some((c) => e.includes(c))) && x.ev.length >= 2).sort((a, b) => b.score - a.score);
-  return { seams, lifecycle, schedules, flows: flows.map((x) => x.line) };
+  // Variety: identical chains collapse to one, and no controller contributes more than two.
+  const seenChain = new Set(), perFile = {}, picked = [];
+  for (const x of flows) { const sig = x.ev.join('|'); if (seenChain.has(sig) || (perFile[x.file] ?? 0) >= 2) continue; seenChain.add(sig); perFile[x.file] = (perFile[x.file] ?? 0) + 1; picked.push(x); }
+  return { seams, lifecycle, schedules, flows: picked.map((x) => x.line) };
+}
+
+// --- Deployables: a repo can hold several apps; the map covers the primary one ----------
+// Primary = the entry point whose module depends on the most sibling modules (the one that assembles the app).
+// Code of the other deployables, and packages the primary app excludes from its component scan, is left out.
+export function deployables({ java, files, rel, read }) {
+  const isMain = (j) => /static\s+void\s+main\s*\(/.test(j.text) && /SpringApplication(Builder)?\b|@SpringBootApplication|@SpringBootConfiguration|@EnableAutoConfiguration/.test(j.text);
+  const moduleOf = (p) => (p.includes('/src/main/java/') ? p.split('/src/main/java/')[0] : '.');
+  const mods = new Set(java.map((j) => moduleOf(j.p)).filter((m) => m !== '.'));
+  const deps = (m) => { const b = files.find((f) => rel(f) === `${m === '.' ? '' : m + '/'}pom.xml` || rel(f) === `${m === '.' ? '' : m + '/'}build.gradle` || rel(f) === `${m === '.' ? '' : m + '/'}build.gradle.kts`); if (!b) return 0; const t = read(b); return [...mods].filter((o) => o !== m && new RegExp(`[>:'"]${path.basename(o)}[<'"]`).test(t)).length; };
+  const mains = java.filter(isMain).map((j) => ({ file: j.p, line: (j.text.split('\n').findIndex((l) => /static\s+void\s+main/.test(l)) + 1) || null, module: moduleOf(j.p), name: j.name })).map((m) => ({ ...m, deps: deps(m.module) })).sort((a, b) => b.deps - a.deps);
+  if (!mains.length) return { primary: null, others: [], isExcluded: () => false };
+  const primary = mains[0], others = mains.slice(1).filter((o) => o.module !== primary.module && !primary.module.startsWith(o.module + '/') && o.module !== '.');
+  const mainText = java.find((j) => j.p === primary.file).text;
+  const scanBlock = /@ComponentScan\s*\(([\s\S]*?)\)\s*\n\s*@|@ComponentScan\s*\(([\s\S]*?)\)\s*\n\s*(public\s+)?class/.exec(mainText);
+  const patterns = scanBlock ? [...(scanBlock[1] ?? scanBlock[2]).matchAll(/pattern\s*=\s*"([^"]+)"/g)].map((m) => new RegExp(m[1].replace(/\\\\/g, '\\'))) : [];
+  const fqn = (p) => p.split('/src/main/java/')[1]?.replace(/\.java$/, '').split('/').join('.') ?? '';
+  const isExcluded = (p) => others.some((o) => p.startsWith(o.module + '/')) || patterns.some((re) => re.test(fqn(p)));
+  return { primary, others, excludedPatterns: patterns.map(String), isExcluded };
+}
+{
+  const java = [{ p: 'app/src/main/java/x/App.java', name: 'App', text: '@SpringBootConfiguration\n@ComponentScan(basePackages = {"x"}, excludeFilters = @ComponentScan.Filter(type = FilterType.REGEX, pattern = "x\\\\.gw\\\\..*"))\npublic class App { public static void main(String[] a) {} }' },
+    { p: 'worker/src/main/java/x/W.java', name: 'W', text: '@SpringBootApplication\nclass W { public static void main(String[] a) {} }' }];
+  const files = ['app/pom.xml', 'worker/pom.xml'], text = { 'app/pom.xml': '<artifactId>worker</artifactId>', 'worker/pom.xml': '' };
+  const d = deployables({ java, files, rel: (f) => f, read: (f) => text[f] });
+  assert.equal(d.primary.module, 'app');
+  assert.ok(d.isExcluded('worker/src/main/java/x/W.java'));
+  assert.ok(d.isExcluded('app/src/main/java/x/gw/Api.java'));
+  assert.ok(!d.isExcluded('app/src/main/java/x/core/Svc.java'));
 }
 
 // --- Boot: the one way to run the whole app locally ---------------------------------
@@ -231,7 +263,7 @@ export function configKeys(text, props = false) {
   assert.equal(k.get('spring.datasource.url').value, '${DB_URL}');
 }
 
-export function bootFacts({ root, files, rel, git }) {
+export function bootFacts({ root, files, rel, git, app }) {
   const read = (p) => fs.readFileSync(p, 'utf8');
   const lineOf = (text, re) => { const i = text.split('\n').findIndex((l) => re.test(l)); return i < 0 ? null : i + 1; };
   const build = files.filter((f) => /(^|\/)(build\.gradle(\.kts)?|pom\.xml)$/.test(rel(f))).sort((a, b) => rel(a).split('/').length - rel(b).split('/').length)[0];
@@ -240,7 +272,12 @@ export function bootFacts({ root, files, rel, git }) {
   const out = [];
   const wrapper = fs.existsSync(path.join(dir, gradle ? 'gradlew' : 'mvnw'));
   const prefix = path.dirname(B) === '.' ? '' : `cd ${path.dirname(B)} && `;
-  out.push(`run: ${prefix}${gradle ? (wrapper ? './gradlew' : 'gradle') + ' bootRun' : (wrapper ? './mvnw' : 'mvn') + ' spring-boot:run'} (${B}${gradle && lineOf(b, /\bbootRun\b/) ? ':' + lineOf(b, /\bbootRun\b/) : ''})`);
+  // A separate module only if it has its own build file; otherwise it is just a source folder of the root build.
+  const ownBuild = (m) => files.some((f) => new RegExp(`^${m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(pom\\.xml|build\\.gradle(\\.kts)?)$`).test(rel(f)));
+  const mod = app?.primary && app.primary.module !== '.' && app.primary.module !== path.dirname(B) && ownBuild(app.primary.module) ? app.primary.module : null;
+  if (mod) out.push(`app: ${mod} (main ${app.primary.file}${app.primary.line ? ':' + app.primary.line : ''}); multi-module build, so confirm the exact command in the README. Usually: ${gradle ? `./gradlew :${path.basename(mod)}:bootRun` : `${wrapper ? './mvnw' : 'mvn'} -pl ${mod} -am spring-boot:run`}`);
+  else out.push(`run: ${prefix}${gradle ? (wrapper ? './gradlew' : 'gradle') + ' bootRun' : (wrapper ? './mvnw' : 'mvn') + ' spring-boot:run'} (${B}${gradle && lineOf(b, /\bbootRun\b/) ? ':' + lineOf(b, /\bbootRun\b/) : ''})`);
+  if (app?.others.length) out.push(`other deployables in this repo (not mapped): ${app.others.map((o) => `${o.name} (${o.module})`).join(', ')}${app.excludedPatterns.length ? `; also excluded from the app's component scan: ${app.excludedPatterns.join(', ')}` : ''}`);
 
   // Profile the run command activates.
   let profile = null, profileAt = null;
@@ -248,7 +285,7 @@ export function bootFacts({ root, files, rel, git }) {
   if (lit) { profile = lit[1]; profileAt = lineOf(b, new RegExp(lit[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))); }
   else { const v = /spring\.profiles\.active=?["']?\s*\+\s*(\w+)/.exec(b); const def = v && new RegExp(`\\b${v[1]}\\s*=\\s*[^\\n]*?['"]([\\w-]+)['"]`).exec(b); if (def) { profile = def[1]; profileAt = lineOf(b, new RegExp(`\\b${v[1]}\\s*=`)); } }
 
-  const cfg = files.filter((f) => /src\/main\/resources\/application(-[\w-]+)?\.(ya?ml|properties)$/.test(rel(f)));
+  const cfg = files.filter((f) => /src\/main\/resources\/application(-[\w-]+)?\.(ya?ml|properties)$/.test(rel(f)) && (!mod || rel(f).startsWith(mod + '/')));
   const load = (name) => { const f = cfg.find((c) => new RegExp(`/application${name ? '-' + name : ''}\\.(ya?ml|properties)$`).test(rel(c))); return f ? { file: rel(f), keys: configKeys(read(f), f.endsWith('.properties')) } : null; };
   const base = load(null);
   if (!profile && base?.keys.get('spring.profiles.active')) { const k = base.keys.get('spring.profiles.active'); profile = k.value.replace(/^\$\{[^:}]*:?([^}]*)\}$/, '$1') || null; profileAt = `${base.file}:${k.line}`; }

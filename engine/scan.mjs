@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert';
-import { javaFacts, bootFacts } from './deep.mjs';
+import { javaFacts, bootFacts, deployables } from './deep.mjs';
 import { gitWindow } from './activity.mjs';
 
 const IGNORE = new Set(['.git', 'node_modules', 'target', 'build', 'bin', 'dist', 'out', '.gradle', '.idea', '.vscode', '.settings', '.ua', 'mindmodel', 'uploads', 'coverage', '.next', 'android', 'ios', '.mvn', 'vendor', '.claude', '.cursor', '.agent']);
@@ -95,7 +95,10 @@ export function scan(root) {
   const byExt = {}; for (const f of files) { const e = path.extname(f).slice(1) || '(none)'; byExt[e] = (byExt[e] ?? 0) + 1; }
 
   // Java model
-  const java = files.filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f)).map((p) => ({ p: R(p), text: read(p), ...parseJava(read(p)) }));
+  const javaAll = files.filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f)).map((p) => ({ p: R(p), text: read(p), ...parseJava(read(p)) }));
+  // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
+  const app = deployables({ java: javaAll, files, rel: R, read });
+  const java = javaAll.filter((j) => !app.isExcluded(j.p));
   const entities = java.filter((j) => j.annotations.includes('Entity'));
   const entityNames = new Set(entities.map((e) => e.name));
   const controllers = java.filter((j) => j.annotations.includes('RestController') || j.annotations.includes('Controller'));
@@ -180,10 +183,10 @@ export function scan(root) {
   const seams = pick(/@Transactional\b|@TransactionalEventListener|publishEvent\(|TransactionSynchronization|kafkaTemplate\.send|rabbitTemplate\.convertAndSend/, java.filter((j) => sdkFiles.has(j.p) || /publishEvent\(|@TransactionalEventListener|TransactionSynchronization/.test(j.text))).slice(0, 60);
 
   const deep = javaFacts({ java, repoEntity, EXT, enums, entities, shortlist: new Set(funnel.slice(0, 15).map((e) => e.name)), endpoints });
-  const bootComputed = bootFacts({ root, files, rel: R, git });
+  const bootComputed = bootFacts({ root, files, rel: R, git, app });
 
   // boot: entry points, profile switches, how to run locally
-  const mains = java.filter((j) => /@SpringBootApplication/.test(j.text)).map((j) => ({ file: j.p, line: linesMatching(j.text, /static\s+void\s+main\s*\(/)[0]?.line }));
+  const mains = javaAll.filter((j) => /static\s+void\s+main\s*\(/.test(j.text) && /SpringApplication(Builder)?\b|@SpringBootApplication|@SpringBootConfiguration/.test(j.text)).map((j) => ({ file: j.p, line: linesMatching(j.text, /static\s+void\s+main\s*\(/)[0]?.line }));
   const switches = pick(/@Profile\(|@ConditionalOnProperty\(|@ConditionalOnMissingBean|spring\.profiles\.active/).concat(configFiles.flatMap((f) => linesMatching(read(f), /profiles?\.active|on-profile/).map((m) => ({ file: R(f), ...m }))));
   const feEntries = files.filter((f) => /(^|\/)(vite\.config\.\w+|index\.html|src\/main\.[jt]sx?|src\/index\.[jt]sx?|angular\.json|proxy\.conf\.json)$/.test(R(f)) && !/node_modules|resources\/(static|templates)/.test(R(f))).map((f) => ({ file: R(f), lines: linesMatching(read(f), /port|proxy|target|createRoot|render\(|type="module"|bootstrapApplication|bootstrapModule|createApp|new App\(|mount\(|"main":|"browser":/).slice(0, 8) }));
   const compose = files.filter((f) => /(^|\/)(docker-)?compose[\w.-]*\.ya?ml$/.test(R(f))).map((f) => ({ file: R(f), services: linesMatching(read(f), /^  [\w-]+:\s*$/).map((m) => `${m.text.replace(':', '')}:${m.line}`) }));
