@@ -3,6 +3,7 @@ name: system-writer
 description: Writes a system mindmodel (system-map.json) for a folder of services by following the system rules, starting from the system scan. Dispatched by the /mindmodel-system skill.
 model: opus
 effort: low
+tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # mindmodel system writer

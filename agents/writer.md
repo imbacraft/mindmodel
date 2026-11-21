@@ -3,6 +3,7 @@ name: writer
 description: Writes a mindmodel.json for one application by following the mindmodel generation rules, starting from the scanner's facts. Dispatched by the /mindmodel skill.
 model: opus
 effort: low
+tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # mindmodel writer
