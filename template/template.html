@@ -309,7 +309,6 @@ add('purpose', 'Overview', `
     const col = (h, list, f) => list?.length ? `<div><h4>${h}</h4><ul class="ctx-list">${list.map(f).join('')}</ul></div>` : '';
     return `<div class="boot">
     ${col('Where it starts', b.entries, (e) => `<li><b>${esc(e.name)}</b><span>${rich(e.text)}</span>${cites(e.cites)}</li>`)}
-    ${col('Switches that change behavior', b.switches, (e) => `<li><span>${rich(e.text)}</span>${cites(e.cites)}</li>`)}
     ${col('Run it locally', b.run, (e) => `<li><code>${esc(e.cmd)}</code>${e.note ? `<span>${rich(e.note)}</span>` : ''}${cites(e.cites)}</li>`)}
   </div>`; })()}
   <div class="budget">

@@ -5,7 +5,7 @@
 It is deliberately *not* complete. Graph tools show hundreds of nodes; mindmodel shows only what a developer must carry in their head, and every claim on the page is traced to a cited line of code.
 
 ## What the page contains
-1. **Overview:** what the system is for, what it deliberately is not, where it starts, the switches that change its behavior, and the one way to run it locally.
+1. **Overview:** what the system is for, what it deliberately is not, where it starts, and the one way to run it locally.
 2. **Context:** who uses it, and which outside systems it calls.
 3. **Core concepts:** the ≤ 5 things everything else is about, one sentence linking them, and a card each (what it is, what not to confuse it with, its lifecycle, the fields that matter).
 4. **Regions:** where the code lives, ordered along the user's journey, with how often each part changes.

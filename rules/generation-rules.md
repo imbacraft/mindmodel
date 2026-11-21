@@ -79,11 +79,10 @@ Work in this order. Later sections depend on earlier ones: everything is written
 
 - **Boot (where it starts and how to run it):** the developer needs this before anything else can be checked in an IDE.
   - **Entry points:** one per deployable unit: the backend `main` (from `facts.md` → Boot) and the frontend root (`index.html` script → `main.tsx`), with the dev port and any API proxy from the bundler config. One line each.
-  - **Switches (≤ 4):** profiles and conditional beans (`@Profile`, `@ConditionalOnProperty`) that **change what the app talks to or does** (local file storage instead of cloud storage, a feature off unless a key is set). Group switches that share one property into one line. Skip switches that only tune values.
   - **Run locally (≤ 3 steps):** the one way to start the **whole app** (dependencies + backend + frontend). If one command does it (e.g. the backend build also builds and serves the frontend), give only that command. List more steps only when the app can't run without them; frontend dev servers and other conveniences are left out. Take them from README, compose file, build file and `package.json` scripts, plus the names (never values) of env vars without which it will not start. If no step is stated or derivable, omit this part; never guess a command.
-  - **Trace the run command to its profile.** Check which profile the run command activates (build-file run config such as `bootRun` args or the Spring Boot plugin's `profiles`, a `-Dspring.profiles.active` flag, or the env). That profile is a switch: name it, and take ports and required settings from **its** config file, citing the line that sets them, not the main class. If its config file is not in git (check the ignore file), say the developer must create it.
+  - **Trace the run command to its profile.** Check which profile the run command activates (build-file run config such as `bootRun` args or the Spring Boot plugin's `profiles`, a `-Dspring.profiles.active` flag, or the env). Name that profile in the run note, and take ports and required settings from **its** config file, citing the line that sets them, not the main class. If its config file is not in git (check the ignore file), say the developer must create it. A conditional bean or flag that changes behavior is not listed here; if it would genuinely surprise a developer (a default that is not what the code claims), it competes for a slot in Rules & surprises (3.8).
 
-**Checks:** Could someone outside software understand the purpose sentence? Does it name the user and the value? Is every non-goal backed by a stated source? Does every entry point and switch cite the line that defines it? Does every run step come from a file in the repo?
+**Checks:** Could someone outside software understand the purpose sentence? Does it name the user and the value? Is every non-goal backed by a stated source? Does every entry point cite the line that defines it? Does every run step come from a file in the repo?
 
 ### 3.2 Context
 
@@ -384,7 +383,7 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 
 | Element | Budget (a ceiling, never a target) |
 |---|---|
-| Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 4 switches, ≤ 3 run steps; ≤ 150 words |
+| Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 3 run steps; ≤ 150 words |
 | Context: actors and externals | ≤ 7 each |
 | Core concepts | ≤ 5, one card each, plus 1 core sentence that mentions every concept |
 | Regions | ≤ 6 + Shared infrastructure; ≤ 7 parts each |

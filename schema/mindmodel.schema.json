@@ -147,26 +147,6 @@
                 }
               }
             },
-            "switches": {
-              "type": "array",
-              "maxItems": 4,
-              "items": {
-                "type": "object",
-                "required": [
-                  "text",
-                  "cites"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "text": {
-                    "type": "string"
-                  },
-                  "cites": {
-                    "$ref": "#/$defs/cites"
-                  }
-                }
-              }
-            },
             "run": {
               "type": "array",
               "maxItems": 3,

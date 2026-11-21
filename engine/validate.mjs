@@ -14,7 +14,7 @@ assert.deepStrictEqual(parseCite('a/b.java:10-12'), { file: 'a/b.java', start: 1
 assert.deepStrictEqual(parseCite('CLAUDE.md'), { file: 'CLAUDE.md', start: null, end: null, symbol: null });
 assert.deepStrictEqual(parseCite('a/B.java:5#save'), { file: 'a/B.java', start: 5, end: 5, symbol: 'save' });
 
-const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [4, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, parts: 7, coreWords: 3000, copies: 5, seams: 4, switches: 4, runSteps: 3 };
+const BUDGET = { actors: 7, externals: 7, concepts: 5, regions: [4, 7], lanes: [2, 5], flowSteps: 7, rules: 5, stories: [1, 5], storySteps: 10, parts: 7, coreWords: 3000, copies: 5, seams: 4, runSteps: 3 };
 
 export function validate(map, root) {
   const errors = [], warnings = [];
@@ -79,7 +79,6 @@ export function validate(map, root) {
   for (const id of conceptIds) if (owners.filter((o) => o.concept === id).length !== 1) err(`state: concept "${id}" needs exactly one owner row`);
   max(map.state.copies, BUDGET.copies, 'state copies');
   max(map.state.seams, BUDGET.seams, 'state seams');
-  max(map.purpose.boot?.switches, BUDGET.switches, 'boot switches');
   max(map.purpose.boot?.run, BUDGET.runSteps, 'boot run steps');
 
   // R14: each story touches >=2 regions; regions no flow runs through are reported.
