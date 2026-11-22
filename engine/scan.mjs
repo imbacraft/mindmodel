@@ -7,6 +7,7 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { javaFacts, bootFacts, deployables } from './deep.mjs';
 import { git, gitWindow } from './activity.mjs';
+import { index } from './java.mjs';
 
 const IGNORE = new Set([
   '.git',
@@ -51,7 +52,54 @@ function walk(dir, out = []) {
 }
 
 // --- Java -------------------------------------------------------------------
-const ANN = (name) => new RegExp(`@${name}\\b`);
+// The type-level annotations the scanner reports, in the order the facts list them.
+const TYPE_ANNOTATIONS = [
+  'Entity',
+  'Table',
+  'RestController',
+  'Controller',
+  'Service',
+  'Component',
+  'Configuration',
+  'Repository',
+  'ControllerAdvice',
+  'EnableWebSecurity',
+  'EnableMethodSecurity',
+  'Embeddable',
+  'MappedSuperclass',
+  // Jakarta EE: REST resources, EJBs, message-driven beans and CDI beans
+  'Path',
+  'ApplicationPath',
+  'Stateless',
+  'Stateful',
+  'Singleton',
+  'MessageDriven',
+  'Named',
+  'ViewScoped',
+  'RequestScoped',
+  'SessionScoped',
+  'ConversationScoped',
+  'Startup',
+];
+// Work that runs without a request: schedules, async, listeners and CDI observers.
+const JOB = new RegExp(
+  `^(${[
+    'Scheduled',
+    'Async',
+    'EventListener',
+    'TransactionalEventListener',
+    'KafkaListener',
+    'RabbitListener',
+    'JmsListener',
+    'SqsListener',
+    'Schedule',
+    'Asynchronous',
+    'Timeout',
+    'ObservesAsync',
+    'Observes',
+  ].join('|')})$`,
+);
+const JAXRS_VERB = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)$/;
 const mappingPath = (args) => {
   const m = /(?:value|path)?\s*=?\s*\{?\s*"([^"]*)"/.exec(args ?? '');
   return m ? m[1] : '';
@@ -66,166 +114,96 @@ const VERBS = {
   MessageMapping: 'STOMP',
 };
 
-export function parseJava(text) {
+// The event a CDI observer takes; @Initialized(ApplicationScoped.class) means it runs at startup.
+const observerType = (param) =>
+  param.ann.some((a) => a.name === 'Initialized' && /ApplicationScoped/.test(a.args))
+    ? 'application start'
+    : param.type;
+
+// What a declaration says, read from the syntax tree; no line windows, no guessing which method an annotation means.
+export function parseJava(text, ix = index(text)) {
   const lines = text.split('\n');
-  const cls =
-    /^\s*(?:public\s+|abstract\s+|final\s+)*(class|interface|enum|record)\s+(\w+)(?:<[^>{]*>)?(?:\s+extends\s+([\w.<>, ]+?))?(?:\s+implements\s+([\w.<>, ]+?))?\s*[({]/m.exec(
-      text,
-    );
+  const type = ix.types[0] ?? null;
+  const ann = type?.ann ?? [];
+  const has = (name) => ann.some((a) => a.name === name);
+  const argsOf = (name) => ann.find((a) => a.name === name)?.args ?? '';
   const r = {
-    name: cls?.[2],
-    kind: cls?.[1],
-    extends: cls?.[3]?.trim(),
-    implements: cls?.[4]?.trim(),
-    classLine: cls ? text.slice(0, cls.index).split('\n').length + (cls[0].startsWith('\n') ? 1 : 0) : null,
-    annotations: [],
+    name: type?.name,
+    kind: type?.kind,
+    extends: type?.extends,
+    implements: type?.implements,
+    classLine: type?.nameLine ?? null,
+    annotations: TYPE_ANNOTATIONS.filter(has),
   };
-  const head = cls ? text.slice(0, cls.index) : '';
-  for (const a of [
-    'Entity',
-    'Table',
-    'RestController',
-    'Controller',
-    'Service',
-    'Component',
-    'Configuration',
-    'Repository',
-    'ControllerAdvice',
-    'EnableWebSecurity',
-    'EnableMethodSecurity',
-    'Embeddable',
-    'MappedSuperclass',
-    // Jakarta EE: REST resources, EJBs, message-driven beans and CDI beans
-    'Path',
-    'ApplicationPath',
-    'Stateless',
-    'Stateful',
-    'Singleton',
-    'MessageDriven',
-    'Named',
-    'ViewScoped',
-    'RequestScoped',
-    'SessionScoped',
-    'ConversationScoped',
-    'Startup',
-  ])
-    if (ANN(a).test(head)) r.annotations.push(a);
-  const table = /@Table\s*\(\s*name\s*=\s*"([^"]+)"/.exec(head);
+  const table = /name\s*=\s*"([^"]+)"/.exec(argsOf('Table'));
   if (table) r.table = table[1];
-  const base = /@RequestMapping\s*\(([^)]*)\)/.exec(head) ?? /@Path\s*\(([^)]*)\)/.exec(head);
-  r.basePath = base ? mappingPath(base[1]) : '';
-  const appPath = /@ApplicationPath\s*\(([^)]*)\)/.exec(head);
-  if (appPath) r.appPath = mappingPath(appPath[1]);
+  r.basePath = mappingPath(argsOf('RequestMapping') || argsOf('Path'));
+  if (has('ApplicationPath')) r.appPath = mappingPath(argsOf('ApplicationPath'));
   r.mappings = [];
   r.fields = [];
   r.scheduled = [];
   r.views = [];
-  // The event type a CDI observer takes; @Initialized(ApplicationScoped.class) means it runs at startup.
-  const observed = (rest) =>
-    /@Initialized\s*\(\s*ApplicationScoped/.test(rest)
-      ? 'application start'
-      : rest
-          .replace(/^\s*\([^)]*\)/, '')
-          .replace(/@\w+(\([^)]*\))?/g, '')
-          .trim()
-          .split(/[\s),]/)[0];
-  // The method declared within a few lines after an annotation: its name and line index.
-  const methodAfter = (i) => {
-    for (let j = i + 1; j < Math.min(lines.length, i + 6); j++) {
-      const mm = /\b(\w+)\s*\(/.exec(lines[j].replace(/@\w+(\([^)]*\))?/g, ''));
+
+  for (const method of ix.methods) {
+    for (const a of method.ann) {
+      const verb = VERBS[a.name];
+      if (verb) {
+        const rm = /RequestMethod\.(\w+)/.exec(a.args);
+        r.mappings.push({ verb: rm ? rm[1] : verb, path: mappingPath(a.args), line: a.line, method: method.name });
+      } else if (JAXRS_VERB.test(a.name)) {
+        // A JAX-RS method's own @Path sits in the same method's annotations, so no lookahead window is needed.
+        const p = method.ann.find((x) => x.name === 'Path');
+        r.mappings.push({ verb: a.name, path: p ? mappingPath(p.args) : '', line: a.line, method: method.name });
+      } else if (JOB.test(a.name)) {
+        r.scheduled.push({
+          kind: a.name,
+          args: (a.args ? `(${a.args})` : '').trim().slice(0, 120),
+          line: a.line,
+        });
+      }
+    }
+    // CDI observers name their event on the parameter, not on the method.
+    for (const p of method.params)
+      for (const a of p.ann)
+        if (/^(Observes|ObservesAsync)$/.test(a.name))
+          r.scheduled.push({ kind: a.name, args: observerType(p).slice(0, 120), line: a.line });
+  }
+  r.mappings.sort((a, b) => a.line - b.line);
+  r.scheduled.sort((a, b) => a.line - b.line);
+
+  // A message-driven bean listens on the destination in its activation config (or mappedName).
+  if (has('MessageDriven')) {
+    const dest =
+      /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(argsOf('MessageDriven')) ??
+      /mappedName\s*=\s*"([^"]+)"/.exec(argsOf('MessageDriven'));
+    const on = ix.methods.find((m) => m.name === 'onMessage');
+    r.scheduled.push({ kind: 'MessageDriven', args: dest?.[1] ?? '', line: on?.nameLine ?? r.classLine });
+  }
+
+  // Entity fields, each with the annotations and the declared type the parser bound to it.
+  if (has('Entity') || has('Embeddable') || has('MappedSuperclass')) {
+    for (const f of ix.fields) {
+      if (f.owner !== type.name) continue;
+      const names = f.ann.map((a) => a.name);
+      const rel = names.find((n) => /^(ManyToOne|OneToMany|OneToOne|ManyToMany)$/.test(n));
+      const enumerated = names.includes('Enumerated');
       if (
-        mm &&
-        !/^(if|for|while|return)$/.test(mm[1]) &&
-        /\)\s*(throws [\w., ]+)?\s*\{?\s*$|\(/.test(lines[j]) &&
-        /(public|private|protected|ResponseEntity|String|void|\w+>?)\s+\w+\s*\(/.test(lines[j])
+        !rel &&
+        !enumerated &&
+        !/^(status|state)$/i.test(f.name) &&
+        !/(subscription|tenant|customer|owner)_?id$/i.test(f.name)
       )
-        return { name: mm[1], at: j };
+        continue;
+      const fieldType = f.type.replace(/^(List|Set|Collection)<(.+)>$/, '$2').trim();
+      r.fields.push({ name: f.name, type: fieldType, rel, enumerated: enumerated || undefined, line: f.line });
     }
-    return { name: '', at: i };
-  };
-  // JAX-RS methods are public and often sit under long @Operation/@ApiResponse blocks: scan to the first line that
-  // starts with a modifier, stopping at the next verb annotation.
-  const jaxrsMethod = (i) => {
-    for (let j = i + 1; j < Math.min(lines.length, i + 80); j++) {
-      if (/^\s*@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b/.test(lines[j])) break;
-      const d =
-        /^\s*(?:(?:public|protected|private|static|final|synchronized|default)\s+)+(?:<[^>]+>\s*)?[\w<>[\],.? ]+?\s+(\w+)\s*\(/.exec(
-          lines[j],
-        );
-      if (d) return { name: d[1], at: j };
-    }
-    return { name: '', at: i };
-  };
+  }
+
+  // Views: a controller method returning a view name (a string return is still a line pattern).
   lines.forEach((ln, i) => {
-    // JAX-RS: a verb annotation, with the method's own @Path among the annotations around it.
-    const jx = /^\s*@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b(?!\s*\()/.exec(ln);
-    if (jx && i + 1 > (r.classLine ?? 0)) {
-      const { name, at } = jaxrsMethod(i);
-      let s = i;
-      while (s > (r.classLine ?? 0) && i - s < 4 && /^\s*@/.test(lines[s - 1])) s--;
-      const p = lines
-        .slice(s, at + 1)
-        .join(' ')
-        .match(/@Path\s*\(([^)]*)\)/);
-      r.mappings.push({ verb: jx[1], path: p ? mappingPath(p[1]) : '', line: i + 1, method: name });
-    }
-    const m = /@(Get|Post|Put|Delete|Patch|Request|Message)Mapping\b(?:\s*\(([^)]*)\))?/.exec(ln);
-    if (m && i + 1 > (r.classLine ?? 0)) {
-      const method = methodAfter(i).name;
-      const verb = VERBS[m[1] + 'Mapping'];
-      const vm = /RequestMethod\.(\w+)/.exec(m[2] ?? '');
-      r.mappings.push({ verb: vm ? vm[1] : verb, path: mappingPath(m[2]), line: i + 1, method });
-    }
-    const sch =
-      /@(Scheduled|Async|EventListener|TransactionalEventListener|KafkaListener|RabbitListener|JmsListener|SqsListener|Schedule|Asynchronous|Timeout|ObservesAsync|Observes)\b(\s*\(.*)?/.exec(
-        ln,
-      );
-    // A CDI observer's args are the event it observes (the parameter after the annotation).
-    if (sch)
-      r.scheduled.push({
-        kind: sch[1],
-        args: (/^Observes/.test(sch[1])
-          ? observed(ln.slice(sch.index + sch[0].length - (sch[2] ?? '').length))
-          : (sch[2] ?? '')
-        )
-          .trim()
-          .slice(0, 120),
-        line: i + 1,
-      });
     const rv = /return\s+"((?:redirect:|forward:)?[\w\-/{}.]+)"/.exec(ln);
     if (rv) r.views.push({ view: rv[1], line: i + 1 });
   });
-  // A message-driven bean listens on the destination in its activation config (or mappedName).
-  if (r.annotations.includes('MessageDriven')) {
-    const dest =
-      /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(head) ??
-      /mappedName\s*=\s*"([^"]+)"/.exec(head);
-    const on = lines.findIndex((l) => /\bvoid\s+onMessage\s*\(/.test(l));
-    r.scheduled.push({ kind: 'MessageDriven', args: dest?.[1] ?? '', line: on >= 0 ? on + 1 : r.classLine });
-  }
-  if (
-    r.annotations.includes('Entity') ||
-    r.annotations.includes('Embeddable') ||
-    r.annotations.includes('MappedSuperclass')
-  ) {
-    lines.forEach((ln, i) => {
-      const f = /^\s*(?:private|protected|public)\s+([\w.<>, ?]+?)\s+(\w+)\s*(?:=[^;]*)?;/.exec(ln);
-      if (!f || /static/.test(ln)) return;
-      let s = i - 1;
-      while (s >= 0 && !/[;{}]\s*$/.test(lines[s]) && i - s < 12) s--; // annotations belong to this field only: stop at the previous statement
-      const ctx = lines.slice(s + 1, i).join(' ');
-      const relm = /@(ManyToOne|OneToMany|OneToOne|ManyToMany)\b/.exec(ctx);
-      const type = f[1].replace(/^(List|Set|Collection)<(.+)>$/, '$2').trim();
-      const enumerated = /@Enumerated/.test(ctx);
-      if (
-        relm ||
-        enumerated ||
-        /^(status|state)$/i.test(f[2]) ||
-        /(subscription|tenant|customer|owner)_?id$/i.test(f[2])
-      )
-        r.fields.push({ name: f[2], type, rel: relm?.[1], enumerated: enumerated || undefined, line: i + 1 });
-    });
-  }
   return r;
 }
 {
@@ -255,9 +233,31 @@ export function parseJava(text) {
 }
 assert.deepStrictEqual(
   parseJava(
-    '@RestController\n@RequestMapping("/api/x")\npublic class A {\n  @GetMapping("/{id}")\n  public Foo get(Long id) {\n    return null; }\n}',
+    '@RestController\n@RequestMapping("/api/x")\npublic class A {\n  @GetMapping("/{id}")\n  public Foo get(Long id) {\n    return null; }',
   ).mappings,
   [{ verb: 'GET', path: '/{id}', line: 4, method: 'get' }],
+);
+// A generic return type no longer hides the handler, and an annotation with braces in its arguments is just an
+// annotation.
+assert.deepStrictEqual(
+  parseJava(
+    '@RestController\npublic class G {\n  @GetMapping("/stream")\n  public Flux<ServerSentEvent<Chat>> stream() {\n    return null;\n  }\n}',
+  ).mappings,
+  [{ verb: 'GET', path: '/stream', line: 3, method: 'stream' }],
+);
+assert.deepStrictEqual(
+  parseJava('class B {\n  @Consumes({ "a", "b" })\n  @PostMapping(value = "/x")\n  public void x() {}\n}').mappings,
+  [{ verb: 'POST', path: '/x', line: 3, method: 'x' }],
+);
+// Entity fields carry their own relation annotation; no line window, no annotation from the field above.
+assert.deepStrictEqual(
+  parseJava(
+    '@Entity\npublic class E {\n  @ManyToOne\n  private Client client;\n  private String name;\n  @JoinColumn(name = "owner_id")\n  private Long ownerId;\n}',
+  ).fields,
+  [
+    { name: 'client', type: 'Client', rel: 'ManyToOne', enumerated: undefined, line: 4 },
+    { name: 'ownerId', type: 'Long', rel: undefined, enumerated: undefined, line: 7 },
+  ],
 );
 
 // --- frontend routes ----------------------------------------------------------
@@ -303,7 +303,9 @@ export function scan(root) {
     .filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f))
     .map((p) => {
       const text = read(p);
-      return { p: R(p), text, ...parseJava(text) };
+      // One parse per file: the scanner, the facts and the validator all read this index.
+      const ix = index(text);
+      return { p: R(p), text, ix, ...parseJava(text, ix) };
     });
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });

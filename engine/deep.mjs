@@ -90,7 +90,7 @@ const windowsIn = (lines, m) => [
 
 // --- Java: seams, lifecycles, schedules -----------------------------------------------
 export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, endpoints = [] }) {
-  const files = java.map((j) => ({ ...j, ix: index(j.text), lines: j.text.split('\n') }));
+  const files = java.map((j) => ({ ...j, ix: j.ix ?? index(j.text), lines: j.text.split('\n') }));
   const byName = new Map(files.map((f) => [f.name, f]));
   // Each type name -> the files that are it or implement it, built once (looked up for every call resolved).
   const impls = new Map();
@@ -398,23 +398,16 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   const schedules = [];
   for (const f of files)
     for (const m of f.ix.methods) {
-      const sch = m.annotations.find((a) => JOB.test(a));
-      const raw =
-        sch &&
-        f.lines
-          .slice(Math.max(0, m.start - 6), m.start)
-          .reverse()
-          .find((l) => /@Schedul(e|ed)\b/.test(l));
+      const header = f.lines.slice(m.start - 1, m.nameLine),
+        sch = m.annotations.find((a) => JOB.test(a)),
+        raw = sch && header.find((l) => /@Schedul(e|ed)\b/.test(l));
       if (sch) {
         const w = windowsIn(f.lines, m);
         schedules.push(
           `${f.name}.${m.name} ${cite(f.p, m)}: ${humanSchedule(raw ?? sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
         );
       }
-      const retry = f.lines
-        .slice(Math.max(0, m.start - 6), m.start)
-        .join(' ')
-        .match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);
+      const retry = header.join(' ').match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);
       if (retry) {
         const a = /maxAttempts\s*=\s*(\d+)/.exec(retry[1])?.[1],
           d = /delay\s*=\s*(\d+)/.exec(retry[1])?.[1],
@@ -470,7 +463,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
       });
     for (const n of f.ix.methods.filter((n) => n.name === 'afterCommit' && n.open > m.open && n.close < m.close))
       steps.push({
-        line: n.start,
+        line: n.nameLine,
         into: () => {
           const at = ev.length;
           ev.push('after commit:');
@@ -487,7 +480,9 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   const entries = [];
   for (const e of endpoints.filter((e) => /POST|PUT|PATCH|DELETE|ANY/.test(e.verb))) {
     const f = files.find((x) => x.p === e.file),
-      m = f && f.ix.methods.find((mm) => mm.start >= e.line && mm.start <= e.line + 6);
+      // The mapping annotation sits inside the method's own range: find it by name, then by containment.
+      name = e.handler.split('.').pop(),
+      m = f && f.ix.methods.find((mm) => mm.name === name && mm.start <= e.line && e.line <= mm.end);
     if (m) entries.push({ label: `${e.verb} ${e.path}`, f, m });
   }
   for (const f of files)

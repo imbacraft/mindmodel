@@ -52,6 +52,11 @@ export const git = (root, args) => {
   }
 };
 
+// git reads a bare date in --since as that date at the current time of day, so the commit count would drift as the
+// day passes. Pin the cutoff to midnight UTC instead.
+export const sinceCutoff = (date) => `${date}T00:00:00Z`;
+assert.equal(sinceCutoff('2026-05-23'), '2026-05-23T00:00:00Z');
+
 // The activity window (rules 3.4): 6 months before HEAD; under 20 commits there, the last 50; under 10 in total, none.
 // headDate and total may be passed in by a caller that already asked git for them.
 export function gitWindow(
@@ -61,7 +66,7 @@ export function gitWindow(
 ) {
   if (!headDate) return null;
   const since = new Date(new Date(headDate).getTime() - 182.5 * 864e5).toISOString().slice(0, 10);
-  const inWindow = Number(git(root, ['rev-list', '--count', `--since=${since}`, 'HEAD']));
+  const inWindow = Number(git(root, ['rev-list', '--count', `--since=${sinceCutoff(since)}`, 'HEAD']));
   return inWindow >= 20
     ? { kind: '6 months', since, commits: inWindow }
     : total >= 10
@@ -82,7 +87,7 @@ export function activityFor(root, window, prefixes) {
         '-M',
         '--name-status',
         '--format=@@%H',
-        ...(n ? ['-n', n[1]] : [`--since=${window}`]),
+        ...(n ? ['-n', n[1]] : [`--since=${sinceCutoff(window)}`]),
         'HEAD',
       ]) ?? '',
     );

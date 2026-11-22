@@ -13,6 +13,7 @@ import { systemScan, systemSummary } from '../engine/system.mjs';
 import { validate } from '../engine/validate.mjs';
 import { renderPage } from '../engine/render.mjs';
 import { validateSystem, renderSystemPage } from '../engine/system-render.mjs';
+import { git } from '../engine/activity.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
@@ -28,12 +29,13 @@ const readMap = (dir, rel) =>
 // Compare part by part and show the first lines that differ, not a diff of a megabyte of JSON.
 function check(t, name, actual) {
   const file = path.join(snapDir, `${name}.json`);
-  if (process.env.UPDATE || !fs.existsSync(file)) {
+  if (process.env.UPDATE) {
     fs.mkdirSync(snapDir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(actual, null, 1));
     t.diagnostic(`snapshot written: ${path.relative(here, file)}`);
     return;
   }
+  assert.ok(fs.existsSync(file), `${name}: no snapshot (run UPDATE=1 node --test to create it)`);
   const expected = JSON.parse(fs.readFileSync(file, 'utf8'));
   for (const key of new Set([...Object.keys(expected), ...Object.keys(actual)])) {
     const a = JSON.stringify(actual[key], null, 1)?.split('\n') ?? [],
@@ -52,9 +54,21 @@ function check(t, name, actual) {
   }
 }
 
+// A snapshot describes one commit of a test app. Skip (do not fail) when the clone has moved, so a pulled app does
+// not look like a regression; update "commit" in apps.json when the new state is intended.
+function moved(dir, commit) {
+  if (!commit) return null;
+  const head = git(dir, ['rev-parse', 'HEAD']);
+  if (!head) return `cannot read HEAD in ${dir}`;
+  return head === commit ? null : `app at ${head.slice(0, 8)}, snapshots pinned to ${commit.slice(0, 8)}`;
+}
+const skipIf = (dir, app) => (!fs.existsSync(dir) ? `${dir} not found` : moved(dir, app.commit));
+
 for (const app of cfg.apps) {
-  const dir = path.join(root, app.name);
-  test(`app ${app.name}`, { skip: !fs.existsSync(dir) && `${dir} not found` }, (t) => {
+  const dir = path.join(root, app.name),
+    skip = skipIf(dir, app);
+  test(`app ${app.name}`, (t) => {
+    if (skip) return t.skip(skip);
     const facts = stable(scan(dir)),
       out = { facts, digest: digest(facts) };
     const map = readMap(dir, app.map);
@@ -67,8 +81,10 @@ for (const app of cfg.apps) {
 }
 
 for (const sysCfg of cfg.systems) {
-  const dir = path.join(root, sysCfg.name);
-  test(`system ${sysCfg.name}`, { skip: !fs.existsSync(dir) && `${dir} not found` }, (t) => {
+  const dir = path.join(root, sysCfg.name),
+    skip = skipIf(dir, sysCfg);
+  test(`system ${sysCfg.name}`, (t) => {
+    if (skip) return t.skip(skip);
     const sys = systemScan(dir);
     const out = {
       system: stable({ ...sys, services: sys.services.map(({ facts, ...s }) => s) }),

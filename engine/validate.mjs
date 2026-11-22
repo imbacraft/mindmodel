@@ -111,7 +111,9 @@ export function resolveCites(map, root) {
       const near =
         pc.start == null
           ? named[0]
-          : named.sort((a, b) => Math.abs(a.start - pc.start) - Math.abs(b.start - pc.start))[0];
+          : named.sort(
+              (a, b) => Math.abs((a.nameLine ?? a.start) - pc.start) - Math.abs((b.nameLine ?? b.start) - pc.start),
+            )[0];
       return `${pc.file}:${near.start}-${near.end}#${pc.symbol}`;
     }
     if (pc.start == null) {

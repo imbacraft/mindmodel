@@ -2,15 +2,35 @@
   "root": "~/Projects/test-apps",
   "web": "https://example.invalid/blob/HEAD",
   "apps": [
-    { "name": "hertzbeat", "map": "mindmodel/mindmodel.json" },
-    { "name": "fineract" },
-    { "name": "cargotracker" }
+    {
+      "name": "hertzbeat",
+      "map": "mindmodel/mindmodel.json",
+      "commit": "1c283e55909e2a11efb17b0481dd1a84f843f731"
+    },
+    { "name": "fineract", "commit": "37ac25564468e88464d9c6191179d8bf50cf0b7e" },
+    { "name": "cargotracker", "commit": "4d26b8fd59a7f0bac6e42d5d19a8cd1b379353b5" }
   ],
   "systems": [
-    { "name": "lakeside", "map": "mindmodel-system/system-map.json" },
-    { "name": "ftgo", "map": "mindmodel-system/system-map.json" },
-    { "name": "petclinic-ms", "map": "mindmodel-system/system-map.json" },
-    { "name": "piomin-kafka", "map": "mindmodel-system/system-map.json" },
-    { "name": "cargotracker" }
+    {
+      "name": "lakeside",
+      "map": "mindmodel-system/system-map.json",
+      "commit": "357ca2db7e6b814fce663183f2be954b051e6be4"
+    },
+    {
+      "name": "ftgo",
+      "map": "mindmodel-system/system-map.json",
+      "commit": "558dfc53b11d30a5f1d995c0c6d58d5106c28189"
+    },
+    {
+      "name": "petclinic-ms",
+      "map": "mindmodel-system/system-map.json",
+      "commit": "e8b747ab522721076cacb5cf688eb8a54ba8c5c9"
+    },
+    {
+      "name": "piomin-kafka",
+      "map": "mindmodel-system/system-map.json",
+      "commit": "ca888d18cfb14a2792e829023fa466a2e027fda1"
+    },
+    { "name": "cargotracker", "commit": "4d26b8fd59a7f0bac6e42d5d19a8cd1b379353b5" }
   ]
 }

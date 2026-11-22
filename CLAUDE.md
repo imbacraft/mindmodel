@@ -12,7 +12,9 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 - `test/`: `node --test` suites.
 
 ## Ground rules
-- **No dependencies; Node 18+.** No newer-than-18 APIs (e.g. iterator helpers like `matchAll(...).map`).
+- **No installed dependencies; Node 18+.** No newer-than-18 APIs (e.g. iterator helpers like `matchAll(...).map`).
+  The only third-party code is the pinned, vendored tree-sitter WASM in `engine/vendor/tree-sitter/` (hashes in its
+  README); no `npm install`, no `node_modules`, no native build.
 - **Stacks:** Java on Spring or Jakarta EE (JAX-RS, EJB, CDI, JMS, Jakarta Batch); Spring and EE spellings of the
   same idea must both work.
 - **Rules, schema, validator and templates must agree.** Changing a budget or a field means changing all four.
