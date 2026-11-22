@@ -49,4 +49,5 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    - where the page is (`<root>/mindmodel/index.html`; it opens offline in any browser);
    - the map in brief (core sentence, regions, ranked rules and stories), from the subagent's message;
    - **the owner-only findings** (security weaknesses, serious bugs) from the subagent, clearly marked as *not in the map*;
+   - the fact corrections the subagent reported, if any (also in `mindmodel/.work/corrections.md`), as engine feedback;
    - that `mindmodel/.work/` holds scan data and is usually not worth committing.

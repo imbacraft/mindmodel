@@ -35,3 +35,4 @@ You produce `<folder>/mindmodel-system/system-map.json`: what a developer must c
 2. **The map in brief:** system sentence; domains in order with core services; key contracts; flows (titles); top failure rows; rules (titles).
 3. **For the owner only:** cross-service weaknesses and serious bugs, with file:line.
 4. **Rule gaps:** where the system rules were ambiguous or didn't fit, and what you decided.
+5. **Fact corrections:** every place the system scan's facts were wrong, missing or misleading and what the code says instead, one line each: `section: facts said X; code says Y (file:line)`. Write the same lines to `<folder>/mindmodel-system/.work/corrections.md` (create it; write `none` if there were none). This is how the engine improves, so report even small ones; don't spend extra reading to find more.

@@ -42,3 +42,4 @@ Return exactly these sections:
 2. **The map in brief:** core sentence; concepts; regions in order; ranked rules (titles); ranked stories (titles).
 3. **For the owner only (P6):** security weaknesses and serious bugs you found, with file:line. These are not in the map.
 4. **Rule gaps:** any place the rules were ambiguous or didn't fit, and what you decided.
+5. **Fact corrections:** every place the scanner's facts were wrong, missing or misleading and what the code says instead, one line each: `section: facts said X; code says Y (file:line)`. Write the same lines to `<root>/mindmodel/.work/corrections.md` (create it; write `none` if there were none). This is how the engine improves, so report even small ones; don't spend extra reading to find more.

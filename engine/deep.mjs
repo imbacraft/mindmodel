@@ -5,8 +5,20 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { index, methodAt } from './java.mjs';
 
-// Cite methods by name only: `validate.mjs --fix` fills in the exact range, and the digest stays short.
-const cite = (file, m) => `${file}#${m.name}`;
+// Cite methods by name only: `validate.mjs --fix` fills in the exact range, and the digest stays short. An overloaded
+// name also gets its range, so two overloads don't read as one fact.
+const cite = (f, m) => {
+  const overloaded = f.ix.methods.some((n) => n !== m && n.name === m.name);
+  return overloaded ? `${f.p}:${m.start}-${m.end}#${m.name}` : `${f.p}#${m.name}`;
+};
+{
+  const ix = index('class S {\n  void save(int a) { save(a, 1); }\n  void save(int a, int b) {}\n  void x() {}\n}');
+  const f = { p: 'S.java', ix };
+  assert.deepStrictEqual(
+    ix.methods.map((m) => cite(f, m)),
+    ['S.java:2-2#save', 'S.java:3-3#save', 'S.java#x'],
+  );
+}
 // Spring and Jakarta EE spellings of the same ideas.
 const WRITE = /^(save|delete|update|insert|store|persist|merge|remove)/,
   ASYNC = /^(Async|Asynchronous)\b/,
@@ -187,7 +199,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   for (const f of files)
     for (const m of f.ix.methods) {
       if (!isTx(f, m)) continue;
-      const here = cite(f.p, m),
+      const here = cite(f, m),
         out = [],
         span = reach(f, m);
       const via = (r) => (r === m ? '' : ` in ${r.name}`);
@@ -197,11 +209,11 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
         for (const c of callsIn(r))
           for (const { g, m: t } of targets(f, c)) {
             if (t.annotations.some((a) => ASYNC.test(a)))
-              out.push(`starts @Async ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
+              out.push(`starts @Async ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g, t)})`);
             else
               for (const d of direct(g, t))
                 if (!enlisted(f, d.what) && !enlisted(g, d.what))
-                  out.push(`calls ${d.what} via ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
+                  out.push(`calls ${d.what} via ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g, t)})`);
           }
       if (out.length)
         seams.push(
@@ -231,24 +243,24 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
       if (!out.length || !saves.length || Math.min(...out.map((o) => o.line)) > Math.max(...saves.map((x) => x.line)))
         continue;
       seams.push(
-        `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${f.name}.${m.name} ${cite(f.p, m)}: ${[...new Set(out.map((o) => `${o.what} at :${o.line}`))].slice(0, 3).join('; ')}; then ${[...new Set(saves.map((x) => `${x.what} at :${x.line}`))].slice(0, 3).join('; ')}. If a save fails, the outside side stays done.`,
+        `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${f.name}.${m.name} ${cite(f, m)}: ${[...new Set(out.map((o) => `${o.what} at :${o.line}`))].slice(0, 3).join('; ')}; then ${[...new Set(saves.map((x) => `${x.what} at :${x.line}`))].slice(0, 3).join('; ')}. If a save fails, the outside side stays done.`,
       );
     }
   for (const f of files)
     for (const m of f.ix.methods) {
       if (m.annotations.some((a) => /^Observes(Async)?\b.*AFTER_(SUCCESS|COMPLETION)/.test(a)))
         seams.push(
-          `AFTER-COMMIT OBSERVER ${f.name}.${m.name} ${cite(f.p, m)}: runs after the firing transaction commits; if it fails, the commit is not undone.`,
+          `AFTER-COMMIT OBSERVER ${f.name}.${m.name} ${cite(f, m)}: runs after the firing transaction commits; if it fails, the commit is not undone.`,
         );
       if (m.annotations.some((a) => /^TransactionalEventListener\b/.test(a)))
         seams.push(
-          `AFTER-COMMIT LISTENER ${f.name}.${m.name} ${cite(f.p, m)}: runs after the publishing transaction commits.`,
+          `AFTER-COMMIT LISTENER ${f.name}.${m.name} ${cite(f, m)}: runs after the publishing transaction commits.`,
         );
       if (!m.annotations.some((a) => JOB.test(a))) continue;
       const dels = callsIn(m).filter((c) => /^delete/.test(c.method) && repoEntity.has(f.fields.get(c.recv)));
       for (const c of dels)
         seams.push(
-          `JOB DELETES ${repoEntity.get(f.fields.get(c.recv))} rows ${f.name}.${m.name} ${cite(f.p, m)} (${c.method} at :${c.line}): check whether an outside callback can still arrive for a deleted row.`,
+          `JOB DELETES ${repoEntity.get(f.fields.get(c.recv))} rows ${f.name}.${m.name} ${cite(f, m)} (${c.method} at :${c.line}): check whether an outside callback can still arrive for a deleted row.`,
         );
     }
 
@@ -286,7 +298,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
           const m = f.ix.methods
             .filter((mm) => mm.start <= i + 1 && i + 1 <= mm.end)
             .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-          const where = m ? cite(f.p, m) : `${f.p}:${i + 1}`;
+          const where = m ? cite(f, m) : `${f.p}:${i + 1}`;
           const stmt = f.lines.slice(Math.max(0, i - 2), i + 1).join(' ');
           const call = [...conditionalNames].find((n) => new RegExp(`\\.${n}\\s*\\(`).test(stmt));
           if (call) {
@@ -374,7 +386,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
         else if (x[4] && names.includes(f.name)) ent = f.name; // field default inside the entity itself
         if (!ent) return;
         const v = (x[2] ?? x[3] ?? x[4]).split('.').pop();
-        (sites[ent][v] ??= new Set()).add(m ? cite(f.p, m) : `${f.p}:${i + 1}`);
+        (sites[ent][v] ??= new Set()).add(m ? cite(f, m) : `${f.p}:${i + 1}`);
       });
     for (const [ent, vals] of Object.entries(sites)) {
       if (!Object.keys(vals).length) continue;
@@ -397,7 +409,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
       if (sch) {
         const w = windowsIn(f.lines, m);
         schedules.push(
-          `${f.name}.${m.name} ${cite(f.p, m)}: ${humanSchedule(raw ?? sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
+          `${f.name}.${m.name} ${cite(f, m)}: ${humanSchedule(raw ?? sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
         );
       }
       const retry = header.join(' ').match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);
@@ -406,7 +418,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
           d = /delay\s*=\s*(\d+)/.exec(retry[1])?.[1],
           x = /multiplier\s*=\s*([\d.]+)/.exec(retry[1])?.[1];
         schedules.push(
-          `RETRY ${f.name}.${m.name} ${cite(f.p, m)}: ${a ?? 3} attempts${d ? `, first wait ${humanMs(Number(d))}` : ''}${x ? ` ×${x}` : ''}`,
+          `RETRY ${f.name}.${m.name} ${cite(f, m)}: ${a ?? 3} attempts${d ? `, first wait ${humanMs(Number(d))}` : ''}${x ? ` ×${x}` : ''}`,
         );
       }
     }
@@ -500,7 +512,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
           return acc;
         }, [])
         .map(({ x, n }) => (n > 1 ? `${x} ×${n}` : x));
-      return { score, line: `${label} ${cite(f.p, m)}${tx}: ${steps.join('; ')}`, ev, file: f.p };
+      return { score, line: `${label} ${cite(f, m)}${tx}: ${steps.join('; ')}`, ev, file: f.p };
     })
     .filter(
       (x) =>

@@ -73,7 +73,9 @@ v1 is tuned for **Java backends on Spring or Jakarta EE** (JAX-RS, EJB, CDI, JMS
 The system map works the same way: `engine/system.mjs` scans every service and joins their connections, one subagent follows [`rules/system-rules.md`](rules/system-rules.md), and `engine/system-render.mjs` validates and renders.
 
 ## Privacy and safety
-- The scanner reads configuration **keys only, never values**, and the rules forbid secrets in the map.
+- The scanner lists configuration **keys, not values**. It reads exactly three kinds of value, to say how the app
+  boots: the active profile, the server port, and the names of environment variables a setting requires with no
+  default (`${DB_URL}` → "DB_URL"). The rules forbid secrets in the map.
 - Security weaknesses or serious bugs found during analysis are reported **to you in the session**, never written into the map.
 - The page describes your code in detail. Review it before committing it to a public repository.
 - `mindmodel/.work/` holds scan data; add it to your project's `.gitignore`.

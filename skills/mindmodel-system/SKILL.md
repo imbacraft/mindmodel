@@ -31,4 +31,4 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    node "${CLAUDE_PLUGIN_ROOT}/engine/system-render.mjs" "<folder>/mindmodel-system/system-map.json" "<folder>" --fix
    ```
 
-5. **Report** briefly: where the page is; the system sentence; domains and core services; the top failure rows; **the owner-only findings**, clearly marked as not on the page; and any unresolved names (connections the scan could not resolve, often set in deployment config).
+5. **Report** briefly: where the page is; the system sentence; domains and core services; the top failure rows; **the owner-only findings**, clearly marked as not on the page; the fact corrections the subagent reported (also in `mindmodel-system/.work/corrections.md`), as engine feedback; and any unresolved names (connections the scan could not resolve, often set in deployment config).
