@@ -1,0 +1,404 @@
+[
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 76,
+  "call": "authenticatedUser",
+  "recv": "context",
+  "recvFqn": "org.apache.fineract.infrastructure.security.service.PlatformSecurityContext",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.fineract.infrastructure.security.service.PlatformSecurityContext#authenticatedUser()",
+   "org.apache.fineract.infrastructure.security.service.SpringSecurityPlatformSecurityContext#authenticatedUser()"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 78,
+  "call": "retrieveTemplate",
+  "recv": "accountTransfersReadPlatformService",
+  "recvFqn": "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService#retrieveTemplate(Long,Long,Long,Integer,Long,Long,Long,Integer)",
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformServiceImpl#retrieveTemplate(Long,Long,Long,Integer,Long,Long,Long,Integer)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 96,
+  "call": "logCommandSource",
+  "recv": "commandsSourceWritePlatformService",
+  "recvFqn": "org.apache.fineract.commands.service.PortfolioCommandSourceWritePlatformService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.fineract.commands.service.PortfolioCommandSourceWritePlatformService#logCommandSource(CommandWrapper)",
+   "org.apache.fineract.commands.service.PortfolioCommandSourceWritePlatformServiceImpl#logCommandSource(CommandWrapper)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 117,
+  "call": "retrieveAll",
+  "recv": "accountTransfersReadPlatformService",
+  "recvFqn": "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService#retrieveAll(SearchParameters,Long)",
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformServiceImpl#retrieveAll(SearchParameters,Long)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 129,
+  "call": "retrieveOne",
+  "recv": "accountTransfersReadPlatformService",
+  "recvFqn": "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService#retrieveOne(Long)",
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformServiceImpl#retrieveOne(Long)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 142,
+  "call": "retrieveRefundByTransferTemplate",
+  "recv": "accountTransfersReadPlatformService",
+  "recvFqn": "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformService#retrieveRefundByTransferTemplate(Long,Long,Long,Integer,Long,Long,Long,Integer)",
+   "org.apache.fineract.portfolio.account.service.AccountTransfersReadPlatformServiceImpl#retrieveRefundByTransferTemplate(Long,Long,Long,Integer,Long,Long,Long,Integer)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/domain/AccountTransferTransaction.java",
+  "line": 94,
+  "call": "savingsToSavingsTransfer",
+  "recv": null,
+  "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
+  "recvHow": "direct",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToSavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,SavingsAccountTransaction,LocalDate,Money,String,PaymentDetail)",
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToSavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,SavingsAccountTransaction,LocalDate,OffsetTime,Money,String)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/domain/AccountTransferTransaction.java",
+  "line": 124,
+  "call": "savingsToLoanTransfer",
+  "recv": null,
+  "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
+  "recvHow": "direct",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToLoanTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,Money,String,PaymentDetail)",
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToLoanTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,OffsetTime,Money,String)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/domain/AccountTransferTransaction.java",
+  "line": 152,
+  "call": "loanTosavingsTransfer",
+  "recv": null,
+  "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
+  "recvHow": "direct",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#loanTosavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,Money,String,PaymentDetail)",
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#loanTosavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,OffsetTime,Money,String)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/jobs/executestandinginstructions/StandingInstructionItemProcessor.java",
+  "line": 95,
+  "call": "isBefore",
+  "recv": "DateUtils",
+  "recvFqn": "org.apache.fineract.infrastructure.core.service.DateUtils",
+  "recvHow": "static",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(LocalDate,LocalDate)",
+   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(LocalDateTime,LocalDateTime)",
+   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(OffsetDateTime,OffsetDateTime)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "custom/acme/loan/cob/src/main/java/com/acme/fineract/loan/cob/AcmeNoopBusinessStep.java",
+  "line": 43,
+  "call": "getCanonicalName",
+  "recv": "call",
+  "recvFqn": null,
+  "recvHow": "unresolved",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "custom/acme/loan/cob/src/main/java/com/acme/fineract/loan/cob/AcmeNoopBusinessStep.java",
+  "line": 43,
+  "call": "getClass",
+  "recv": null,
+  "recvFqn": "com.acme.fineract.loan.cob.AcmeNoopBusinessStep",
+  "recvHow": "direct",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "custom/acme/loan/job/src/main/java/com/acme/fineract/loan/job/AcmeJobNameConfig.java",
+  "line": 33,
+  "call": "name",
+  "recv": "AcmeJobName.ACME_NOOP_JOB",
+  "recvFqn": null,
+  "recvHow": "unresolved",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 76,
+  "call": "validateHasReadPermission",
+  "recv": "call",
+  "recvFqn": "org.apache.fineract.useradministration.domain.AppUser",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.useradministration.domain.AppUser#validateHasReadPermission(String)"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 172,
+  "call": "build",
+  "recv": "call",
+  "recvFqn": "org.apache.fineract.commands.service.CommandWrapperBuilder",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.commands.service.CommandWrapperBuilder#build()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/StandingInstructionApiResource.java",
+  "line": 237,
+  "call": "getValue",
+  "recv": "call",
+  "recvFqn": "org.apache.fineract.portfolio.account.PortfolioAccountType",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.PortfolioAccountType#getValue()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/StandingInstructionApiResource.java",
+  "line": 240,
+  "call": "getValue",
+  "recv": "call",
+  "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferType",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.domain.AccountTransferType#getValue()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "custom/acme/event/externalevent/src/main/java/com/acme/fineract/event/externalevent/AcmeExternalEventSourceProviderConfig.java",
+  "line": 33,
+  "call": "of",
+  "recv": "List",
+  "recvFqn": "java.util.List",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "custom/acme/note/service/src/main/java/com/acme/fineract/portfolio/note/service/AcmeNoteReadPlatformService.java",
+  "line": 47,
+  "call": "emptyList",
+  "recv": "Collections",
+  "recvFqn": "java.util.Collections",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/StandingInstructionApiResource.java",
+  "line": 227,
+  "call": "asList",
+  "recv": "Arrays",
+  "recvFqn": "java.util.Arrays",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
+  "line": 94,
+  "call": "serialize",
+  "recv": "toApiJsonSerializer",
+  "recvFqn": "org.apache.fineract.infrastructure.core.serialization.DefaultToApiJsonSerializer",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.serialization.DefaultToApiJsonSerializer#serialize(Object)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",
+  "line": 78,
+  "call": "checkForUnsupportedParameters",
+  "recv": "this.fromApiJsonHelper",
+  "recvFqn": "org.apache.fineract.infrastructure.core.serialization.FromJsonHelper",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.serialization.FromJsonHelper#checkForUnsupportedParameters(Type,String,Collection<String>)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",
+  "line": 86,
+  "call": "validate",
+  "recv": "this.accountTransfersDetailDataValidator",
+  "recvFqn": "org.apache.fineract.portfolio.account.data.AccountTransfersDetailDataValidator",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.data.AccountTransfersDetailDataValidator#validate(JsonCommand,DataValidatorBuilder)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",
+  "line": 88,
+  "call": "extractLocalDateNamed",
+  "recv": "this.fromApiJsonHelper",
+  "recvFqn": "org.apache.fineract.infrastructure.core.serialization.FromJsonHelper",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.serialization.FromJsonHelper#extractLocalDateNamed(String,JsonElement)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",
+  "line": 110,
+  "call": "extractOffsetTimeNamed",
+  "recv": "this.fromApiJsonHelper",
+  "recvFqn": "org.apache.fineract.infrastructure.core.serialization.FromJsonHelper",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.serialization.FromJsonHelper#extractOffsetTimeNamed(String,JsonElement)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/service/SavingsAccountTransfersServiceImpl.java",
+  "line": 53,
+  "call": "getFromTransaction",
+  "recv": "transferTransaction",
+  "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
+  "recvHow": "lambda",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#getFromTransaction()"
+  ],
+  "note": "lambda"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/service/SavingsAccountTransfersServiceImpl.java",
+  "line": 58,
+  "call": "getToSavingsTransaction",
+  "recv": "transferTransaction",
+  "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
+  "recvHow": "lambda",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#getToSavingsTransaction()"
+  ],
+  "note": "lambda"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/StandingInstructionHistoryApiResource.java",
+  "line": 88,
+  "call": "getDate",
+  "recv": "fromDateParam",
+  "recvFqn": "org.apache.fineract.infrastructure.core.api.DateParam",
+  "recvHow": "param",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.api.DateParam#getDate(String,DateFormat,String)"
+  ],
+  "note": "param"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",
+  "line": 71,
+  "call": "json",
+  "recv": "command",
+  "recvFqn": "org.apache.fineract.infrastructure.core.api.JsonCommand",
+  "recvHow": "param",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.api.JsonCommand#json()"
+  ],
+  "note": "param"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/StandingInstructionApiResource.java",
+  "line": 237,
+  "call": "getFromAccountTypeEnum",
+  "recv": "standingInstructionData",
+  "recvFqn": "org.apache.fineract.portfolio.account.data.StandingInstructionData",
+  "recvHow": "local",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.data.StandingInstructionData#getFromAccountTypeEnum()"
+  ],
+  "note": "local"
+ },
+ {
+  "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/StandingInstructionApiResource.java",
+  "line": 239,
+  "call": "getToAccountTypeEnum",
+  "recv": "standingInstructionData",
+  "recvFqn": "org.apache.fineract.portfolio.account.data.StandingInstructionData",
+  "recvHow": "local",
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.portfolio.account.data.StandingInstructionData#getToAccountTypeEnum()"
+  ],
+  "note": "local"
+ }
+]

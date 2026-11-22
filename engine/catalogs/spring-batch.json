@@ -8,7 +8,8 @@
       "org.springframework.batch:spring-batch-integration"
     ],
     "imports": [
-      "org.springframework.batch."
+      "org.springframework.batch.",
+      "jakarta.batch."
     ]
   },
   "annotations": [
@@ -155,6 +156,43 @@
         "field",
         "parameter"
       ]
+    }
+  ],
+  "types": [
+    {
+      "fqns": [
+        "jakarta.batch.api.chunk.AbstractItemWriter",
+        "jakarta.batch.api.chunk.ItemWriter"
+      ],
+      "means": "framework-artifact"
+    },
+    {
+      "fqns": [
+        "jakarta.batch.api.chunk.AbstractItemReader",
+        "jakarta.batch.api.chunk.ItemReader"
+      ],
+      "means": "framework-artifact"
+    },
+    {
+      "fqns": [
+        "jakarta.batch.api.chunk.AbstractItemProcessor",
+        "jakarta.batch.api.chunk.ItemProcessor"
+      ],
+      "means": "framework-artifact"
+    },
+    {
+      "fqns": [
+        "jakarta.batch.api.listener.AbstractJobListener",
+        "jakarta.batch.api.listener.JobListener"
+      ],
+      "means": "framework-artifact"
+    },
+    {
+      "fqns": [
+        "jakarta.batch.api.Batchlet",
+        "jakarta.batch.api.AbstractBatchlet"
+      ],
+      "means": "framework-artifact"
     }
   ]
 }

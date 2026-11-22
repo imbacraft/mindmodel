@@ -44,6 +44,9 @@ export function extractTransactions(model, selected, { outside = [], writes = []
   const byId = new Map();
   for (const t of model.types.values()) for (const m of t.methods) if (m.id) byId.set(m.id, { type: t, method: m });
   const facts = [];
+  // A plain `@Transactional` method is not a fact: there are thousands of them and no page can use them. The count
+  // per class is what a reader needs; the boundary kinds below stay because each is a hazard with a citation.
+  const counts = new Map();
   const outsideByMethod = new Map();
   for (const f of outside) if (f.method) outsideByMethod.set(f.method, [...(outsideByMethod.get(f.method) ?? []), f]);
   const writesById = new Map();
@@ -64,6 +67,9 @@ export function extractTransactions(model, selected, { outside = [], writes = []
       const transactional = !off && (!!own || (!!typeTx && m.isPublic) || (ejb && !beanManaged && m.isPublic));
       if (transactional) {
         const requiresNew = /REQUIRES_NEW/.test(own?.ann?.args ?? '') || /REQUIRES_NEW/.test(typeTx?.entry?.means ?? '');
+        if (!requiresNew) {
+          counts.set(t.fqn, (counts.get(t.fqn) ?? 0) + 1);
+        } else
         facts.push(
           factOf({
             id: `transaction:${requiresNew ? 'requires-new' : 'transactional'}@${m.id}`,
@@ -178,7 +184,10 @@ export function extractTransactions(model, selected, { outside = [], writes = []
       }
     }
   }
-  return withUniqueIds(facts);
+  const byClass = [...counts.entries()]
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+  return { facts: withUniqueIds(facts), counts: byClass };
 }
 
 const lineOf = (f) => Number(/:(\d+)/.exec((f.evidence ?? [])[0] ?? '')?.[1] ?? 0) || null;
@@ -262,9 +271,11 @@ const lineOf = (f) => Number(/:(\d+)/.exec((f.evidence ?? [])[0] ?? '')?.[1] ?? 
     { id: 'o2', family: 'outside-call', kind: 'Kafka', client: 'KafkaTemplate', target: 'KafkaTemplate.send', method: 'a.Svc#store(Order)', evidence: ['a/Svc.java:24#store'], confidence: 'resolved' },
   ];
   const writes = [{ id: 'w1', family: 'state-write', entity: 'a.Order', repository: 'a.OrderRepository', operation: 'save', method: 'a.Svc#store(Order)', evidence: ['a/Svc.java:26#store'], confidence: 'resolved' }];
-  const facts = extractTransactions(model, selected, { outside, writes });
+  const { facts, counts } = extractTransactions(model, selected, { outside, writes });
   const kinds = facts.map((f) => f.kind).sort();
-  assert.deepStrictEqual(kinds, ['after-commit', 'outside-in-transaction', 'outside-then-save', 'transactional']);
+  assert.deepStrictEqual(kinds, ['after-commit', 'outside-in-transaction', 'outside-then-save']);
+  // The plain transactional methods are a count per class, not facts.
+  assert.deepStrictEqual(counts, [{ type: 'a.Svc', count: 1 }]);
   const sync = facts.find((f) => f.mechanism === 'synchronization');
   assert.deepStrictEqual(sync.runs, ['a.Svc#persist()']);
   assert.deepStrictEqual(facts.find((f) => f.kind === 'outside-then-save').saves, ['save a.Order at :26']);

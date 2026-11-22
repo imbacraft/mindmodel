@@ -45,6 +45,56 @@
       "type": "com.amazonaws.services.sqs.AmazonSQS",
       "means": "outside-call",
       "kind": "SQS"
+    },
+    {
+      "type": "jakarta.jms.JMSProducer",
+      "methods": [
+        "send",
+        "sendAsync"
+      ],
+      "means": "outside-call",
+      "kind": "JMS"
+    },
+    {
+      "type": "javax.jms.JMSProducer",
+      "methods": [
+        "send"
+      ],
+      "means": "outside-call",
+      "kind": "JMS"
+    }
+  ],
+  "signatures": [
+    {
+      "type": "jakarta.jms.JMSContext",
+      "methods": {
+        "createProducer": "jakarta.jms.JMSProducer",
+        "createConsumer": "jakarta.jms.JMSConsumer",
+        "createContext": "jakarta.jms.JMSContext",
+        "createDurableConsumer": "jakarta.jms.JMSConsumer"
+      }
+    },
+    {
+      "type": "jakarta.jms.JMSProducer",
+      "methods": {
+        "send": "jakarta.jms.JMSProducer",
+        "sendAsync": "jakarta.jms.JMSProducer",
+        "setPriority": "jakarta.jms.JMSProducer",
+        "setDisableMessageID": "jakarta.jms.JMSProducer",
+        "setDisableMessageTimestamp": "jakarta.jms.JMSProducer",
+        "setTimeToLive": "jakarta.jms.JMSProducer",
+        "setDeliveryMode": "jakarta.jms.JMSProducer",
+        "setDeliveryDelay": "jakarta.jms.JMSProducer",
+        "setCorrelationID": "jakarta.jms.JMSProducer",
+        "setProperty": "jakarta.jms.JMSProducer",
+        "setJMSCorrelationID": "jakarta.jms.JMSProducer"
+      }
+    },
+    {
+      "type": "jakarta.jms.ConnectionFactory",
+      "methods": {
+        "createContext": "jakarta.jms.JMSContext"
+      }
     }
   ]
 }

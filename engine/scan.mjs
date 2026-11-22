@@ -3,15 +3,17 @@
 // Usage: node scan.mjs <projectRoot> [outFile]   (default out: <root>/mindmodel/.work/facts.json)
 // Never copies config values (only keys) so secrets cannot leak into facts or the map.
 import fs from 'node:fs';
+import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { javaFacts, bootFacts, deployables } from './deep.mjs';
-import { git, gitWindow } from './activity.mjs';
+import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
 import { index } from './syntax/java.mjs';
 import { buildModel } from './model/model.mjs';
 import { bindCalls } from './model/calls.mjs';
-import { loadCatalogs, selectForModel, signatureIndex } from './catalogs/catalog.mjs';
+import { generatedRules, loadCatalogs, selectForModel, signatureIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
+import { buildFlows, flowEntries } from './extract/flows.mjs';
 import { extractOutside } from './extract/outside.mjs';
 import { extractState } from './extract/state.mjs';
 import { extractTransactions } from './extract/transactions.mjs';
@@ -247,7 +249,7 @@ const linesMatching = (text, re) =>
   text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
 
 // --- main ---------------------------------------------------------------------
-export function scan(root) {
+export function scan(root, { withModel = false } = {}) {
   const files = walk(root);
   const R = (p) => rel(root, p);
   const read = (p) => fs.readFileSync(p, 'utf8');
@@ -406,7 +408,7 @@ export function scan(root) {
   const model = buildModel(javaAll);
   const selected = selectForModel(model, CATALOGS, { deps: coordinatesOf(buildFiles) });
   // Receiver types and call targets (§5.1): every family that follows a call reads this.
-  bindCalls(model, signatureIndex(selected));
+  bindCalls(model, signatureIndex(selected), generatedRules(selected));
   // The syntax index's body digests were only an input to resolution. The model keeps the calls it resolved; the
   // locals, assignments and catches are dead weight for the rest of the scan (and the largest arrays in it).
   for (const j of javaAll)
@@ -422,10 +424,11 @@ export function scan(root) {
   // transaction boundary that those together can leak through.
   const outsideCalls = extractOutside(model, selected);
   const stateFacts = extractState(model, selected);
-  const transactions = extractTransactions(model, selected, {
+  const tx = extractTransactions(model, selected, {
     outside: outsideCalls,
     writes: stateFacts.filter((f) => f.family === 'state-write'),
   });
+  const transactions = tx.facts;
   const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
   const feCalls = fe.flatMap((f) =>
     f.text.split('\n').flatMap((l, i) => {
@@ -711,7 +714,36 @@ export function scan(root) {
     return { head, dirty, headDate, totalCommits: total, window: gitWindow(root, headDate, total) };
   })();
 
-  return {
+  // Flow ranking reads activity: how many commits in the window touched the entry's file. One git log, counted per
+  // file on demand (validate.mjs computes the same numbers for the map's regions).
+  const flowEntryList = flowEntries(model, endpoints, selected);
+  const activityOf = (() => {
+    const win = gitInfo?.window;
+    if (!win) return () => 0;
+    // Path-limited history, in chunks: one git call per 25 entry files keeps the largest name-status page small, and
+    // the shared log is dropped between chunks.
+    const paths = [...new Set(flowEntryList.map((e) => e.t.file))];
+    const counts = new Map();
+    for (let i = 0; i < paths.length; i += 25) {
+      for (const [p, n] of activityByFile(root, win.since, paths.slice(i, i + 25)))
+        counts.set(p, (counts.get(p) ?? 0) + n);
+      forgetActivity();
+    }
+    return (file) => counts.get(file) ?? 0;
+  })();
+
+  const flows = buildFlows(model, {
+    entries: flowEntryList,
+    stateWrites: stateFacts.filter((x) => x.family === 'state-write'),
+    outsideCalls,
+    transactions,
+    entities: entities.funnel ?? [],
+    activityOf,
+  });
+  // The flow rank needs git activity for entry files only; the history text is not needed after it.
+  forgetActivity();
+
+  const factsOut = {
     version: 2,
     root,
     scannedAt: new Date().toISOString().slice(0, 10),
@@ -751,17 +783,21 @@ export function scan(root) {
     state: { modifying },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
     transactions,
+    transactionCounts: tx.counts,
     outsideCalls,
     stateWrites: stateFacts.filter((f) => f.family === 'state-write'),
     stateCaches: stateFacts.filter((f) => f.family === 'state-cache'),
     lifecycle: deep.lifecycle,
     schedules: deep.schedules,
-    flows: deep.flows,
+    flows,
     externals: {
       sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])),
       config: configKeys,
     },
   };
+  // Tests that check resolution against hand-verified calls need the model; facts alone cannot show a receiver type.
+  if (withModel) Object.defineProperty(factsOut, 'model', { value: model, enumerable: false });
+  return factsOut;
 }
 
 // Compact digest the writer reads first; facts.json keeps the details for targeted lookup.
@@ -771,6 +807,9 @@ export function summarize(f) {
   // Every list is capped so the digest stays the same size on a 300k-line app; the rest stays in facts.json.
   const cap = (list, n, where) =>
     list.length > n ? [...list.slice(0, n), `- +${list.length - n} more in facts.json (${where})`] : list;
+  // A digest line is read, not parsed: long flow and seam lines are cut with a marker and the rest stays in facts.json,
+  // so the digest keeps its size on a 5,000-file app.
+  const ell = (list, n = 220) => list.map((l) => (l.length > n ? `${l.slice(0, n - 1)}…` : l));
   const push = (lines) => L.push(...lines);
   const prefix = (list) => {
     if (!list.length) return '';
@@ -1069,18 +1108,35 @@ export function summarize(f) {
     return null;
   };
   const seams = f.transactions.filter((t) => t.kind !== 'transactional').sort((a, b) => seamRank(b) - seamRank(a));
-  push(cap(seams.map((t) => `- ${seamText(t)}`), 30, 'transactions'));
-  const txCount = f.transactions.filter((t) => t.kind === 'transactional' || t.kind === 'requires-new').length;
+  push(cap(ell(seams.map((t) => `- ${seamText(t)}`), 240), 20, 'transactions'));
+  const txTotal = f.transactionCounts.reduce((n, x) => n + x.count, 0);
   L.push(
-    `- ${txCount} transactional method(s); ${f.outsideCalls.length} outside call(s) across ${new Set(f.outsideCalls.map((c) => c.method)).size} method(s)`,
+    `- ${txTotal} transactional method(s) in ${f.transactionCounts.length} class(es); ${f.outsideCalls.length} outside call(s) across ${new Set(f.outsideCalls.map((c) => c.method)).size} method(s)`,
   );
+  if (f.transactionCounts.length)
+    L.push(
+      `- most transactional classes: ${f.transactionCounts
+        .slice(0, 5)
+        .map((x) => `${x.type.split('.').pop()} ${x.count}`)
+        .join(', ')}${f.transactionCounts.length > 5 ? `, +${f.transactionCounts.length - 5} more in facts.json` : ''}`,
+    );
   if (!seams.length) L.push('- no transaction seam found');
   sec(
-    'Flow skeletons, computed (entry point → what happens, in order; start stories here and open only the methods you need)',
+    'Flows, computed and ranked (entry point → every effect it reaches; the bracket is the rank, the parentheses are its parts)',
   );
   push(
     cap(
-      f.flows.map((x) => `- ${x}`),
+      ell(
+        f.flows.map((x) => {
+          const head = x.entry.verb ? `${x.entry.verb} ${x.entry.path}` : x.entry.kind;
+          // Score parts first: the line is cut at 320 characters, and a cut that hides the reasons would make the
+          // rank uncheckable. The steps are what gets trimmed; facts.json keeps them whole.
+          // The digest keeps the parts and the weights; the names they mention (entities, services) stay in facts.json.
+          const parts = x.why.map((w) => w.replace(/\s*\([^)]*\)/, '')).join(', ');
+          return `- [${x.score}] ${head} ${x.entry.cite}: (${parts}) ${x.steps.join('; ')}`;
+        }),
+        320,
+      ),
       12,
       'flows',
     ),
@@ -1127,6 +1183,7 @@ export function summarize(f) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  retuneHeap();
   const root = path.resolve(process.argv[2] ?? '.');
   const out = path.resolve(process.argv[3] ?? path.join(root, 'mindmodel', '.work', 'facts.json'));
   const facts = scan(root);

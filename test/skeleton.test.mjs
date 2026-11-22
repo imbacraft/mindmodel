@@ -8,7 +8,7 @@ import path from 'node:path';
 import { index } from '../engine/syntax/java.mjs';
 import { buildModel } from '../engine/model/model.mjs';
 import { bindCalls } from '../engine/model/calls.mjs';
-import { loadCatalogs, selectCatalogs, signatureIndex } from '../engine/catalogs/catalog.mjs';
+import { generatedRules, loadCatalogs, selectCatalogs, signatureIndex } from '../engine/catalogs/catalog.mjs';
 import { extractEndpoints } from '../engine/extract/endpoints.mjs';
 import { extractOutside } from '../engine/extract/outside.mjs';
 import { extractState } from '../engine/extract/state.mjs';
@@ -37,12 +37,12 @@ function pipeline() {
   const model = buildModel(files);
   const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
   const selected = selectCatalogs(loadCatalogs(), { imports });
-  bindCalls(model, signatureIndex(selected));
+  bindCalls(model, signatureIndex(selected), generatedRules(selected));
   const endpoints = extractEndpoints(model, selected);
   const outside = extractOutside(model, selected);
   const state = extractState(model, selected);
-  const transactions = extractTransactions(model, selected, { outside, writes: state.filter((f) => f.family === 'state-write') });
-  return { model, selected, endpoints, outside, state, transactions };
+  const tx = extractTransactions(model, selected, { outside, writes: state.filter((f) => f.family === 'state-write') });
+  return { model, selected, endpoints, outside, state, transactions: tx.facts, transactionCounts: tx.counts };
 }
 
 const envelope = (f) => {
@@ -88,13 +88,17 @@ test('skeleton: calls resolve to methods that exist, and the rates are measured'
 });
 
 test('skeleton: the slice-2 families keep their envelope and ids', { skip: !fs.existsSync(root) && 'app not found' }, () => {
-  const { endpoints, outside, state, transactions } = pipeline();
+  const { endpoints, outside, state, transactions, transactionCounts } = pipeline();
   for (const f of [...outside, ...state, ...transactions]) envelope(f);
   for (const list of [outside, state, transactions]) {
     const ids = list.map((f) => f.id);
     assert.equal(new Set(ids).size, ids.length, 'ids are unique within a family');
   }
-  // cargotracker has no HTTP client and no cache; it does have transactions (EJB container-managed).
-  assert.ok(transactions.length > 0, 'the EJB app has transaction facts');
-  assert.ok(endpoints.length > 0 && outside.length === 0, 'no outside client in this app');
+  // cargotracker has no HTTP client and no cache; its transactional methods are a per-class count, and it has no
+  // boundary hazards — the facts list only carries those.
+  assert.ok(transactionCounts.length > 0, 'the EJB app has transactional methods');
+  assert.ok(transactions.every((f) => f.kind !== 'transactional'), 'a plain transactional method is a count, not a fact');
+  // cargotracker sends JMS through the JMS 2.0 `JMSContext.createProducer()...send()` chain, not JmsTemplate.
+  assert.ok(endpoints.length > 0, 'endpoints');
+  assert.ok(outside.some((o) => o.kind === 'JMS' && o.target === 'JMSProducer.send'), 'the JMS 2.0 send is an outside call');
 });

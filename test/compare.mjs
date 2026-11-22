@@ -60,7 +60,13 @@ const FAMILIES = [
     value: (x) => x.v,
   },
   { name: 'outside', list: (f) => (f.outsideCalls ?? []).map((o) => ({ key: `${o.kind} ${o.target}@${o.method}`, v: '' })), key: (x) => x.key, value: (x) => x.v },
-  { name: 'flows', list: (f) => f.flows ?? [], key: (s) => `${s.kind ?? ''} ${s.path ?? s.name ?? ''}` },
+  {
+    // Slice 2 (revised) makes flows objects with a rank; compare by id and show the score and steps.
+    name: 'flows',
+    list: (f) => (f.flows ?? []).map((x) => ({ key: x.id ?? String(x), v: `${x.score ?? ''} ${(x.steps ?? []).join('; ')}` })),
+    key: (x) => x.key,
+    value: (x) => x.v,
+  },
   { name: 'lifecycle', list: (f) => f.lifecycle ?? [], key: (l) => `${l.what ?? l.name ?? ''} ${l.file ?? ''}:${l.line ?? ''}` },
   {
     // The build reader (slice 1): the committed engine read build files with regexes into string lists, the working

@@ -71,6 +71,51 @@
       "items": {
         "$ref": "#/$defs/file"
       }
+    },
+    "generates": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Members the annotation writes for you (Lombok's @Slf4j log field, @Data accessors), as data.",
+      "properties": {
+        "loggers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "annotations",
+              "field",
+              "type"
+            ],
+            "properties": {
+              "annotations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "field": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "getters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "setters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -137,7 +182,10 @@
             "exception-handler",
             "cache",
             "view",
-            "ignore"
+            "ignore",
+            "ui-bean",
+            "lifecycle",
+            "framework-artifact"
           ]
         },
         "verb": {

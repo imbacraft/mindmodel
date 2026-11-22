@@ -19,26 +19,8 @@ const cite = (f, m) => {
     ['S.java:2-2#save', 'S.java:3-3#save', 'S.java#x'],
   );
 }
-// Spring and Jakarta EE spellings of the same ideas.
-const KNOWN = {
-  RestTemplate: 'HTTP',
-  WebClient: 'HTTP',
-  RestClient: 'HTTP',
-  HttpClient: 'HTTP',
-  JavaMailSender: 'mail',
-  MailSender: 'mail',
-  KafkaTemplate: 'Kafka',
-  RabbitTemplate: 'RabbitMQ',
-  JmsTemplate: 'JMS',
-  SqsTemplate: 'SQS',
-};
-const WRITE = /^(save|delete|update|insert|store|persist|merge|remove)/;
-// Flows still read call names: whether a call changes something outside, and which calls are reads.
-const VERB =
-  /^(create|retrieve|update|list|cancel|capture|confirm|refund|send|delete|post|put|patch|get|exchange|execute|call|publish|upload|download|invoke|search|convertAndSend)$|^(create|send|publish|upload|refund|charge|post|put)[A-Z]/;
-const READ = /^(get|list|retrieve|search)$/;
-const ASYNC = /^(Async|Asynchronous)\b/,
-  JOB = /^(Scheduled|Schedule)\b/;
+// Spring and Jakarta EE spellings of the same idea.
+const JOB = /^(Scheduled|Schedule)\b/;
 // A transaction attribute that suspends or skips the transaction.
 const NO_TX = /^(Transactional|TransactionAttribute)\b.*\b(NOT_SUPPORTED|NEVER|SUPPORTS)\b/;
 // --- time in plain words ----------------------------------------------------------
@@ -104,7 +86,7 @@ const windowsIn = (lines, m) => [
 ];
 
 // --- Java: seams, lifecycles, schedules -----------------------------------------------
-export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, endpoints = [] }) {
+export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
   const files = java.map((j) => ({ ...j, ix: j.ix ?? index(j.text), lines: j.text.split('\n') }));
   const byName = new Map(files.map((f) => [f.name, f]));
   // Each type name -> the files that are it or implement it, built once (looked up for every call resolved).
@@ -115,22 +97,12 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   const implsOf = (t) => impls.get(t) ?? [];
 
   for (const f of files) {
-    // Flow skeletons (slice 6) still read this map; the seam facts above it now come from the model.
-    f.outside = new Map(); // simple name or field -> label of the outside system it reaches
-    for (const m of f.text.matchAll(/^import\s+([\w.]+)\.(\w+);/gm)) {
-      const hit = Object.entries(EXT).find(([k]) => (m[1] + '.').includes(k + '.') || m[1].startsWith(k));
-      if (hit) f.outside.set(m[2], hit[1].replace(/^\((?:HTTP client: )?|\)$/g, ''));
-    }
     // Fields of this class with their declared type: what a receiver is (repository, client, bean).
     f.fields = new Map(
       f.ix.fields
         .filter((x) => x.owner === f.name && /^[A-Z]/.test(x.type))
         .map((x) => [x.name, x.type.replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop()]),
     );
-    for (const [v, t] of f.fields) {
-      if (KNOWN[t]) f.outside.set(v, KNOWN[t]);
-      else if (f.outside.has(t)) f.outside.set(v, f.outside.get(t));
-    }
     f.txClass = f.ix.types.some((t) => t.annotations.some((a) => /^Transactional\b/.test(a) && !NO_TX.test(a)));
     // EJBs are transactional by default (container-managed, REQUIRED) unless the class opts out.
     // Read from the text: an activationConfig = { ... } array hides the class's own annotations from the brace index.
@@ -146,15 +118,6 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     // Under JTA (EJBs, jakarta.transaction) a JMS send joins the transaction: it is delivered only on commit.
     f.jta = ejb || /import\s+(jakarta|javax)\.transaction\.(Transactional|\*)/.test(f.text);
   }
-  // Calls a method makes itself (a nested method keeps its own calls: it runs at another time).
-  // Flow skeletons read receivers by simple name (a field, `this`); the model now keeps a receiver expression.
-  const recvNameOf = (c) => (c.recv ? (c.recv.kind === 'name' ? c.recv.text.split('.').pop() : '(expr)') : null);
-  const callsIn = (m) =>
-    (m.calls ?? []).filter((c) => c.recv).map((c) => ({ recv: recvNameOf(c), method: c.name, line: c.line }));
-  const targets = (f, c) => {
-    const t = f.fields.get(c.recv);
-    return t ? implsOf(t).flatMap((g) => g.ix.methods.filter((m) => m.name === c.method).map((m) => ({ g, m }))) : [];
-  };
   const isTx = (f, m) =>
     !m.annotations.some((a) => NO_TX.test(a)) &&
     (m.annotations.some((a) => /^(Transactional|TransactionAttribute)\b/.test(a) && !/readOnly\s*=\s*true/.test(a)) ||
@@ -318,121 +281,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
         );
       }
     }
-  // Flow skeletons: from each state-changing entry point (endpoint or scheduled job), the ordered chain of what
-  // actually happens: outside effects, saves, status changes, async hand-offs. The writer reads only the methods it
-  // needs to explain, instead of whole files. Ranked by how much of the core they touch; the top 12 go in the digest.
-  const statusRe = statusEnums.size
-    ? new RegExp(
-        `(?:set\\w*(?:Status|State)\\s*\\(|\\.\\w*(?:status|State|state)\\s*\\(|(?:status|State|state)\\s*=\\s*)(${[...statusEnums.keys()].join('|')})\\.([A-Z][A-Z0-9_]*)`,
-      )
-    : null;
-  const walk = (f, m, depth, seen, ev) => {
-    if (seen.has(m) || ev.length >= 12) return;
-    seen.add(m);
-    const calls = callsIn(m);
-    const local = (m.calls ?? [])
-      .filter((c) => !c.recv || (c.recv.kind === 'name' && c.recv.text === 'this'))
-      .map((c) => ({ name: c.name, line: c.line }));
-    const steps = [];
-    for (const c of calls) {
-      if (f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method))
-        steps.push({ line: c.line, text: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` });
-      else if (conditionalNames.has(c.method) && repoEntity.has(f.fields.get(c.recv)))
-        steps.push({ line: c.line, text: `conditional ${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
-      else if (WRITE.test(c.method) && repoEntity.has(f.fields.get(c.recv)))
-        steps.push({ line: c.line, text: `${c.method} ${repoEntity.get(f.fields.get(c.recv))}` });
-      else
-        for (const { g, m: t } of targets(f, c).slice(0, 1))
-          steps.push({
-            line: c.line,
-            into: () => {
-              if (t.annotations.some((a) => ASYNC.test(a))) ev.push(`async ${g.name}.${t.name}`);
-              else if (depth) walk(g, t, depth - 1, seen, ev);
-            },
-          });
-    }
-    for (const c of local)
-      for (const n of f.ix.methods
-        .filter((n) => n.name === c.name && n !== m && !(n.open > m.open && n.close < m.close))
-        .slice(0, 1))
-        steps.push({ line: c.line, into: () => walk(f, n, depth, seen, ev) });
-    if (statusRe)
-      f.lines.slice(m.start - 1, m.end).forEach((l, i) => {
-        const x = statusRe.exec(l);
-        if (x) steps.push({ line: m.start + i, text: `→ ${x[2]}` });
-      });
-    for (const n of f.ix.methods.filter((n) => n.name === 'afterCommit' && n.open > m.open && n.close < m.close))
-      steps.push({
-        line: n.nameLine,
-        into: () => {
-          const at = ev.length;
-          ev.push('after commit:');
-          walk(f, n, depth, seen, ev);
-          if (ev.length === at + 1) ev.pop();
-        },
-      });
-    for (const st of steps.sort((a, b) => a.line - b.line)) {
-      if (ev.length >= 12) break;
-      if (st.text) ev.push(st.text);
-      else st.into();
-    }
-  };
-  const entries = [];
-  for (const e of endpoints.filter((e) => /POST|PUT|PATCH|DELETE|ANY/.test(e.verb))) {
-    // Endpoint facts carry their citation (`path:start-end#handler`), not separate file/line fields.
-    const cite = e.evidence?.[0] ?? '',
-      file = cite.replace(/[:#].*$/, ''),
-      start = Number(/^[^:]+:(\d+)/.exec(cite)?.[1] ?? 0),
-      end = Number(/^[^:]+:\d+-(\d+)/.exec(cite)?.[1] ?? start),
-      name = (e.handler ?? '').split('.').pop(),
-      f = files.find((x) => x.p === file),
-      m = f && f.ix.methods.find((mm) => mm.name === name && (!start || (mm.start <= start && start <= mm.end)));
-    if (m) entries.push({ label: `${e.verb} ${e.path}`, f, m });
-  }
-  for (const f of files)
-    for (const m of f.ix.methods) if (m.annotations.some((a) => JOB.test(a))) entries.push({ label: 'job', f, m });
-  for (const f of files.filter((f) => f.mdb))
-    for (const m of f.ix.methods.filter((m) => m.name === 'onMessage')) entries.push({ label: 'message', f, m });
-  const core = shortlist ? [...shortlist] : [];
-  const flows = entries
-    .map(({ label, f, m }) => {
-      const ev = [];
-      walk(f, m, 3, new Set(), ev);
-      const tx = isTx(f, m) ? ' [tx]' : '';
-      const score =
-        ev.filter((x) => /\(\)$/.test(x)).length * 3 +
-        ev.filter((x) => /^→/.test(x)).length * 2 +
-        ev.filter((x) => core.some((c) => x.includes(c))).length * 2 +
-        ev.length;
-      const steps = ev
-        .reduce((acc, x) => {
-          const last = acc[acc.length - 1];
-          if (last && last.x === x) last.n++;
-          else acc.push({ x, n: 1 });
-          return acc;
-        }, [])
-        .map(({ x, n }) => (n > 1 ? `${x} ×${n}` : x));
-      return { score, line: `${label} ${cite(f, m)}${tx}: ${steps.join('; ')}`, ev, file: f.p };
-    })
-    .filter(
-      (x) =>
-        x.ev.some(
-          (e) => !/^(save|delete|update|insert|store|persist|merge|remove) /.test(e) || core.some((c) => e.includes(c)),
-        ) && x.ev.length >= 2,
-    )
-    .sort((a, b) => b.score - a.score);
-  // Variety: identical chains collapse to one, and no controller contributes more than two.
-  const seenChain = new Set(),
-    perFile = {},
-    picked = [];
-  for (const x of flows) {
-    const sig = x.ev.join('|');
-    if (seenChain.has(sig) || (perFile[x.file] ?? 0) >= 2) continue;
-    seenChain.add(sig);
-    perFile[x.file] = (perFile[x.file] ?? 0) + 1;
-    picked.push(x);
-  }
-  return { lifecycle, schedules, flows: picked.map((x) => x.line) };
+  return { lifecycle, schedules };
 }
 
 // --- Deployables: a repo can hold several apps; the map covers the primary one ----------

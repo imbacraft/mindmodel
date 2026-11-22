@@ -1,7 +1,7 @@
 // Coverage must be honest about itself: sane rates, blind spots with samples, the same answer twice, and no drop
 // against the accepted baseline. The baseline (test/baselines/coverage.json) is committed and small: rates as
 // numerator/denominator/percent, and the sizes of the blind-spot lists. UPDATE=1 rewrites it (the owner accepts it).
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -42,6 +42,12 @@ const snapshot = (cov) => ({
 });
 
 function compare(t, app, now) {
+  // UPDATE=1 is how the owner accepts an intended change: every app is rewritten, not only a new one.
+  if (process.env.UPDATE) {
+    baseline[app] = now;
+    t.diagnostic(`${app}: baseline updated`);
+    return;
+  }
   const was = baseline[app];
   if (!was) {
     baseline[app] = now;
@@ -124,7 +130,10 @@ test('coverage is deterministic', { skip: !fs.existsSync(path.join(root, 'cargot
   assert.deepStrictEqual(a, b);
 });
 
-if (process.env.UPDATE) {
+// Written once the tests have run: this block used to sit at module level and wrote the file before `compare` could
+// update it, so an UPDATE run silently kept the old numbers.
+after(() => {
+  if (!process.env.UPDATE) return;
   fs.mkdirSync(path.dirname(baselineFile), { recursive: true });
   fs.writeFileSync(baselineFile, `${JSON.stringify(baseline, null, 1)}\n`);
-}
+});

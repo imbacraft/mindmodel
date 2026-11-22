@@ -3,6 +3,7 @@
 // Each service is scanned with the single-app scanner; this adds what crosses service boundaries and joins it.
 // Usage: node system.mjs <folder> [outDir]   (default out: <folder>/mindmodel-system/.work/)
 import fs from 'node:fs';
+import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { scan, summarize } from './scan.mjs';
@@ -506,6 +507,7 @@ export function systemSummary(sys) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  retuneHeap();
   const folder = path.resolve(process.argv[2] ?? '.');
   const out = path.resolve(process.argv[3] ?? path.join(folder, 'mindmodel-system', '.work'));
   const sys = systemScan(folder);

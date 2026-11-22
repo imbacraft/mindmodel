@@ -76,9 +76,9 @@ export function gitWindow(
 
 // One git log per root and window, shared by every region that asks.
 const logs = new Map();
-export function activityFor(root, window, prefixes) {
+const logFor = (root, window, paths = []) => {
   const n = /^last (\d+) commits$/.exec(window),
-    key = `${root}\0${window}`;
+    key = `${root}\0${window}\0${paths.join('\0')}`;
   if (!logs.has(key))
     logs.set(
       key,
@@ -89,11 +89,41 @@ export function activityFor(root, window, prefixes) {
         '--format=@@%H',
         ...(n ? ['-n', n[1]] : [`--since=${sinceCutoff(window)}`]),
         'HEAD',
+        // Limited to the paths asked about: a 5,000-file history is otherwise tens of megabytes of name-status lines.
+        ...(paths.length ? ['--', ...paths] : []),
       ]) ?? '',
     );
+  return logs.get(key);
+};
+
+// Commits per file in one pass over the shared log: the flow rank asks about many entry files, and counting them one
+// prefix at a time re-read the whole history for each.
+export function activityByFile(root, window, paths = []) {
+  const counts = new Map();
+  let touched = new Set();
+  const flush = () => {
+    for (const p of touched) counts.set(p, (counts.get(p) ?? 0) + 1);
+    touched = new Set();
+  };
+  for (const line of logFor(root, window, paths).split('\n')) {
+    if (line.startsWith('@@')) {
+      flush();
+      continue;
+    }
+    const parts = line.split('\t');
+    if (parts.length >= 2) touched.add(parts[parts.length - 1]);
+  }
+  flush();
+  return counts;
+}
+// A 5,000-file history is a large string to keep after the scan has counted what it needed.
+export function forgetActivity() {
+  logs.clear();
+}
+export function activityFor(root, window, prefixes) {
   return {
     ...count(
-      logs.get(key),
+      logFor(root, window),
       prefixes.map((p) => p.replace(/\/$/, '')),
     ),
     since: window,

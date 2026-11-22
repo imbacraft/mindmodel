@@ -65,7 +65,93 @@
     },
     "flows": {
       "type": "array",
-      "description": "Ported in slice 6 (channels) and slice 5 (the system map)."
+      "description": "Slice 2 (revised): ranked flows. An entry point, the hops that lead to at least one effect, every effect, and the score with its parts.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "entry",
+          "steps",
+          "effects",
+          "score",
+          "why",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "entry": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "method",
+              "cite"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "endpoint",
+                  "job",
+                  "listener",
+                  "ui-action"
+                ]
+              },
+              "verb": {},
+              "path": {},
+              "method": {
+                "type": "string"
+              },
+              "cite": {
+                "type": "string"
+              }
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/flowEffect"
+            }
+          },
+          "score": {
+            "type": "number"
+          },
+          "why": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "parsed",
+              "resolved",
+              "inferred",
+              "unresolved"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "file": {
+            "type": "string"
+          },
+          "path": {}
+        }
+      }
     },
     "externals": {
       "type": "object",
@@ -108,7 +194,7 @@
       "items": {
         "$ref": "#/$defs/transaction"
       },
-      "description": "Slice 2: transactional methods and the boundaries that leak (kinds other than `transactional`)."
+      "description": "Slice 2: the transaction boundaries that leak (requires-new, after-commit, outside-in-transaction, outside-then-save). Plain transactional methods are a count per class (transactionCounts), not facts."
     },
     "outsideCalls": {
       "type": "array",
@@ -130,6 +216,27 @@
         "$ref": "#/$defs/stateCache"
       },
       "description": "Slice 2: cache annotations on methods."
+    },
+    "transactionCounts": {
+      "type": "array",
+      "description": "Slice 2: transactional method count per class (the plain kind is not a fact).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "count"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -658,6 +765,38 @@
         "method": {
           "type": "string"
         }
+      }
+    },
+    "flowEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "label",
+        "site"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "entity",
+            "outside",
+            "message"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "entity": {
+          "type": "string"
+        },
+        "site": {
+          "type": "string"
+        },
+        "cite": {}
       }
     }
   }

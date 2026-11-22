@@ -28,8 +28,16 @@ export function typeArgsOf(text) {
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
 // A resolved type: the FQN (project or external, null when unresolved), the text it came from, and its arguments.
+const EMPTY_ARGS = [];
+// A written-out FQN (`java.util.Objects`) is a type reference; a lower-case last segment is a field (`System.out`).
+const FQN_PREFIX = /^(?:java|javax|jakarta|org|com|io|net|tools|feign|retrofit2)\./;
+
 const typeRef = (model, file, text) => {
-  const raw = String(text ?? '').replace(/\[\]/g, '').trim();
+  // The common case is a plain name (`Order`, `String`): no regex, no array, no recursion.
+  const plain = String(text ?? '').trim();
+  if (plain.indexOf('<') < 0 && plain.indexOf('[') < 0)
+    return { fqn: plain ? model.resolveIn(file, plain) : null, text: plain, args: EMPTY_ARGS };
+  const raw = plain.replace(/\[\]/g, '');
   const base = typeNameOf(raw);
   return {
     fqn: base ? model.resolveIn(file, base) : null,
@@ -38,24 +46,19 @@ const typeRef = (model, file, text) => {
   };
 };
 
-export function bindCalls(model, signatures = new Map()) {
-  const { types, implsOf } = model;
+export function bindCalls(model, signatures = new Map(), rules = { loggers: [], getters: new Set(), setters: new Set() }) {
+  const { types, implsOf, external } = model;
   const EMPTY = [];
   const refOf = (file, text) => typeRef(model, file, text);
 
   // Members the compiler or Lombok writes without a declaration: a record's accessors and canonical constructor, and
-  // the logger `@Slf4j` adds. They are marked generated; a fact that rests on one is `inferred`.
+  // the logger `@Slf4j` adds. They are marked generated; a fact that rests on one is `inferred`. The annotation lists
+  // are catalog data (lombok.json `generates`), not a regex here.
   for (const t of types.values()) {
     const anns = (t.ann ?? []).map((a) => a.fqn ?? a.name);
-    if (
-      anns.some(
-        (a) =>
-          /^lombok\.(Log|Log4j|Log4j2|Slf4j|XSlf4j|CommonsLog|JBossLog|Flogger)$/.test(a) ||
-          /^lombok\.extern\.(slf4j|log4j|log4j2|apachecommonslog|jbosslog|flogger)\./.test(a),
-      ) &&
-      !t.fields.some((f) => f.name === 'log')
-    )
-      t.fields.push({ name: 'log', type: 'org.slf4j.Logger', static: true, generated: 'lombok' });
+    const logger = rules.loggers.find((l) => (l.annotations ?? []).some((a) => anns.includes(a)));
+    if (logger && !t.fields.some((f) => f.name === logger.field))
+      t.fields.push({ name: logger.field, type: logger.type, static: true, generated: 'lombok' });
     if (t.kind === 'record' && t.components?.length) {
       for (const c of t.components)
         if (!t.methods.some((m) => m.name === c.name && !m.params.length))
@@ -93,13 +96,20 @@ export function bindCalls(model, signatures = new Map()) {
   // cache, resolution allocated a fresh array and Set per call, which drove fineract's peak RSS past its budget.
   const chainCache = new Map(),
     sigCache = new Map();
-  const projectChain = (fqn) => {
-    if (!fqn) return EMPTY;
-    if (chainCache.has(fqn)) return chainCache.get(fqn);
-    const t = types.get(fqn);
-    const out = t ? [{ fqn, type: t }, ...(t.supers ?? []).flatMap((s) => (s.fqn ? projectChain(s.fqn) : []))] : EMPTY;
-    // A cyclic hierarchy (malformed source) would recurse forever; the memo is still being built, so guard it.
+  // The memo is inserted *before* the supers are walked. With a cyclic hierarchy (malformed source) the recursive
+  // call finds the array that is still being filled instead of recursing forever; `seen` keeps it from listing the
+  // same type twice.
+  const projectChain = (fqn, seen = new Set()) => {
+    if (!fqn || seen.has(fqn)) return EMPTY;
+    const cached = chainCache.get(fqn);
+    if (cached) return cached;
+    seen.add(fqn);
+    const out = [];
     chainCache.set(fqn, out);
+    const t = types.get(fqn);
+    if (!t) return out;
+    out.push({ fqn, type: t });
+    for (const s of t.supers ?? []) if (s.fqn) for (const x of projectChain(s.fqn, seen)) out.push(x);
     return out;
   };
   const sigChain = (fqn) => {
@@ -111,6 +121,22 @@ export function bindCalls(model, signatures = new Map()) {
     return out;
   };
   const isInterfaceLike = (t) => t && (t.kind === 'interface' || t.abstract);
+  // Concrete implementations of an interface or abstract type, through sub-interfaces and abstract subclasses.
+  const implCache = new Map();
+  const implsFor = (fqn) => {
+    const cached = implCache.get(fqn);
+    if (cached) return cached;
+    const out = [];
+    implCache.set(fqn, out);
+    for (const x of implsOf.get(fqn) ?? EMPTY) {
+      const t = types.get(x);
+      if (!t) continue;
+      if (isInterfaceLike(t)) out.push(...implsFor(x));
+      else out.push(x);
+    }
+    return out;
+  };
+  const sigOf = (m) => `${m.name}(${m.params.map((p) => (p.type ?? '').replace(/\s+/g, '')).join(',')})`;
   const arityOk = (m, argc) =>
     argc == null || m.arity === argc || (m.params ?? []).some((p) => p.varargs);
 
@@ -126,8 +152,8 @@ export function bindCalls(model, signatures = new Map()) {
   function lombokAccessor(typeFqn, name) {
     for (const { type } of projectChain(typeFqn)) {
       const anns = (type.ann ?? []).map((a) => a.fqn ?? a.name);
-      const getter = anns.some((a) => /\.(Data|Getter|Value)$/.test(a));
-      const setter = anns.some((a) => /\.(Data|Setter|Value)$/.test(a));
+      const getter = anns.some((a) => rules.getters.has(a));
+      const setter = anns.some((a) => rules.setters.has(a));
       const field = type.fields.find(
         (f) =>
           (getter && (name === `get${cap(f.name)}` || name === `is${cap(f.name)}`)) ||
@@ -141,14 +167,32 @@ export function bindCalls(model, signatures = new Map()) {
   // Project methods for a name+arity on a type, its supertypes, and (for an interface or abstract type) its impls.
   function findOn(typeFqn, name, argc) {
     const out = [];
-    const chain = projectChain(typeFqn);
-    for (const [i, { type }] of chain.entries())
-      for (const m of byName.get(type.fqn)?.get(name) ?? EMPTY)
-        if (arityOk(m, argc)) out.push({ m, type, how: i === 0 ? 'direct' : 'super' });
-    if (!out.length && isInterfaceLike(types.get(typeFqn)))
-      for (const impl of implsOf.get(typeFqn) ?? EMPTY)
-        for (const m of byName.get(impl)?.get(name) ?? EMPTY)
-          if (arityOk(m, argc)) out.push({ m, type: types.get(impl), how: 'impl' });
+    // A subclass declaration overrides the one it inherits: collect each signature once, nearest declaration first,
+    // so an override is a single target rather than an ambiguity.
+    const seenSig = new Set();
+    for (const [i, { type }] of projectChain(typeFqn).entries())
+      for (const m of byName.get(type.fqn)?.get(name) ?? EMPTY) {
+        if (!arityOk(m, argc)) continue;
+        const sig = sigOf(m);
+        if (seenSig.has(sig)) continue;
+        seenSig.add(sig);
+        out.push({ m, type, how: i === 0 ? 'direct' : 'super' });
+      }
+    // An interface or abstract receiver also has its implementations' bodies as targets; they are kept alongside the
+    // declared method and marked `impl`, because "the interface's method" and "the code that runs" are different citable
+    // answers.
+    if (isInterfaceLike(types.get(typeFqn))) {
+      const seenImpl = new Set();
+      for (const impl of implsFor(typeFqn))
+        for (const m of byName.get(impl)?.get(name) ?? EMPTY) {
+          if (!arityOk(m, argc)) continue;
+          // Two implementations of the same interface method are two answers, not a duplicate: dedupe per type.
+          const sig = `${impl}|${sigOf(m)}`;
+          if (seenImpl.has(sig)) continue;
+          seenImpl.add(sig);
+          out.push({ m, type: types.get(impl), how: 'impl' });
+        }
+    }
     return out;
   }
 
@@ -248,19 +292,25 @@ export function bindCalls(model, signatures = new Map()) {
       }
       return { fqn: ref.fqn, ref, how: 'lambda' };
     }
-    // A qualified name: the last segment is a field of the owner of the rest (`a.b.repo` -> field repo of b).
+    // A qualified name. First: the whole text may name a type (`Outer.Inner`, `java.util.Objects`). Then: the last
+    // segment is a field of the owner of the rest (`a.b.repo` -> field repo of b). Otherwise nothing is known —
+    // `System.out` is a field of an external type we cannot type, and answering `System` would type the receiver of
+    // every `System.out.println` as its owner.
     if (tail) {
+      const resolved = model.resolveIn(ctx.file, stripped);
+      const last = parts[parts.length - 1];
+      const headType = model.resolveIn(ctx.file, head);
+      const headKnown = types.has(headType) || external?.has(headType);
+      // A type-looking segment is CamelCase; an ALL_CAPS segment is a constant (`AcmeJobName.ACME_NOOP_JOB.name()`).
+      const typeLike = /^[A-Z][A-Za-z0-9]*$/.test(last) && !/^[A-Z0-9_]+$/.test(last);
+      if (typeLike && (types.has(resolved) || headKnown || FQN_PREFIX.test(stripped)))
+        return { fqn: resolved, ref: { fqn: resolved, text: stripped, args: EMPTY_ARGS }, how: 'static' };
       const owner = resolveName(parts.slice(0, -1).join('.'), ctx, line);
-      if (owner) {
-        const declared = fieldOf(owner.fqn, parts[parts.length - 1]);
-        if (declared) {
-          const ref = refOf(declared.file, declared.field.type);
-          return { fqn: ref.fqn, ref, how: 'field' };
-        }
-      }
-      const staticOwner = model.resolveIn(ctx.file, parts.slice(0, -1).join('.'));
-      if (staticOwner) return { fqn: staticOwner, ref: { fqn: staticOwner, text: head, args: [] }, how: 'static' };
-      return null;
+      if (!owner) return null;
+      const declared = fieldOf(owner.fqn, last);
+      if (!declared) return null;
+      const ref = refOf(declared.file, declared.field.type);
+      return { fqn: ref.fqn, ref, how: 'field' };
     }
     const local = ctx.locals(head, line);
     if (local) return { fqn: local.fqn, ref: local, how: 'local' };
@@ -300,25 +350,24 @@ export function bindCalls(model, signatures = new Map()) {
     const scopes = [];
     for (const call of m.calls ?? []) {
       const recv = resolveReceiver(call, ctx);
-      const ids = [];
-      let firstHow = null;
-      if (recv.fqn && types.has(recv.fqn))
-        for (const x of findOn(recv.fqn, call.name, call.argc)) {
-          ids.push(x.m.id);
-          firstHow ??= x.how;
-        }
+      const hits = recv.fqn && types.has(recv.fqn) ? findOn(recv.fqn, call.name, call.argc) : EMPTY;
+      const ids = hits.map((h) => h.m.id);
       let how;
       if (!recv.fqn) how = 'unresolved';
       else if (!types.has(recv.fqn)) how = 'external';
-      else if (!ids.length) {
+      else if (!hits.length) {
         // Lombok writes the accessor: a target by convention, not a declaration.
         const lombok = call.kind !== 'new' ? lombokAccessor(recv.fqn, call.name) : null;
         if (lombok) {
           ids.push(lombok.id);
           how = 'convention';
         } else how = call.kind === 'new' ? 'external' : 'unresolved';
-      } else how = firstHow;
-      if (ids.length > 1 && new Set(ids).size > 1) how = 'ambiguous';
+      } else {
+        // Two different declarations of the same name and arity cannot be told apart without argument types: that is
+        // ambiguous. An override is one target, and an interface's implementations are 'impl', not ambiguity.
+        const sigs = new Set(hits.filter((h) => h.how !== 'impl').map((h) => sigOf(h.m)));
+        how = sigs.size > 1 ? 'ambiguous' : hits.some((h) => h.how === 'impl') ? 'impl' : hits[0].how;
+      }
       call.recvFqn = recv.fqn ?? null;
       call.recvHow = recv.how;
       call.how = how;
@@ -348,7 +397,7 @@ export function bindCalls(model, signatures = new Map()) {
     }
 
   // The two rates of §6.1, over call sites (constructors have no receiver and are not in either rate).
-  const rate = { calls: 0, typed: 0, project: 0, targeted: 0 };
+  const rate = { calls: 0, typed: 0, project: 0, targeted: 0, ambiguous: 0 };
   for (const t of types.values())
     for (const m of t.methods)
       for (const call of m.calls ?? []) {
@@ -357,7 +406,8 @@ export function bindCalls(model, signatures = new Map()) {
         if (call.recvFqn) rate.typed++;
         if (call.recvFqn && types.has(call.recvFqn)) {
           rate.project++;
-          if (call.targets?.length) rate.targeted++;
+          if (call.how === 'ambiguous') rate.ambiguous++;
+          else if (call.targets?.length) rate.targeted++;
         }
       }
   model.bindings = rate;
@@ -389,7 +439,8 @@ export function bindCalls(model, signatures = new Map()) {
       },
     ],
   ]);
-  bindCalls(model, signatures);
+  const { loadCatalogs, generatedRules } = await import('../catalogs/catalog.mjs');
+  bindCalls(model, signatures, generatedRules(loadCatalogs().map((catalog) => ({ catalog }))));
   const svc = model.types.get('a.Svc');
   const run = svc.methods.find((m) => m.name === 'run');
   const by = (name) => run.calls.filter((c) => c.name === name);
@@ -417,4 +468,100 @@ export function bindCalls(model, signatures = new Map()) {
   assert.ok(data, 'the Lombok class is in the model');
   assert.equal(model.bindings.calls > 6, true);
   assert.ok(model.bindings.typed >= model.bindings.project);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Overrides, implementations, and the names that must stay unresolved. Each block pins one review finding: an
+// override is one target; an interface receiver cites the declaration and its bodies; `System.out` is not `System`;
+// `Outer.Inner` is a type; a cyclic hierarchy terminates.
+{
+  const { index } = await import('../syntax/java.mjs');
+  const { buildModel } = await import('./model.mjs');
+  const L = (...lines) => lines.join('\n');
+  const src = {
+    'f/Order.java': L('package f;', 'public class Order {', '  public void mark() { }', '}'),
+    'f/Base.java': L('package f;', 'public class Base {', '  public void save(Order o) { }', '  public void ping() { }', '}'),
+    'f/Sub.java': L('package f;', 'public class Sub extends Base {', '  @Override', '  public void save(Order o) { }', '}'),
+    'f/Repo.java': L('package f;', 'public interface Repo {', '  void save(Order o);', '}'),
+    'f/Impl1.java': L('package f;', 'public class Impl1 implements Repo {', '  public void save(Order o) { }', '}'),
+    'f/Impl2.java': L('package f;', 'public class Impl2 implements Repo {', '  public void save(Order o) { }', '}'),
+    'f/One.java': L('package f;', 'public interface One {', '  void run();', '}'),
+    'f/OneImpl.java': L('package f;', 'public class OneImpl implements One {', '  public void run() { }', '}'),
+    'f/Over.java': L('package f;', 'public class Over {', '  public void m(int x) { }', '  public void m(String s) { }', '}'),
+    'f/Outer.java': L(
+      'package f;',
+      'public class Outer {',
+      '  public static class Inner {',
+      '    public static Inner make() { return null; }',
+      '    public void go() { }',
+      '  }',
+      '}',
+    ),
+    'f/Use.java': L(
+      'package f;',
+      'public class Use {',
+      '  private Sub sub;',
+      '  private Base base;',
+      '  private Repo repo;',
+      '  private One one;',
+      '  private Over over;',
+      '  void a() { sub.save(null); }',
+      '  void a2() { base.ping(); }',
+      '  void b() { repo.save(null); }',
+      '  void c() { one.run(); }',
+      '  void d() { over.m(1); }',
+      '  void e() { System.out.println("x"); }',
+      '  void g() { java.util.Objects.hash(1); }',
+      '  void i() { Outer.Inner.make().go(); }',
+      '}',
+    ),
+    'f/Logs.java': L('package f;', 'import lombok.Slf4j;', '@Slf4j', 'public class Logs {', '  void x() { log.info("x"); }', '}'),
+    'f/Bean.java': L('package f;', 'import lombok.Data;', '@Data', 'public class Bean {', '  private Order order;', '}'),
+    'f/BeanUse.java': L('package f;', 'public class BeanUse {', '  private Bean bean;', '  void x() { bean.getOrder().mark(); }', '}'),
+    // A malformed hierarchy that the compiler would reject but a parser still sees.
+    'c/A.java': L('package c;', 'public class A extends B { }'),
+    'c/B.java': L('package c;', 'public class B extends A { }'),
+  };
+  const model = buildModel(Object.entries(src).map(([p, text]) => ({ p, text, ix: index(text) })));
+  const { loadCatalogs, generatedRules } = await import('../catalogs/catalog.mjs');
+  assert.doesNotThrow(() => bindCalls(model, new Map(), generatedRules(loadCatalogs().map((catalog) => ({ catalog })))), 'a cyclic hierarchy terminates');
+  const call = (method, name) => model.types.get('f.Use').methods.find((m) => m.name === method).calls.find((c) => c.name === name);
+
+  // 1. An override is one target, the nearest declaration — not the same signature from the supertype, not ambiguous.
+  const save = call('a', 'save');
+  assert.deepStrictEqual([save.recvFqn, save.how, save.targets], ['f.Sub', 'direct', ['f.Sub#save(Order)']]);
+  // An inherited method is still reachable through a receiver typed as the supertype.
+  const ping = call('a2', 'ping');
+  assert.deepStrictEqual([ping.recvFqn, ping.how, ping.targets], ['f.Base', 'direct', ['f.Base#ping()']]);
+
+  // 2. An interface receiver keeps the declaration and adds every implementation, marked `impl`.
+  const repo = call('b', 'save');
+  assert.equal(repo.how, 'impl');
+  assert.deepStrictEqual([...repo.targets].sort(), ['f.Impl1#save(Order)', 'f.Impl2#save(Order)', 'f.Repo#save(Order)']);
+  const one = call('c', 'run');
+  assert.equal(one.how, 'impl', 'a single implementation is still an implementation');
+  assert.deepStrictEqual([...one.targets].sort(), ['f.One#run()', 'f.OneImpl#run()']);
+
+  // 3. `System.out` is a field of an external type, so the receiver is unknown — not `System`.
+  assert.deepStrictEqual(
+    [call('e', 'println').recvFqn, call('e', 'println').how, call('e', 'println').targets],
+    [null, 'unresolved', []],
+  );
+  // A fully qualified type is a type, not a field chain.
+  assert.deepStrictEqual([call('g', 'hash').recvFqn, call('g', 'hash').recvHow], ['java.util.Objects', 'static']);
+  // `Outer.Inner` is a type: a static factory on a nested type, and the chain through its return type.
+  const chain = call('i', 'go');
+  assert.deepStrictEqual([chain.recvFqn, chain.recvHow, chain.targets], ['f.Outer.Inner', 'chain', ['f.Outer.Inner#go()']]);
+
+  // 9. Lombok's generated members come from the catalog: @Slf4j's `log` field and @Data's getter are declarations the
+  // resolver can cite without a regex on annotation names.
+  const logs = model.types.get('f.Logs').methods.find((m) => m.name === 'x').calls.find((c) => c.name === 'info');
+  assert.deepStrictEqual([logs.recvFqn, logs.recvHow, logs.how], ['org.slf4j.Logger', 'field', 'external']);
+  const bean = model.types.get('f.BeanUse').methods.find((m) => m.name === 'x').calls.find((c) => c.name === 'mark');
+  assert.deepStrictEqual([bean.recvFqn, bean.recvHow, bean.targets], ['f.Order', 'chain', ['f.Order#mark()']]);
+
+  // 4. Same name and arity, different signatures: ambiguous, and counted as such.
+  assert.deepStrictEqual([call('d', 'm').how, call('d', 'm').targets.length], ['ambiguous', 2]);
+  assert.equal(model.bindings.ambiguous, 1);
+  assert.ok(model.bindings.targeted + model.bindings.ambiguous <= model.bindings.project);
 }

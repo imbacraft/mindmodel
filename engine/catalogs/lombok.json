@@ -442,5 +442,40 @@
         "parameter"
       ]
     }
-  ]
+  ],
+  "generates": {
+    "loggers": [
+      {
+        "annotations": [
+          "lombok.Log",
+          "lombok.Log4j",
+          "lombok.Log4j2",
+          "lombok.Slf4j",
+          "lombok.XSlf4j",
+          "lombok.CommonsLog",
+          "lombok.JBossLog",
+          "lombok.Flogger",
+          "lombok.extern.slf4j.Slf4j",
+          "lombok.extern.slf4j.XSlf4j",
+          "lombok.extern.log4j.Log4j",
+          "lombok.extern.log4j.Log4j2",
+          "lombok.extern.apachecommons.CommonsLog",
+          "lombok.extern.jbosslog.JBossLog",
+          "lombok.extern.flogger.Flogger"
+        ],
+        "field": "log",
+        "type": "org.slf4j.Logger"
+      }
+    ],
+    "getters": [
+      "lombok.Data",
+      "lombok.Getter",
+      "lombok.Value"
+    ],
+    "setters": [
+      "lombok.Data",
+      "lombok.Setter",
+      "lombok.Value"
+    ]
+  }
 }

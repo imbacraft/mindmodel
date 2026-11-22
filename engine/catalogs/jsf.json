@@ -18,7 +18,7 @@
       "fqns": [
         "jakarta.faces.bean.ViewScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -27,7 +27,7 @@
       "fqns": [
         "jakarta.faces.bean.RequestScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -36,7 +36,7 @@
       "fqns": [
         "jakarta.faces.bean.SessionScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -45,7 +45,7 @@
       "fqns": [
         "jakarta.faces.bean.ApplicationScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -54,7 +54,7 @@
       "fqns": [
         "jakarta.faces.bean.CustomScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -63,7 +63,7 @@
       "fqns": [
         "jakarta.faces.view.ViewScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -72,7 +72,7 @@
       "fqns": [
         "javax.faces.bean.ViewScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -81,7 +81,7 @@
       "fqns": [
         "javax.faces.bean.RequestScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -90,7 +90,7 @@
       "fqns": [
         "javax.faces.bean.SessionScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -99,7 +99,7 @@
       "fqns": [
         "javax.faces.bean.ApplicationScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -108,7 +108,7 @@
       "fqns": [
         "javax.faces.view.ViewScoped"
       ],
-      "means": "bean",
+      "means": "ui-bean",
       "on": [
         "type"
       ]
@@ -117,7 +117,7 @@
       "fqns": [
         "jakarta.faces.bean.ManagedBean"
       ],
-      "means": "ignore",
+      "means": "ui-bean",
       "on": [
         "type",
         "method",
@@ -129,7 +129,7 @@
       "fqns": [
         "javax.faces.bean.ManagedBean"
       ],
-      "means": "ignore",
+      "means": "ui-bean",
       "on": [
         "type",
         "method",
@@ -183,6 +183,26 @@
         "method",
         "field",
         "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.flow.FlowScoped",
+        "javax.faces.flow.FlowScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.ConversationScoped",
+        "javax.faces.bean.ConversationScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
       ]
     }
   ]

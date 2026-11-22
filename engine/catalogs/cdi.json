@@ -243,7 +243,7 @@
         "jakarta.inject.Named",
         "javax.inject.Named"
       ],
-      "means": "ignore",
+      "means": "ui-bean",
       "on": [
         "type",
         "method",
@@ -318,6 +318,26 @@
         "method",
         "field",
         "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.PostConstruct",
+        "javax.annotation.PostConstruct"
+      ],
+      "means": "lifecycle",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.PreDestroy",
+        "javax.annotation.PreDestroy"
+      ],
+      "means": "lifecycle",
+      "on": [
+        "method"
       ]
     }
   ]

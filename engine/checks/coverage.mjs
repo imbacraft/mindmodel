@@ -71,12 +71,15 @@ export function coverage(model, facts, selected, { build = [], rels = [] } = {})
   // A rate that can fail (§6.1). "annotations resolved" measured nothing, since an imported name always resolves;
   // "endpoints with a handler" and "endpoints with a path" are 100% by construction, since the extractor only emits a
   // fact when it has both. They are gone. The rates left can each drop on real code.
-  const b = model.bindings ?? { calls: 0, typed: 0, project: 0, targeted: 0 };
+  const b = model.bindings ?? { calls: 0, typed: 0, project: 0, targeted: 0, ambiguous: 0 };
   const rates = [
     rate('supertypes resolved', supers.filter((s) => s.fqn).length, supers.length),
     rate('fields with a resolved type', fields.filter((f) => f.typeFqn).length, fields.length),
     rate('receiver typing', b.typed, b.calls),
     rate('project targets', b.targeted, b.project),
+    // Overloads we cannot separate by name and arity are counted here, not in the numerator above: they are a
+    // different kind of miss from "no such method", and collapsing them hides which one is growing.
+    rate('ambiguous targets', b.ambiguous, b.project),
     rate(
       'endpoints with a fully resolved path',
       endpoints.filter((e) => e.confidence !== 'unresolved').length,
@@ -214,11 +217,13 @@ export function coverageLine(cov) {
   const r = (id) => cov.rates.find((x) => x.id === id);
   const pct = (id) => `${r(id).percent}% (${r(id).numerator}/${r(id).denominator})`;
   const langs = Object.entries(cov.unparsedLanguages).filter(([, n]) => n > 0);
+  const amb = cov.rates.find((r) => r.id === 'ambiguous targets');
   return [
     `supertypes ${pct('supertypes resolved')}`,
     `fields ${pct('fields with a resolved type')}`,
     `receiver typing ${pct('receiver typing')}`,
     `project targets ${pct('project targets')}`,
+    amb?.numerator ? `ambiguous targets ${pct('ambiguous targets')}` : null,
     `paths fully resolved ${pct('endpoints with a fully resolved path')}`,
     `annotations understood ${pct('annotations understood')}`,
     `unknown annotations ${cov.unknownAnnotations.length}`,
@@ -355,4 +360,9 @@ export function coverageLine(cov) {
   // The digest line carries the counters; the names are the section below it.
   assert.match(coverageLine(cov), /unknown base classes 1/);
   assert.match(coverageLine(cov), /uncatalogued deps 2/);
+  // Ambiguous targets is its own rate (§6.1): it exists even at zero, and the digest only prints it when non-zero.
+  const amb = cov.rates.find((r) => r.id === 'ambiguous targets');
+  assert.ok(amb, 'ambiguous targets is a rate');
+  assert.equal(amb.denominator, cov.rates.find((r) => r.id === 'project targets').denominator);
+  assert.doesNotMatch(coverageLine(cov), /ambiguous targets/);
 }

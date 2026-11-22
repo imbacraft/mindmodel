@@ -182,7 +182,10 @@ export function buildModel(files) {
     if (!added) break;
   }
 
-  const resolveIn = (file, name) => resolverFor(importsOf.get(file) ?? { pkg: '', imports: [] }, types)(name);
+  // The per-file resolver knows the file's nested types too; rebuilding one here without them silently lost
+  // `Outer.Inner` written inside `Outer.java` (the nested type's own return type, for one).
+  const resolveIn = (file, name) =>
+    resolvers.get(file)?.(name) ?? resolverFor(importsOf.get(file) ?? { pkg: '', imports: [] }, types)(name);
   return { types, byFile, importsOf, external, implsOf, degraded, resolveIn, constants, resolveConst: constantOf };
 }
 
@@ -281,7 +284,9 @@ export function buildModel(files) {
     [null],
   );
   assert.equal(model.resolveIn('src/a/Outer.java', 'Order'), null); // not imported: unresolved, never guessed
-  assert.equal(model.resolveIn('src/a/Outer.java', 'Inner'), null); // nested types resolve by owner, not here
+  // A nested type resolves by simple name inside its own file (`Inner` in Outer.java), and not elsewhere.
+  assert.equal(model.resolveIn('src/a/Outer.java', 'Inner'), 'a.Outer.Inner');
+  assert.equal(model.resolveIn('src/a/Elsewhere.java', 'Inner'), null);
   assert.ok(model.external.has('java.util.List'));
 }
 

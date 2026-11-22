@@ -33,6 +33,20 @@ export function loadCatalogs(dir = HERE) {
 // An entry may name one FQN or the Spring/Jakarta spellings of the same idea.
 export const fqnsOf = (entry) => entry.fqns ?? (entry.fqn ? [entry.fqn] : []);
 
+// Members a framework writes without a declaration, as catalog data: @Slf4j's `log` field and @Data's accessors. The
+// resolver reads this instead of carrying a list of Lombok annotation names of its own.
+export function generatedRules(selected) {
+  const rules = { loggers: [], getters: new Set(), setters: new Set() };
+  for (const { catalog: cat } of selected) {
+    const g = cat?.generates;
+    if (!g) continue;
+    for (const l of g.loggers ?? []) rules.loggers.push(l);
+    for (const a of g.getters ?? []) rules.getters.add(a);
+    for (const a of g.setters ?? []) rules.setters.add(a);
+  }
+  return rules;
+}
+
 // A catalog applies when the build declares one of its deps, when a source import matches one of its prefixes, or —
 // for a catalog with no `when` rule at all — always (the `ignore` catalog: annotations known to carry no fact, whose
 // absence of meaning is not a blind spot). `why` is what a fact's trace quotes.
