@@ -1,0 +1,149 @@
+{
+  "id": "resilience4j",
+  "version": 1,
+  "when": {
+    "deps": [
+      "io.github.resilience4j:resilience4j-annotations",
+      "io.github.resilience4j:resilience4j-spring-boot3",
+      "io.github.resilience4j:resilience4j-spring-boot2",
+      "io.github.resilience4j:resilience4j-retry"
+    ],
+    "imports": [
+      "io.github.resilience4j."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "io.github.resilience4j.retry.annotation.Retry"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.ratelimiter.annotation.RateLimiter"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.bulkhead.annotation.Bulkhead"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.timelimiter.annotation.TimeLimiter"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.threadpoolbulkhead.annotation.ThreadPoolBulkhead"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.fallback.Fallback"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.fallback.FallbackMethod"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.spring6.configure.EnableResilience4j"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.spring6.configure.EnableRetry"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "io.github.resilience4j.spring6.configure.EnableCircuitBreaker"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

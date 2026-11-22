@@ -1,0 +1,170 @@
+{
+  "id": "spring-web",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.boot:spring-boot-starter-web",
+      "org.springframework.boot:spring-boot-starter-webflux",
+      "org.springframework:spring-web",
+      "org.springframework:spring-webmvc",
+      "org.springframework:spring-webflux"
+    ],
+    "imports": [
+      "org.springframework.web.bind.annotation."
+    ]
+  },
+  "annotations": [
+    {
+      "fqn": "org.springframework.web.bind.annotation.GetMapping",
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "GET",
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.PostMapping",
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "POST",
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.PutMapping",
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "PUT",
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.DeleteMapping",
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "DELETE",
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.PatchMapping",
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "PATCH",
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.RequestMapping",
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verbFromArg": {
+        "arg": "method",
+        "enum": "RequestMethod",
+        "default": "ANY"
+      },
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.RequestMapping",
+      "on": [
+        "type"
+      ],
+      "means": "endpoint-base",
+      "path": {
+        "args": [
+          "value",
+          "path"
+        ]
+      }
+    },
+    {
+      "fqn": "org.springframework.web.bind.annotation.RestController",
+      "on": [
+        "type"
+      ],
+      "means": "controller"
+    },
+    {
+      "fqn": "org.springframework.stereotype.Controller",
+      "on": [
+        "type"
+      ],
+      "means": "controller"
+    }
+  ],
+  "calls": [
+    {
+      "types": [
+        "org.springframework.web.client.RestTemplate"
+      ],
+      "means": "outside-call",
+      "kind": "HTTP"
+    },
+    {
+      "types": [
+        "org.springframework.web.reactive.function.client.WebClient"
+      ],
+      "means": "outside-call",
+      "kind": "HTTP"
+    },
+    {
+      "types": [
+        "org.springframework.web.client.RestClient"
+      ],
+      "means": "outside-call",
+      "kind": "HTTP"
+    },
+    {
+      "types": [
+        "java.net.http.HttpClient"
+      ],
+      "means": "outside-call",
+      "kind": "HTTP"
+    },
+    {
+      "types": [
+        "org.springframework.web.client.RestClient.Builder"
+      ],
+      "means": "outside-call",
+      "kind": "HTTP"
+    }
+  ]
+}

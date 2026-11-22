@@ -1,0 +1,50 @@
+{
+  "id": "messaging",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.kafka:spring-kafka",
+      "org.springframework.amqp:spring-rabbit",
+      "org.springframework:spring-jms",
+      "jakarta.jms:jakarta.jms-api",
+      "jakarta.platform:jakarta.jakartaee-api",
+      "org.springframework.boot:spring-boot-starter-amqp",
+      "org.springframework.boot:spring-boot-starter-artemis",
+      "com.amazonaws:aws-java-sdk-sqs"
+    ],
+    "imports": [
+      "org.springframework.kafka.",
+      "org.springframework.amqp.",
+      "org.springframework.jms.",
+      "jakarta.jms."
+    ]
+  },
+  "annotations": [],
+  "calls": [
+    {
+      "type": "org.springframework.kafka.core.KafkaTemplate",
+      "means": "outside-call",
+      "kind": "Kafka"
+    },
+    {
+      "type": "org.springframework.amqp.rabbit.core.RabbitTemplate",
+      "means": "outside-call",
+      "kind": "RabbitMQ"
+    },
+    {
+      "type": "org.springframework.jms.core.JmsTemplate",
+      "means": "outside-call",
+      "kind": "JMS"
+    },
+    {
+      "type": "jakarta.jms.MessageProducer",
+      "means": "outside-call",
+      "kind": "JMS"
+    },
+    {
+      "type": "com.amazonaws.services.sqs.AmazonSQS",
+      "means": "outside-call",
+      "kind": "SQS"
+    }
+  ]
+}

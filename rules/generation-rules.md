@@ -29,6 +29,8 @@
 
 **P4. The code wins, silently.** Read the project's docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then verify against the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose documentation. Configuration files are code: a config setting that the code ignores or overrides can be a surprise (3.8).
 
+**P4a. The coverage line is a boundary, not a footnote.** `facts.md` opens with what the engine resolved and what it did not, and every fact carries a confidence. Treat `parsed` and `resolved` as settled: cite them without re-reading the code. Check `inferred` ones against the code before they reach the page. Anything under "What the engine did not understand" — unknown annotations, base classes no catalog explains, uncatalogued dependencies, source files the model cannot read, degraded files — or in the unresolved endpoints is a place the facts are blind: read the code there before claiming anything about it, or leave it out.
+
 **P5. Plain names first, code names second.** Use the words the users and the business use ("School"). Show the code name after it (`OrgUnit`). Once a plain name is chosen, use exactly that name everywhere on the page. Don't name a region with a word that is also a concept's name unless the region is about that concept.
 
 **P6. State behavior, never exploits.** The map describes how the code actually behaves, **including behavior that is flawed**, plainly and neutrally, because a developer can't work on a system they have been given a cleaned-up picture of (e.g. "the price is sent by the browser and charged as sent"). The map never explains how to abuse a weakness, never includes secrets, credentials or keys, and never labels anything a bug or vulnerability. **Separately**, report every security weakness and serious bug you find to the person who asked for the map.
@@ -55,7 +57,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 | 4 | Regions (Part 3.4) | regions + region sentence |
 | 5 | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners, copies, seams |
 | 6 | How a request travels (Part 3.6) | request path |
-| 7 | What runs on its own (Part 3.7) | background table |
+| 7 | What runs on its own (Part 3.7) | background table + generated total |
 | 8 | Stories: choose, rank, trace (Part 3.9) | stories |
 | 9 | Rules & surprises (Part 3.8). Written after tracing, because most surprises show up while tracing | ranked rules |
 | 10 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
@@ -238,8 +240,9 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - **Table**, ≤ 10 rows, grouped by purpose (not one row per class): name · when (human terms: "every 20 s", "hourly", "nightly 03:00") · what it does, in one or two sentences · region · citations to each scheduler or worker.
 - If an item explains user-visible delay ("paid" arrives after the redirect), say it in that row.
 - If the app truly has nothing that runs on its own, say so in the intro: that is itself useful knowledge.
+- **The page also prints, from the code, how many handlers exist in total, with a collapsed list of every one.** Your table is the selection that matters, not the inventory: never pad it to match the count, and never say a handler does not exist because it is not in your table.
 
-**Checks:** Did every `@Scheduled`, `@Async`, listener and worker found in phase 1 land in some row? Is every schedule copied exactly from the code or config?
+**Checks:** Does every row describe work that really runs with no request? Is every schedule copied exactly from the code or config? When the generated total is larger than your rows, does the intro or a row tell the reader what the rest of it is?
 
 ### 3.8 Rules & surprises
 

@@ -1,0 +1,39 @@
+{
+  "id": "mail",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.boot:spring-boot-starter-mail",
+      "org.springframework:spring-context-support",
+      "com.sun.mail:jakarta.mail",
+      "jakarta.mail:jakarta.mail-api"
+    ],
+    "imports": [
+      "org.springframework.mail.",
+      "jakarta.mail."
+    ]
+  },
+  "annotations": [],
+  "calls": [
+    {
+      "type": "org.springframework.mail.javamail.JavaMailSender",
+      "means": "outside-call",
+      "kind": "mail"
+    },
+    {
+      "type": "org.springframework.mail.javamail.JavaMailSenderImpl",
+      "means": "outside-call",
+      "kind": "mail"
+    },
+    {
+      "type": "org.springframework.mail.SimpleMailMessage",
+      "means": "outside-call",
+      "kind": "mail"
+    },
+    {
+      "type": "jakarta.mail.Transport",
+      "means": "outside-call",
+      "kind": "mail"
+    }
+  ]
+}

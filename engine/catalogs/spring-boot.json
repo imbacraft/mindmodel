@@ -1,0 +1,160 @@
+{
+  "id": "spring-boot",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.boot:spring-boot-starter",
+      "org.springframework.boot:spring-boot",
+      "org.springframework.boot:spring-boot-autoconfigure"
+    ],
+    "imports": [
+      "org.springframework.boot."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.SpringBootApplication"
+      ],
+      "means": "startup",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.SpringBootConfiguration"
+      ],
+      "means": "startup",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.AutoConfiguration"
+      ],
+      "means": "config-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.EnableAutoConfiguration"
+      ],
+      "means": "config-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.AutoConfigureAfter"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.AutoConfigureBefore"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.AutoConfigureOrder"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.context.properties.EnableConfigurationProperties"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.context.properties.ConfigurationPropertiesScan"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.context.annotation.ImportAutoConfiguration"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.test.context.SpringBootTest"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,672 @@
+{
+  "id": "jaxrs",
+  "version": 1,
+  "when": {
+    "deps": [
+      "jakarta.ws.rs:jakarta.ws.rs-api",
+      "javax.ws.rs:javax.ws.rs-api",
+      "org.jboss.resteasy:resteasy-core"
+    ],
+    "imports": [
+      "jakarta.ws.rs.",
+      "javax.ws.rs."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "jakarta.ws.rs.GET",
+        "javax.ws.rs.GET"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "GET"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.POST",
+        "javax.ws.rs.POST"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "POST"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.PUT",
+        "javax.ws.rs.PUT"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "PUT"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.DELETE",
+        "javax.ws.rs.DELETE"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "DELETE"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.PATCH",
+        "javax.ws.rs.PATCH"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "PATCH"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.HEAD",
+        "javax.ws.rs.HEAD"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "HEAD"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.OPTIONS",
+        "javax.ws.rs.OPTIONS"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint",
+      "verb": "OPTIONS"
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Path",
+        "javax.ws.rs.Path"
+      ],
+      "on": [
+        "type"
+      ],
+      "means": "endpoint-base",
+      "path": {
+        "args": [
+          "value"
+        ]
+      }
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Path",
+        "javax.ws.rs.Path"
+      ],
+      "on": [
+        "method"
+      ],
+      "means": "endpoint-path",
+      "path": {
+        "args": [
+          "value"
+        ]
+      }
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.ApplicationPath",
+        "javax.ws.rs.ApplicationPath"
+      ],
+      "on": [
+        "type"
+      ],
+      "means": "app-path",
+      "path": {
+        "args": [
+          "value"
+        ]
+      }
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Produces"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.Produces"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Consumes"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.Consumes"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.PathParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.PathParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.QueryParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.QueryParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.HeaderParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.HeaderParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.FormParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.FormParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.CookieParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.CookieParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.MatrixParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.MatrixParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.BeanParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.BeanParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Context"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.Context"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Encoded"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.Encoded"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.DefaultValue"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.DefaultValue"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.NameBinding"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.NameBinding"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Provider"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.Provider"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.Priority"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.Priority"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.HttpMethod"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.HttpMethod"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.ConstrainedTo"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.ConstrainedTo"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.ext.Provider"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.ext.Provider"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.core.Context"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.ws.rs.core.Context"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.security.RolesAllowed"
+      ],
+      "means": "method-security",
+      "on": [
+        "type",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.annotation.security.RolesAllowed"
+      ],
+      "means": "method-security",
+      "on": [
+        "type",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.security.PermitAll"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.security.DenyAll"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.annotation.security.PermitAll"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.annotation.security.DenyAll"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ws.rs.ext.ExceptionMapper"
+      ],
+      "means": "exception-handler",
+      "on": [
+        "type"
+      ]
+    }
+  ]
+}

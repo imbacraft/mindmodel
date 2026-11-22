@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
-import { index, methodAt } from './java.mjs';
+import { index, methodAt } from './syntax/java.mjs';
 
 // Cite methods by name only: `validate.mjs --fix` fills in the exact range, and the digest stays short. An overloaded
 // name also gets its range, so two overloads don't read as one fact.
@@ -20,11 +20,6 @@ const cite = (f, m) => {
   );
 }
 // Spring and Jakarta EE spellings of the same ideas.
-const WRITE = /^(save|delete|update|insert|store|persist|merge|remove)/,
-  ASYNC = /^(Async|Asynchronous)\b/,
-  JOB = /^(Scheduled|Schedule)\b/;
-// A transaction attribute that suspends or skips the transaction.
-const NO_TX = /^(Transactional|TransactionAttribute)\b.*\b(NOT_SUPPORTED|NEVER|SUPPORTS)\b/;
 const KNOWN = {
   RestTemplate: 'HTTP',
   WebClient: 'HTTP',
@@ -37,7 +32,15 @@ const KNOWN = {
   JmsTemplate: 'JMS',
   SqsTemplate: 'SQS',
 };
-
+const WRITE = /^(save|delete|update|insert|store|persist|merge|remove)/;
+// Flows still read call names: whether a call changes something outside, and which calls are reads.
+const VERB =
+  /^(create|retrieve|update|list|cancel|capture|confirm|refund|send|delete|post|put|patch|get|exchange|execute|call|publish|upload|download|invoke|search|convertAndSend)$|^(create|send|publish|upload|refund|charge|post|put)[A-Z]/;
+const READ = /^(get|list|retrieve|search)$/;
+const ASYNC = /^(Async|Asynchronous)\b/,
+  JOB = /^(Scheduled|Schedule)\b/;
+// A transaction attribute that suspends or skips the transaction.
+const NO_TX = /^(Transactional|TransactionAttribute)\b.*\b(NOT_SUPPORTED|NEVER|SUPPORTS)\b/;
 // --- time in plain words ----------------------------------------------------------
 export function humanMs(ms) {
   if (ms % 3_600_000 === 0) return `${ms / 3_600_000} h`;
@@ -112,6 +115,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   const implsOf = (t) => impls.get(t) ?? [];
 
   for (const f of files) {
+    // Flow skeletons (slice 6) still read this map; the seam facts above it now come from the model.
     f.outside = new Map(); // simple name or field -> label of the outside system it reaches
     for (const m of f.text.matchAll(/^import\s+([\w.]+)\.(\w+);/gm)) {
       const hit = Object.entries(EXT).find(([k]) => (m[1] + '.').includes(k + '.') || m[1].startsWith(k));
@@ -143,126 +147,18 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     f.jta = ejb || /import\s+(jakarta|javax)\.transaction\.(Transactional|\*)/.test(f.text);
   }
   // Calls a method makes itself (a nested method keeps its own calls: it runs at another time).
+  // Flow skeletons read receivers by simple name (a field, `this`); the model now keeps a receiver expression.
+  const recvNameOf = (c) => (c.recv ? (c.recv.kind === 'name' ? c.recv.text.split('.').pop() : '(expr)') : null);
   const callsIn = (m) =>
-    (m.calls ?? []).filter((c) => c.recv).map((c) => ({ recv: c.recv, method: c.name, line: c.line }));
-  const VERB =
-    /^(create|retrieve|update|list|cancel|capture|confirm|refund|send|delete|post|put|patch|get|exchange|execute|call|publish|upload|download|invoke|search|convertAndSend)$|^(create|send|publish|upload|refund|charge|post|put)[A-Z]/;
-  // Only calls that change something outside make a seam; reads (get, list, retrieve, search) leave nothing behind.
-  const READ = /^(get|list|retrieve|search)$/;
-  const direct = (f, m) =>
-    callsIn(m)
-      .filter((c) => f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method))
-      .map((c) => ({ ...c, what: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` }));
+    (m.calls ?? []).filter((c) => c.recv).map((c) => ({ recv: recvNameOf(c), method: c.name, line: c.line }));
   const targets = (f, c) => {
     const t = f.fields.get(c.recv);
     return t ? implsOf(t).flatMap((g) => g.ix.methods.filter((m) => m.name === c.method).map((m) => ({ g, m }))) : [];
   };
-  const reach = (f, m, seen = new Set([m])) => {
-    for (const c of m.calls ?? [])
-      if (!c.recv || c.recv === 'this')
-        for (const n of f.ix.methods.filter(
-          (n) => n.name === c.name && !seen.has(n) && !(n.open > m.open && n.close < m.close),
-        )) {
-          seen.add(n);
-          reach(f, n, seen);
-        }
-    return [...seen];
-  };
-  // Outside calls a method reaches: its own, its same-class helpers', and up to two bean hops away.
-  const outsideOf = (f, m, depth = 2, seen = new Set()) => {
-    if (seen.has(m)) return [];
-    seen.add(m);
-    const res = [];
-    for (const r of reach(f, m)) {
-      for (const c of direct(f, r)) res.push({ line: c.line, what: c.what });
-      if (depth)
-        for (const c of callsIn(r))
-          for (const { g, m: t } of targets(f, c))
-            for (const d of outsideOf(g, t, depth - 1, seen))
-              res.push({ line: c.line, what: `${d.what} via ${g.name}.${t.name}` });
-    }
-    return res;
-  };
-  const savesOf = (f, m) =>
-    reach(f, m).flatMap((r) =>
-      callsIn(r)
-        .filter((c) => WRITE.test(c.method) && repoEntity.has(f.fields.get(c.recv)))
-        .map((c) => ({ line: c.line, what: `${repoEntity.get(f.fields.get(c.recv))} ${c.method}` })),
-    );
   const isTx = (f, m) =>
     !m.annotations.some((a) => NO_TX.test(a)) &&
     (m.annotations.some((a) => /^(Transactional|TransactionAttribute)\b/.test(a) && !/readOnly\s*=\s*true/.test(a)) ||
       (f.txClass && m.isPublic));
-  const enlisted = (f, what) => f.jta && /^JMS /.test(what);
-
-  const seams = [];
-  for (const f of files)
-    for (const m of f.ix.methods) {
-      if (!isTx(f, m)) continue;
-      const here = cite(f, m),
-        out = [],
-        span = reach(f, m);
-      const via = (r) => (r === m ? '' : ` in ${r.name}`);
-      for (const r of span)
-        for (const c of direct(f, r)) if (!enlisted(f, c.what)) out.push(`calls ${c.what} at :${c.line}${via(r)}`);
-      for (const r of span)
-        for (const c of callsIn(r))
-          for (const { g, m: t } of targets(f, c)) {
-            if (t.annotations.some((a) => ASYNC.test(a)))
-              out.push(`starts @Async ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g, t)})`);
-            else
-              for (const d of direct(g, t))
-                if (!enlisted(f, d.what) && !enlisted(g, d.what))
-                  out.push(`calls ${d.what} via ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g, t)})`);
-          }
-      if (out.length)
-        seams.push(
-          `OUTSIDE CALL IN TRANSACTION ${f.name}.${m.name} ${here}: ${[...new Set(out)].join('; ')}. If the transaction rolls back after this, the outside side stays done.`,
-        );
-      if (m.annotations.some((a) => /REQUIRES_NEW/.test(a)))
-        seams.push(`NEW TRANSACTION ${f.name}.${m.name} ${here}: commits on its own, even if the caller rolls back.`);
-      for (const n of f.ix.methods.filter(
-        (n) => n.name === 'afterCommit' && span.some((r) => n.open > r.open && n.close < r.close),
-      )) {
-        const then = callsIn(n).flatMap((c) =>
-          targets(f, c).map(
-            ({ g, m: t }) => `${g.name}.${t.name}${t.annotations.some((a) => ASYNC.test(a)) ? ' (@Async)' : ''}`,
-          ),
-        );
-        seams.push(
-          `AFTER COMMIT ${f.name}.${m.name} ${here}: afterCommit at :${n.start} runs ${then.join(', ') || 'code'} only once the transaction has committed; if that fails, the commit is not undone.`,
-        );
-      }
-    }
-  // Outside call first, then a database write, with no transaction around them: if the write fails, the outside side stays done.
-  for (const f of files)
-    for (const m of f.ix.methods) {
-      if (isTx(f, m) || !m.isPublic) continue;
-      const out = outsideOf(f, m).filter((o) => o.line >= m.start && o.line <= m.end),
-        saves = savesOf(f, m).filter((x) => x.line >= m.start && x.line <= m.end);
-      if (!out.length || !saves.length || Math.min(...out.map((o) => o.line)) > Math.max(...saves.map((x) => x.line)))
-        continue;
-      seams.push(
-        `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${f.name}.${m.name} ${cite(f, m)}: ${[...new Set(out.map((o) => `${o.what} at :${o.line}`))].slice(0, 3).join('; ')}; then ${[...new Set(saves.map((x) => `${x.what} at :${x.line}`))].slice(0, 3).join('; ')}. If a save fails, the outside side stays done.`,
-      );
-    }
-  for (const f of files)
-    for (const m of f.ix.methods) {
-      if (m.annotations.some((a) => /^Observes(Async)?\b.*AFTER_(SUCCESS|COMPLETION)/.test(a)))
-        seams.push(
-          `AFTER-COMMIT OBSERVER ${f.name}.${m.name} ${cite(f, m)}: runs after the firing transaction commits; if it fails, the commit is not undone.`,
-        );
-      if (m.annotations.some((a) => /^TransactionalEventListener\b/.test(a)))
-        seams.push(
-          `AFTER-COMMIT LISTENER ${f.name}.${m.name} ${cite(f, m)}: runs after the publishing transaction commits.`,
-        );
-      if (!m.annotations.some((a) => JOB.test(a))) continue;
-      const dels = callsIn(m).filter((c) => /^delete/.test(c.method) && repoEntity.has(f.fields.get(c.recv)));
-      for (const c of dels)
-        seams.push(
-          `JOB DELETES ${repoEntity.get(f.fields.get(c.recv))} rows ${f.name}.${m.name} ${cite(f, m)} (${c.method} at :${c.line}): check whether an outside callback can still arrive for a deleted row.`,
-        );
-    }
 
   // Lifecycle: every place each status value is set, by method; conditional updates vs plain saves.
   const statusEnums = new Map(enums.filter((e) => /(Status|State)$/.test(e.name)).map((e) => [e.name, e]));
@@ -435,7 +331,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     seen.add(m);
     const calls = callsIn(m);
     const local = (m.calls ?? [])
-      .filter((c) => !c.recv || c.recv === 'this')
+      .filter((c) => !c.recv || (c.recv.kind === 'name' && c.recv.text === 'this'))
       .map((c) => ({ name: c.name, line: c.line }));
     const steps = [];
     for (const c of calls) {
@@ -483,10 +379,14 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   };
   const entries = [];
   for (const e of endpoints.filter((e) => /POST|PUT|PATCH|DELETE|ANY/.test(e.verb))) {
-    const f = files.find((x) => x.p === e.file),
-      // The mapping annotation sits inside the method's own range: find it by name, then by containment.
-      name = e.handler.split('.').pop(),
-      m = f && f.ix.methods.find((mm) => mm.name === name && mm.start <= e.line && e.line <= mm.end);
+    // Endpoint facts carry their citation (`path:start-end#handler`), not separate file/line fields.
+    const cite = e.evidence?.[0] ?? '',
+      file = cite.replace(/[:#].*$/, ''),
+      start = Number(/^[^:]+:(\d+)/.exec(cite)?.[1] ?? 0),
+      end = Number(/^[^:]+:\d+-(\d+)/.exec(cite)?.[1] ?? start),
+      name = (e.handler ?? '').split('.').pop(),
+      f = files.find((x) => x.p === file),
+      m = f && f.ix.methods.find((mm) => mm.name === name && (!start || (mm.start <= start && start <= mm.end)));
     if (m) entries.push({ label: `${e.verb} ${e.path}`, f, m });
   }
   for (const f of files)
@@ -532,7 +432,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     perFile[x.file] = (perFile[x.file] ?? 0) + 1;
     picked.push(x);
   }
-  return { seams, lifecycle, schedules, flows: picked.map((x) => x.line) };
+  return { lifecycle, schedules, flows: picked.map((x) => x.line) };
 }
 
 // --- Deployables: a repo can hold several apps; the map covers the primary one ----------

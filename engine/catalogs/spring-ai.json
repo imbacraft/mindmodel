@@ -1,0 +1,41 @@
+{
+  "id": "spring-ai",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.ai:spring-ai-model",
+      "org.springframework.ai:spring-ai-client-chat",
+      "org.springframework.ai:spring-ai-openai",
+      "org.springframework.ai:spring-ai-starter-model-openai"
+    ],
+    "imports": [
+      "org.springframework.ai."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.ai.tool.annotation.Tool"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.ai.tool.annotation.ToolParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

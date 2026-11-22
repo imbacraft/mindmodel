@@ -1,0 +1,432 @@
+{
+  "id": "jdk",
+  "version": 1,
+  "when": {},
+  "annotations": [],
+  "signatures": [
+    {
+      "type": "java.util.Collection",
+      "typeParams": [
+        "E"
+      ],
+      "methods": {
+        "add": "boolean",
+        "addAll": "boolean",
+        "remove": "boolean",
+        "removeIf": "boolean",
+        "contains": "boolean",
+        "containsAll": "boolean",
+        "isEmpty": "boolean",
+        "size": "int",
+        "iterator": "java.util.Iterator<E>",
+        "stream": "java.util.stream.Stream<E>",
+        "parallelStream": "java.util.stream.Stream<E>",
+        "forEach": "void",
+        "toArray": "Object",
+        "clear": "void",
+        "retainAll": "boolean"
+      }
+    },
+    {
+      "type": "java.util.List",
+      "typeParams": [
+        "E"
+      ],
+      "supers": [
+        "java.util.Collection"
+      ],
+      "methods": {
+        "get": "E",
+        "set": "E",
+        "add": "boolean",
+        "remove": "E",
+        "indexOf": "int",
+        "lastIndexOf": "int",
+        "subList": "java.util.List<E>",
+        "of": "java.util.List<E>",
+        "copyOf": "java.util.List<E>",
+        "sort": "void",
+        "replaceAll": "void",
+        "listIterator": "java.util.ListIterator<E>"
+      }
+    },
+    {
+      "type": "java.util.ArrayList",
+      "typeParams": [
+        "E"
+      ],
+      "supers": [
+        "java.util.List"
+      ],
+      "methods": {}
+    },
+    {
+      "type": "java.util.LinkedList",
+      "typeParams": [
+        "E"
+      ],
+      "supers": [
+        "java.util.List"
+      ],
+      "methods": {}
+    },
+    {
+      "type": "java.util.Set",
+      "typeParams": [
+        "E"
+      ],
+      "supers": [
+        "java.util.Collection"
+      ],
+      "methods": {
+        "of": "java.util.Set<E>",
+        "copyOf": "java.util.Set<E>",
+        "add": "boolean",
+        "contains": "boolean"
+      }
+    },
+    {
+      "type": "java.util.HashSet",
+      "typeParams": [
+        "E"
+      ],
+      "supers": [
+        "java.util.Set"
+      ],
+      "methods": {}
+    },
+    {
+      "type": "java.util.Map",
+      "typeParams": [
+        "K",
+        "V"
+      ],
+      "methods": {
+        "get": "V",
+        "getOrDefault": "V",
+        "put": "V",
+        "putIfAbsent": "V",
+        "remove": "V",
+        "compute": "V",
+        "computeIfAbsent": "V",
+        "computeIfPresent": "V",
+        "merge": "V",
+        "keySet": "java.util.Set<K>",
+        "values": "java.util.Collection<V>",
+        "entrySet": "java.util.Set",
+        "containsKey": "boolean",
+        "containsValue": "boolean",
+        "isEmpty": "boolean",
+        "size": "int",
+        "forEach": "void",
+        "of": "java.util.Map<K,V>",
+        "entry": "java.util.Map.Entry<K,V>",
+        "clear": "void",
+        "putAll": "void"
+      }
+    },
+    {
+      "type": "java.util.HashMap",
+      "typeParams": [
+        "K",
+        "V"
+      ],
+      "supers": [
+        "java.util.Map"
+      ],
+      "methods": {}
+    },
+    {
+      "type": "java.util.Optional",
+      "typeParams": [
+        "T"
+      ],
+      "methods": {
+        "of": "java.util.Optional<T>",
+        "ofNullable": "java.util.Optional<T>",
+        "empty": "java.util.Optional<T>",
+        "get": "T",
+        "orElse": "T",
+        "orElseGet": "T",
+        "orElseThrow": "T",
+        "map": "java.util.Optional<T>",
+        "flatMap": "java.util.Optional<T>",
+        "filter": "java.util.Optional<T>",
+        "isPresent": "boolean",
+        "isEmpty": "boolean",
+        "ifPresent": "void",
+        "ifPresentOrElse": "void",
+        "stream": "java.util.stream.Stream<T>",
+        "or": "java.util.Optional<T>"
+      }
+    },
+    {
+      "type": "java.util.Iterator",
+      "typeParams": [
+        "E"
+      ],
+      "methods": {
+        "next": "E",
+        "hasNext": "boolean",
+        "remove": "void",
+        "forEachRemaining": "void"
+      }
+    },
+    {
+      "type": "java.lang.Iterable",
+      "typeParams": [
+        "E"
+      ],
+      "methods": {
+        "iterator": "java.util.Iterator<E>",
+        "forEach": "void"
+      }
+    },
+    {
+      "type": "java.util.stream.Stream",
+      "typeParams": [
+        "E"
+      ],
+      "methods": {
+        "filter": "java.util.stream.Stream<E>",
+        "map": "java.util.stream.Stream<E>",
+        "flatMap": "java.util.stream.Stream<E>",
+        "distinct": "java.util.stream.Stream<E>",
+        "sorted": "java.util.stream.Stream<E>",
+        "limit": "java.util.stream.Stream<E>",
+        "skip": "java.util.stream.Stream<E>",
+        "peek": "java.util.stream.Stream<E>",
+        "forEach": "void",
+        "forEachOrdered": "void",
+        "count": "long",
+        "findFirst": "java.util.Optional<E>",
+        "findAny": "java.util.Optional<E>",
+        "anyMatch": "boolean",
+        "allMatch": "boolean",
+        "noneMatch": "boolean",
+        "min": "java.util.Optional<E>",
+        "max": "java.util.Optional<E>",
+        "toList": "java.util.List<E>",
+        "reduce": "java.util.Optional<E>",
+        "iterator": "java.util.Iterator<E>"
+      },
+      "byArg": {
+        "collect": [
+          {
+            "match": "toList|toUnmodifiableList|toCollection",
+            "returns": "java.util.List<E>"
+          },
+          {
+            "match": "toSet|toUnmodifiableSet",
+            "returns": "java.util.Set<E>"
+          },
+          {
+            "match": "toMap|groupingBy|partitioningBy",
+            "returns": "java.util.Map"
+          },
+          {
+            "match": "joining",
+            "returns": "java.lang.String"
+          },
+          {
+            "match": "counting|summing|averaging",
+            "returns": "java.lang.Long"
+          },
+          {
+            "match": "",
+            "returns": "Object"
+          }
+        ]
+      }
+    },
+    {
+      "type": "java.util.stream.Collectors",
+      "methods": {
+        "toList": "java.util.List",
+        "toSet": "java.util.Set",
+        "toMap": "java.util.Map",
+        "groupingBy": "java.util.Map",
+        "joining": "java.lang.String",
+        "counting": "java.lang.Long",
+        "summingLong": "java.lang.Long",
+        "summingInt": "java.lang.Integer",
+        "averagingInt": "java.lang.Double"
+      }
+    },
+    {
+      "type": "java.lang.String",
+      "methods": {
+        "trim": "java.lang.String",
+        "strip": "java.lang.String",
+        "toLowerCase": "java.lang.String",
+        "toUpperCase": "java.lang.String",
+        "substring": "java.lang.String",
+        "replace": "java.lang.String",
+        "replaceAll": "java.lang.String",
+        "replaceFirst": "java.lang.String",
+        "concat": "java.lang.String",
+        "repeat": "java.lang.String",
+        "format": "java.lang.String",
+        "valueOf": "java.lang.String",
+        "join": "java.lang.String",
+        "intern": "java.lang.String",
+        "indent": "java.lang.String",
+        "translateEscapes": "java.lang.String",
+        "formatted": "java.lang.String",
+        "length": "int",
+        "charAt": "char",
+        "indexOf": "int",
+        "lastIndexOf": "int",
+        "compareTo": "int",
+        "hashCode": "int",
+        "isBlank": "boolean",
+        "isEmpty": "boolean",
+        "equals": "boolean",
+        "equalsIgnoreCase": "boolean",
+        "contains": "boolean",
+        "startsWith": "boolean",
+        "endsWith": "boolean",
+        "matches": "boolean",
+        "split": "String[]",
+        "toCharArray": "char[]",
+        "getBytes": "byte[]",
+        "chars": "java.util.stream.IntStream",
+        "lines": "java.util.stream.Stream"
+      }
+    },
+    {
+      "type": "java.lang.StringBuilder",
+      "methods": {
+        "append": "java.lang.StringBuilder",
+        "insert": "java.lang.StringBuilder",
+        "delete": "java.lang.StringBuilder",
+        "deleteCharAt": "java.lang.StringBuilder",
+        "reverse": "java.lang.StringBuilder",
+        "replace": "java.lang.StringBuilder",
+        "toString": "java.lang.String",
+        "length": "int",
+        "charAt": "char",
+        "setLength": "void"
+      }
+    },
+    {
+      "type": "java.lang.Object",
+      "methods": {
+        "toString": "java.lang.String",
+        "equals": "boolean",
+        "hashCode": "int",
+        "getClass": "java.lang.Class"
+      }
+    },
+    {
+      "type": "java.time.LocalDate",
+      "methods": {
+        "now": "java.time.LocalDate",
+        "parse": "java.time.LocalDate",
+        "of": "java.time.LocalDate",
+        "plusDays": "java.time.LocalDate",
+        "plusWeeks": "java.time.LocalDate",
+        "plusMonths": "java.time.LocalDate",
+        "plusYears": "java.time.LocalDate",
+        "minusDays": "java.time.LocalDate",
+        "minusMonths": "java.time.LocalDate",
+        "atStartOfDay": "java.time.LocalDateTime",
+        "atTime": "java.time.LocalDateTime",
+        "format": "java.lang.String",
+        "toString": "java.lang.String",
+        "getYear": "int",
+        "getMonthValue": "int",
+        "getDayOfMonth": "int",
+        "getDayOfWeek": "java.time.DayOfWeek",
+        "isBefore": "boolean",
+        "isAfter": "boolean",
+        "isEqual": "boolean",
+        "withDayOfMonth": "java.time.LocalDate",
+        "toEpochDay": "long"
+      }
+    },
+    {
+      "type": "java.time.LocalDateTime",
+      "methods": {
+        "now": "java.time.LocalDateTime",
+        "parse": "java.time.LocalDateTime",
+        "of": "java.time.LocalDateTime",
+        "plusDays": "java.time.LocalDateTime",
+        "plusHours": "java.time.LocalDateTime",
+        "plusMinutes": "java.time.LocalDateTime",
+        "plusSeconds": "java.time.LocalDateTime",
+        "plusMonths": "java.time.LocalDateTime",
+        "minusDays": "java.time.LocalDateTime",
+        "minusHours": "java.time.LocalDateTime",
+        "minusMinutes": "java.time.LocalDateTime",
+        "toLocalDate": "java.time.LocalDate",
+        "toLocalTime": "java.time.LocalTime",
+        "toInstant": "java.time.Instant",
+        "atZone": "java.time.ZonedDateTime",
+        "format": "java.lang.String",
+        "toString": "java.lang.String",
+        "isBefore": "boolean",
+        "isAfter": "boolean",
+        "withNano": "java.time.LocalDateTime",
+        "truncatedTo": "java.time.LocalDateTime"
+      }
+    },
+    {
+      "type": "java.time.Instant",
+      "methods": {
+        "now": "java.time.Instant",
+        "parse": "java.time.Instant",
+        "ofEpochMilli": "java.time.Instant",
+        "ofEpochSecond": "java.time.Instant",
+        "plusSeconds": "java.time.Instant",
+        "plusMillis": "java.time.Instant",
+        "minusSeconds": "java.time.Instant",
+        "toEpochMilli": "long",
+        "getEpochSecond": "long",
+        "atZone": "java.time.ZonedDateTime",
+        "isBefore": "boolean",
+        "isAfter": "boolean",
+        "toString": "java.lang.String"
+      }
+    },
+    {
+      "type": "java.time.Duration",
+      "methods": {
+        "ofDays": "java.time.Duration",
+        "ofHours": "java.time.Duration",
+        "ofMinutes": "java.time.Duration",
+        "ofSeconds": "java.time.Duration",
+        "ofMillis": "java.time.Duration",
+        "between": "java.time.Duration",
+        "toMillis": "long",
+        "toSeconds": "long",
+        "toMinutes": "long",
+        "plus": "java.time.Duration",
+        "minus": "java.time.Duration",
+        "getSeconds": "long",
+        "isNegative": "boolean",
+        "negated": "java.time.Duration"
+      }
+    },
+    {
+      "type": "java.time.ZonedDateTime",
+      "methods": {
+        "now": "java.time.ZonedDateTime",
+        "toLocalDate": "java.time.LocalDate",
+        "toLocalDateTime": "java.time.LocalDateTime",
+        "toInstant": "java.time.Instant",
+        "plusDays": "java.time.ZonedDateTime",
+        "format": "java.lang.String",
+        "toString": "java.lang.String"
+      }
+    },
+    {
+      "type": "java.time.format.DateTimeFormatter",
+      "methods": {
+        "ofPattern": "java.time.format.DateTimeFormatter",
+        "ISO_DATE": "java.time.format.DateTimeFormatter",
+        "withZone": "java.time.format.DateTimeFormatter"
+      }
+    }
+  ]
+}

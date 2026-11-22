@@ -1,0 +1,664 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel facts",
+  "description": "The scanner's output. Version 2: endpoints carry the provenance envelope. Families not yet ported (entities, state, runtime, background, boot, seams, lifecycle, schedules, flows, externals, frontend, views, docs, packages, build, git, inventory) are permissive here on purpose; each is ported by the slice named in its description and becomes strict then.",
+  "type": "object",
+  "required": [
+    "version",
+    "root",
+    "scannedAt",
+    "entities",
+    "endpoints",
+    "coverage"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "version": {
+      "const": 2
+    },
+    "root": {
+      "type": "string"
+    },
+    "scannedAt": {
+      "type": "string"
+    },
+    "endpoints": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/endpoint"
+      }
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "entities": {
+      "type": "object",
+      "description": "Ported in slice 3 (entities and tenancy)."
+    },
+    "state": {
+      "type": "object",
+      "description": "Ported in slice 2 (resolution, transactions, outside calls, state)."
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Ported in slice 2 (interceptors) and slice 4 (security)."
+    },
+    "background": {
+      "type": "object",
+      "description": "Ported in slice 6 (background, lifecycles, boot, flows)."
+    },
+    "boot": {
+      "type": "object",
+      "description": "Ported in slice 6."
+    },
+    "seams": {
+      "type": "array",
+      "description": "Ported in slice 2 (outside calls)."
+    },
+    "lifecycle": {
+      "type": "array",
+      "description": "Ported in slice 6."
+    },
+    "schedules": {
+      "type": "array",
+      "description": "Ported in slice 6."
+    },
+    "flows": {
+      "type": "array",
+      "description": "Ported in slice 6 (channels) and slice 5 (the system map)."
+    },
+    "externals": {
+      "type": "object",
+      "description": "Ported in slice 1 (the build reader) and slice 2."
+    },
+    "frontend": {
+      "type": "object",
+      "description": "Ported in slice 10 (frontend grammar); regexes until then."
+    },
+    "views": {
+      "type": "object",
+      "description": "Ported in slice 6."
+    },
+    "tenancy": {
+      "type": "object",
+      "description": "Ported in slice 3."
+    },
+    "inventory": {
+      "type": "object",
+      "description": "Stays in the scanner: file counts and sizes."
+    },
+    "docs": {
+      "type": "array",
+      "description": "Stays in the scanner."
+    },
+    "packages": {
+      "type": "array",
+      "description": "Stays in the scanner."
+    },
+    "build": {
+      "type": "array",
+      "description": "Replaced by evidence/build.mjs in slice 1."
+    },
+    "git": {
+      "type": "object",
+      "description": "Stays in the scanner (activity.mjs)."
+    },
+    "transactions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/transaction"
+      },
+      "description": "Slice 2: transactional methods and the boundaries that leak (kinds other than `transactional`)."
+    },
+    "outsideCalls": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/outsideCall"
+      },
+      "description": "Slice 2: calls to outside clients (HTTP, mail, messaging)."
+    },
+    "stateWrites": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stateWrite"
+      },
+      "description": "Slice 2: repository mutations, with the entity they touch."
+    },
+    "stateCaches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stateCache"
+      },
+      "description": "Slice 2: cache annotations on methods."
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "confidence",
+        "evidence",
+        "why",
+        "verb",
+        "path",
+        "handler",
+        "handlerFqn",
+        "file",
+        "line",
+        "rest"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^endpoint:"
+        },
+        "family": {
+          "const": "endpoint"
+        },
+        "confidence": {
+          "enum": [
+            "resolved",
+            "inferred",
+            "unresolved"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "why": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "verb": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "HEAD",
+            "OPTIONS",
+            "ANY",
+            "STOMP"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "handler": {
+          "type": "string"
+        },
+        "handlerFqn": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "rest": {
+          "type": "boolean"
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rates",
+        "unknownAnnotations",
+        "unknownBaseClasses",
+        "uncataloguedDependencies",
+        "uncataloguedDependenciesTotal",
+        "unparsedLanguages",
+        "generatedSources",
+        "degradedFiles",
+        "line"
+      ],
+      "properties": {
+        "rates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rate"
+          }
+        },
+        "unknownAnnotations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/unknownAnnotation"
+          }
+        },
+        "degradedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "line": {
+          "type": "string"
+        },
+        "unknownBaseClasses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/unknownBaseClass"
+          }
+        },
+        "uncataloguedDependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uncataloguedDependency"
+          }
+        },
+        "uncataloguedDependenciesTotal": {
+          "type": "integer"
+        },
+        "unparsedLanguages": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kotlin",
+            "groovy",
+            "scala"
+          ],
+          "properties": {
+            "kotlin": {
+              "type": "integer"
+            },
+            "groovy": {
+              "type": "integer"
+            },
+            "scala": {
+              "type": "integer"
+            }
+          }
+        },
+        "generatedSources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/generatedSource"
+          }
+        }
+      }
+    },
+    "rate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "numerator",
+        "denominator",
+        "percent"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "numerator": {
+          "type": "integer"
+        },
+        "denominator": {
+          "type": "integer"
+        },
+        "percent": {
+          "type": "integer"
+        }
+      }
+    },
+    "unknownAnnotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "count",
+        "types",
+        "samples"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "types": {
+          "type": "integer"
+        }
+      }
+    },
+    "unknownBaseClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "count",
+        "samples"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "uncataloguedDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coordinate",
+        "files"
+      ],
+      "properties": {
+        "coordinate": {
+          "type": "string"
+        },
+        "files": {
+          "type": "integer"
+        },
+        "scope": {
+          "type": "string"
+        }
+      }
+    },
+    "generatedSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "plugin",
+        "packages"
+      ],
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "plugin": {
+          "type": "string"
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "confidence",
+        "evidence",
+        "why",
+        "kind",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "family": {
+          "const": "transaction"
+        },
+        "confidence": {
+          "enum": [
+            "parsed",
+            "resolved",
+            "inferred",
+            "unresolved"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "enum": [
+            "transactional",
+            "requires-new",
+            "after-commit",
+            "outside-in-transaction",
+            "outside-then-save"
+          ]
+        },
+        "mechanism": {
+          "enum": [
+            "annotation",
+            "observer",
+            "synchronization"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "outside": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "saves": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "outsideCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "confidence",
+        "evidence",
+        "why",
+        "kind",
+        "client",
+        "method",
+        "target"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "family": {
+          "const": "outside-call"
+        },
+        "confidence": {
+          "enum": [
+            "parsed",
+            "resolved",
+            "inferred",
+            "unresolved"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "enum": [
+            "HTTP",
+            "mail",
+            "Kafka",
+            "RabbitMQ",
+            "JMS",
+            "SQS",
+            "outside"
+          ]
+        },
+        "client": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        }
+      }
+    },
+    "stateWrite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "confidence",
+        "evidence",
+        "why",
+        "repository",
+        "operation",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "family": {
+          "const": "state-write"
+        },
+        "confidence": {
+          "enum": [
+            "parsed",
+            "resolved",
+            "inferred",
+            "unresolved"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "entity": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        }
+      }
+    },
+    "stateCache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "confidence",
+        "evidence",
+        "why",
+        "action",
+        "method"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "family": {
+          "const": "state-cache"
+        },
+        "confidence": {
+          "enum": [
+            "parsed",
+            "resolved",
+            "inferred",
+            "unresolved"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "action": {
+          "enum": [
+            "read",
+            "write",
+            "evict"
+          ]
+        },
+        "method": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

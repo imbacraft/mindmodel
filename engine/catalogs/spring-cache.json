@@ -1,0 +1,81 @@
+{
+  "id": "spring-cache",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework:spring-context",
+      "org.springframework.boot:spring-boot-starter-cache"
+    ],
+    "imports": [
+      "org.springframework.cache.annotation."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.cache.annotation.Cacheable"
+      ],
+      "means": "cache",
+      "on": [
+        "method",
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.cache.annotation.CacheEvict"
+      ],
+      "means": "cache",
+      "on": [
+        "method",
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.cache.annotation.CachePut"
+      ],
+      "means": "cache",
+      "on": [
+        "method",
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.cache.annotation.Caching"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.cache.annotation.CacheConfig"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.cache.annotation.EnableCaching"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

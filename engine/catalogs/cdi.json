@@ -1,0 +1,324 @@
+{
+  "id": "cdi",
+  "version": 1,
+  "when": {
+    "deps": [
+      "jakarta.platform:jakarta.jakartaee-api",
+      "jakarta.enterprise:jakarta.enterprise.cdi-api"
+    ],
+    "imports": [
+      "jakarta.enterprise.",
+      "jakarta.inject."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "jakarta.enterprise.context.ApplicationScoped",
+        "javax.enterprise.context.ApplicationScoped"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.context.RequestScoped",
+        "javax.enterprise.context.RequestScoped"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.context.SessionScoped",
+        "javax.enterprise.context.SessionScoped"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.context.ConversationScoped",
+        "javax.enterprise.context.ConversationScoped"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.context.Dependent",
+        "javax.enterprise.context.Dependent"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.context.Singleton",
+        "javax.enterprise.context.Singleton"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.context.TransactionScoped",
+        "javax.enterprise.context.TransactionScoped"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.Produces",
+        "javax.enterprise.inject.Produces"
+      ],
+      "means": "publisher",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.Alternative",
+        "javax.enterprise.inject.Alternative"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.Specializes",
+        "javax.enterprise.inject.Specializes"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.Vetoed",
+        "javax.enterprise.inject.Vetoed"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.Default",
+        "javax.enterprise.inject.Default"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.Any",
+        "javax.enterprise.inject.Any"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.New",
+        "javax.enterprise.inject.New"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.util.Nonbinding",
+        "javax.enterprise.util.Nonbinding"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.event.Observes",
+        "javax.enterprise.event.Observes"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.event.ObservesAsync",
+        "javax.enterprise.event.ObservesAsync"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.enterprise.inject.spi.Inject",
+        "javax.enterprise.inject.spi.Inject"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.inject.Inject",
+        "javax.inject.Inject"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.inject.Named",
+        "javax.inject.Named"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.inject.Singleton",
+        "javax.inject.Singleton"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.inject.Qualifier",
+        "javax.inject.Qualifier"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.inject.Scope",
+        "javax.inject.Scope"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.decorator.Decorator",
+        "javax.decorator.Decorator"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.interceptor.Interceptor",
+        "javax.interceptor.Interceptor"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.interceptor.InterceptorBinding",
+        "javax.interceptor.InterceptorBinding"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1019 @@
+{
+  "id": "jpa",
+  "version": 1,
+  "when": {
+    "deps": [
+      "jakarta.persistence:jakarta.persistence-api",
+      "javax.persistence:javax.persistence-api",
+      "org.springframework.boot:spring-boot-starter-data-jpa",
+      "org.hibernate.orm:hibernate-core",
+      "org.hibernate:hibernate-core"
+    ],
+    "imports": [
+      "jakarta.persistence.",
+      "javax.persistence."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "jakarta.persistence.Entity",
+        "javax.persistence.Entity"
+      ],
+      "means": "entity",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Table",
+        "javax.persistence.Table"
+      ],
+      "means": "table",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.SecondaryTable",
+        "javax.persistence.SecondaryTable"
+      ],
+      "means": "table",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Embeddable",
+        "javax.persistence.Embeddable"
+      ],
+      "means": "embeddable",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MappedSuperclass",
+        "javax.persistence.MappedSuperclass"
+      ],
+      "means": "mapped-superclass",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Id",
+        "javax.persistence.Id"
+      ],
+      "means": "id",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.EmbeddedId",
+        "javax.persistence.EmbeddedId"
+      ],
+      "means": "id",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Version",
+        "javax.persistence.Version"
+      ],
+      "means": "version",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Enumerated",
+        "javax.persistence.Enumerated"
+      ],
+      "means": "enumerated",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.JoinColumn",
+        "javax.persistence.JoinColumn"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.JoinTable",
+        "javax.persistence.JoinTable"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ManyToOne",
+        "javax.persistence.ManyToOne"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.OneToMany",
+        "javax.persistence.OneToMany"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ManyToMany",
+        "javax.persistence.ManyToMany"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.OneToOne",
+        "javax.persistence.OneToOne"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ElementCollection",
+        "javax.persistence.ElementCollection"
+      ],
+      "means": "relation",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedQuery",
+        "javax.persistence.NamedQuery"
+      ],
+      "means": "repository-query",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedQueries",
+        "javax.persistence.NamedQueries"
+      ],
+      "means": "repository-query",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Column",
+        "javax.persistence.Column"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Basic",
+        "javax.persistence.Basic"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Lob",
+        "javax.persistence.Lob"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Temporal",
+        "javax.persistence.Temporal"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Transient",
+        "javax.persistence.Transient"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Access",
+        "javax.persistence.Access"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.OrderBy",
+        "javax.persistence.OrderBy"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.OrderColumn",
+        "javax.persistence.OrderColumn"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MapsId",
+        "javax.persistence.MapsId"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Convert",
+        "javax.persistence.Convert"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Converter",
+        "javax.persistence.Converter"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.GeneratedValue",
+        "javax.persistence.GeneratedValue"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.SequenceGenerator",
+        "javax.persistence.SequenceGenerator"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.TableGenerator",
+        "javax.persistence.TableGenerator"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Inheritance",
+        "javax.persistence.Inheritance"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.DiscriminatorColumn",
+        "javax.persistence.DiscriminatorColumn"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.DiscriminatorValue",
+        "javax.persistence.DiscriminatorValue"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PersistenceContext",
+        "javax.persistence.PersistenceContext"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PersistenceUnit",
+        "javax.persistence.PersistenceUnit"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.EntityListeners",
+        "javax.persistence.EntityListeners"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PrePersist",
+        "javax.persistence.PrePersist"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PostPersist",
+        "javax.persistence.PostPersist"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PreUpdate",
+        "javax.persistence.PreUpdate"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PostUpdate",
+        "javax.persistence.PostUpdate"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PreRemove",
+        "javax.persistence.PreRemove"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PostRemove",
+        "javax.persistence.PostRemove"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PostLoad",
+        "javax.persistence.PostLoad"
+      ],
+      "means": "listener",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Embedded",
+        "javax.persistence.Embedded"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Cacheable",
+        "javax.persistence.Cacheable"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.DiscriminatorOptions",
+        "javax.persistence.DiscriminatorOptions"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ForeignKey",
+        "javax.persistence.ForeignKey"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Index",
+        "javax.persistence.Index"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.UniqueConstraint",
+        "javax.persistence.UniqueConstraint"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PrimaryKeyJoinColumn",
+        "javax.persistence.PrimaryKeyJoinColumn"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.CollectionTable",
+        "javax.persistence.CollectionTable"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.AssociationOverride",
+        "javax.persistence.AssociationOverride"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.AssociationOverrides",
+        "javax.persistence.AssociationOverrides"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.AttributeOverride",
+        "javax.persistence.AttributeOverride"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.AttributeOverrides",
+        "javax.persistence.AttributeOverrides"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MapKey",
+        "javax.persistence.MapKey"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MapKeyClass",
+        "javax.persistence.MapKeyClass"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MapKeyColumn",
+        "javax.persistence.MapKeyColumn"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MapKeyEnumerated",
+        "javax.persistence.MapKeyEnumerated"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.MapKeyJoinColumn",
+        "javax.persistence.MapKeyJoinColumn"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.QueryHint",
+        "javax.persistence.QueryHint"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.Lock",
+        "javax.persistence.Lock"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.PessimisticLock",
+        "javax.persistence.PessimisticLock"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.OptimisticLock",
+        "javax.persistence.OptimisticLock"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedEntityGraph",
+        "javax.persistence.NamedEntityGraph"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedEntityGraphs",
+        "javax.persistence.NamedEntityGraphs"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedNativeQuery",
+        "javax.persistence.NamedNativeQuery"
+      ],
+      "means": "repository-query",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedNativeQueries",
+        "javax.persistence.NamedNativeQueries"
+      ],
+      "means": "repository-query",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.NamedStoredProcedureQuery",
+        "javax.persistence.NamedStoredProcedureQuery"
+      ],
+      "means": "repository-query",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.StoredProcedureParameter",
+        "javax.persistence.StoredProcedureParameter"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.EntityResult",
+        "javax.persistence.EntityResult"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.FieldResult",
+        "javax.persistence.FieldResult"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ConstructorResult",
+        "javax.persistence.ConstructorResult"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ColumnResult",
+        "javax.persistence.ColumnResult"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.SqlResultSetMapping",
+        "javax.persistence.SqlResultSetMapping"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.SqlResultSetMappings",
+        "javax.persistence.SqlResultSetMappings"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ExcludeSuperclassListeners",
+        "javax.persistence.ExcludeSuperclassListeners"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.persistence.ExcludeDefaultListeners",
+        "javax.persistence.ExcludeDefaultListeners"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "type": "jakarta.persistence.EntityManager",
+      "methods": [
+        "persist",
+        "merge",
+        "remove",
+        "flush"
+      ],
+      "means": "state-write",
+      "kind": "entity-manager"
+    },
+    {
+      "type": "javax.persistence.EntityManager",
+      "methods": [
+        "persist",
+        "merge",
+        "remove",
+        "flush"
+      ],
+      "means": "state-write",
+      "kind": "entity-manager"
+    }
+  ]
+}

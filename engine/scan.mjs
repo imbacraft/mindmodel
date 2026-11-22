@@ -7,7 +7,19 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { javaFacts, bootFacts, deployables } from './deep.mjs';
 import { git, gitWindow } from './activity.mjs';
-import { index } from './java.mjs';
+import { index } from './syntax/java.mjs';
+import { buildModel } from './model/model.mjs';
+import { bindCalls } from './model/calls.mjs';
+import { loadCatalogs, selectForModel, signatureIndex } from './catalogs/catalog.mjs';
+import { extractEndpoints } from './extract/endpoints.mjs';
+import { extractOutside } from './extract/outside.mjs';
+import { extractState } from './extract/state.mjs';
+import { extractTransactions } from './extract/transactions.mjs';
+import { coverage } from './checks/coverage.mjs';
+import { coordinatesOf, readBuild } from './evidence/build.mjs';
+
+// The shipped catalogs are read once per process; a project catalog is merged here when it lands.
+const CATALOGS = loadCatalogs();
 
 const IGNORE = new Set([
   '.git',
@@ -99,20 +111,6 @@ const JOB = new RegExp(
     'Observes',
   ].join('|')})$`,
 );
-const JAXRS_VERB = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)$/;
-const mappingPath = (args) => {
-  const m = /(?:value|path)?\s*=?\s*\{?\s*"([^"]*)"/.exec(args ?? '');
-  return m ? m[1] : '';
-};
-const VERBS = {
-  GetMapping: 'GET',
-  PostMapping: 'POST',
-  PutMapping: 'PUT',
-  DeleteMapping: 'DELETE',
-  PatchMapping: 'PATCH',
-  RequestMapping: 'ANY',
-  MessageMapping: 'STOMP',
-};
 
 // The event a CDI observer takes; @Initialized(ApplicationScoped.class) means it runs at startup.
 const observerType = (param) =>
@@ -137,38 +135,25 @@ export function parseJava(text, ix = index(text)) {
   };
   const table = /name\s*=\s*"([^"]+)"/.exec(argsOf('Table'));
   if (table) r.table = table[1];
-  r.basePath = mappingPath(argsOf('RequestMapping') || argsOf('Path'));
-  if (has('ApplicationPath')) r.appPath = mappingPath(argsOf('ApplicationPath'));
-  r.mappings = [];
   r.fields = [];
   r.scheduled = [];
   r.views = [];
 
   for (const method of ix.methods) {
-    for (const a of method.ann) {
-      const verb = VERBS[a.name];
-      if (verb) {
-        const rm = /RequestMethod\.(\w+)/.exec(a.args);
-        r.mappings.push({ verb: rm ? rm[1] : verb, path: mappingPath(a.args), line: a.line, method: method.name });
-      } else if (JAXRS_VERB.test(a.name)) {
-        // A JAX-RS method's own @Path sits in the same method's annotations, so no lookahead window is needed.
-        const p = method.ann.find((x) => x.name === 'Path');
-        r.mappings.push({ verb: a.name, path: p ? mappingPath(p.args) : '', line: a.line, method: method.name });
-      } else if (JOB.test(a.name)) {
+    for (const a of method.ann)
+      if (JOB.test(a.name))
         r.scheduled.push({
           kind: a.name,
           args: (a.args ? `(${a.args})` : '').trim().slice(0, 120),
           line: a.line,
+          method: method.name,
         });
-      }
-    }
     // CDI observers name their event on the parameter, not on the method.
     for (const p of method.params)
       for (const a of p.ann)
         if (/^(Observes|ObservesAsync)$/.test(a.name))
           r.scheduled.push({ kind: a.name, args: observerType(p).slice(0, 120), line: a.line });
   }
-  r.mappings.sort((a, b) => a.line - b.line);
   r.scheduled.sort((a, b) => a.line - b.line);
 
   // A message-driven bean listens on the destination in its activation config (or mappedName).
@@ -210,15 +195,7 @@ export function parseJava(text, ix = index(text)) {
   const r = parseJava(
     '@Path("/handling")\n@Stateless\npublic class H {\n  @POST\n  @Path("/reports")\n  @Consumes("application/json")\n  public void submit(Report r) {}\n  @GET\n  public List<X> all() {}\n  public void on(@Observes(during = TransactionPhase.AFTER_SUCCESS) CargoInspected e) {}\n  @Schedule(minute = "*/2", hour = "*")\n  public void scan() {}\n}',
   );
-  assert.deepStrictEqual([r.basePath, r.annotations], ['/handling', ['Path', 'Stateless']]);
-  assert.deepStrictEqual(r.mappings, [
-    { verb: 'POST', path: '/reports', line: 4, method: 'submit' },
-    { verb: 'GET', path: '', line: 8, method: 'all' },
-  ]);
-  const long = parseJava(
-    '@Path("/t")\npublic class T {\n  @GET\n  @Path("template")\n  @Operation(summary = "x", description = "List loans (paged)"\n      + "a"\n      + "b"\n      + "c")\n  @ApiResponse(responseCode = "200")\n  public Page<Data> template(@BeanParam P p) {}\n}',
-  );
-  assert.deepStrictEqual(long.mappings, [{ verb: 'GET', path: 'template', line: 3, method: 'template' }]);
+  assert.deepStrictEqual(r.annotations, ['Path', 'Stateless']);
   assert.deepStrictEqual(
     r.scheduled.map((s) => [s.kind, s.args]),
     [
@@ -231,24 +208,6 @@ export function parseJava(text, ix = index(text)) {
   );
   assert.deepStrictEqual(mdb.scheduled, [{ kind: 'MessageDriven', args: 'java:app/jms/CargoHandledQueue', line: 4 }]);
 }
-assert.deepStrictEqual(
-  parseJava(
-    '@RestController\n@RequestMapping("/api/x")\npublic class A {\n  @GetMapping("/{id}")\n  public Foo get(Long id) {\n    return null; }',
-  ).mappings,
-  [{ verb: 'GET', path: '/{id}', line: 4, method: 'get' }],
-);
-// A generic return type no longer hides the handler, and an annotation with braces in its arguments is just an
-// annotation.
-assert.deepStrictEqual(
-  parseJava(
-    '@RestController\npublic class G {\n  @GetMapping("/stream")\n  public Flux<ServerSentEvent<Chat>> stream() {\n    return null;\n  }\n}',
-  ).mappings,
-  [{ verb: 'GET', path: '/stream', line: 3, method: 'stream' }],
-);
-assert.deepStrictEqual(
-  parseJava('class B {\n  @Consumes({ "a", "b" })\n  @PostMapping(value = "/x")\n  public void x() {}\n}').mappings,
-  [{ verb: 'POST', path: '/x', line: 3, method: 'x' }],
-);
 // Entity fields carry their own relation annotation; no line window, no annotation from the field above.
 assert.deepStrictEqual(
   parseJava(
@@ -310,6 +269,9 @@ export function scan(root) {
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
   const java = javaAll.filter((j) => !app.isExcluded(j.p));
+  // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs). Read once, used for
+  // catalog selection (which frameworks are installed) and as a fact family of its own.
+  const buildFiles = readBuild(root, files.map(R));
   const entities = java.filter((j) => j.annotations.includes('Entity'));
   const entityNames = new Set(entities.map((e) => e.name));
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
@@ -440,24 +402,31 @@ export function scan(root) {
         .filter((s) => /^[A-Z][A-Z0-9_]*$/.test(s)),
     }));
 
-  // endpoints + API join (R11)
-  const byName = new Map(java.map((j) => [j.name, j]));
-  const inherited = (c, depth = 0) => {
-    const b = byName.get((c.extends ?? '').replace(/<.*/, '').trim());
-    return b && depth < 3 ? [...b.mappings.map((m) => ({ ...m, from: b })), ...inherited(b, depth + 1)] : [];
-  };
-  const restRoot = java.find((j) => j.appPath != null)?.appPath ?? ''; // JAX-RS @ApplicationPath prefixes every resource
-  const endpoints = controllers.flatMap((c) =>
-    [...c.mappings, ...inherited(c)].map((m) => ({
-      verb: m.verb,
-      path: norm((c.annotations.includes('Path') ? restRoot + '/' : '') + (c.basePath || '') + '/' + (m.path || '')),
-      line: m.line,
-      handler: `${c.name}.${m.method}`,
-      file: m.from ? m.from.p : c.p,
-      inheritedBy: m.from ? c.p : undefined,
-      rest: c.annotations.includes('RestController') || c.annotations.includes('Path'),
-    })),
-  );
+  // endpoints: the model and the catalogs decide them; coverage says how much of the project they understand.
+  const model = buildModel(javaAll);
+  const selected = selectForModel(model, CATALOGS, { deps: coordinatesOf(buildFiles) });
+  // Receiver types and call targets (§5.1): every family that follows a call reads this.
+  bindCalls(model, signatureIndex(selected));
+  // The syntax index's body digests were only an input to resolution. The model keeps the calls it resolved; the
+  // locals, assignments and catches are dead weight for the rest of the scan (and the largest arrays in it).
+  for (const j of javaAll)
+    for (const m of j.ix.methods) {
+      m.locals = null;
+      m.assigns = null;
+      m.catches = null;
+    }
+  // Facts belong to the app, not the repository: the model spans every module (calls cross them), but a module the
+  // app excludes from its component scan is another deployable and its handlers are not this app's API.
+  const endpoints = extractEndpoints(model, selected, { include: (p) => !app.isExcluded(p) });
+  // The slice-2 families, all on resolved calls: outside clients, repository writes and cache state, then the
+  // transaction boundary that those together can leak through.
+  const outsideCalls = extractOutside(model, selected);
+  const stateFacts = extractState(model, selected);
+  const transactions = extractTransactions(model, selected, {
+    outside: outsideCalls,
+    writes: stateFacts.filter((f) => f.family === 'state-write'),
+  });
+  const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
   const feCalls = fe.flatMap((f) =>
     f.text.split('\n').flatMap((l, i) => {
       const m = /["'`](\/api\/[^"'`\s]*)["'`]/.exec(l);
@@ -532,10 +501,9 @@ export function scan(root) {
     .filter((j) => /@ExceptionHandler|implements\s+ExceptionMapper/.test(j.text))
     .map((j) => j.p);
   const background = java.flatMap((j) => j.scheduled.map((s) => ({ ...s, file: j.p, cls: j.name })));
-  const sockets = java
-    .flatMap((j) =>
-      j.mappings.filter((m) => m.verb === 'STOMP').map((m) => ({ file: j.p, line: m.line, path: m.path })),
-    )
+  const sockets = endpoints
+    .filter((e) => e.verb === 'STOMP')
+    .map((e) => ({ file: e.file, line: e.line, path: e.path }))
     .concat(pick(/SessionDisconnectEvent|SessionConnectedEvent|registerStompEndpoints|enableSimpleBroker/));
   const runners = java
     .filter(
@@ -632,25 +600,6 @@ export function scan(root) {
     const db = /jdbc:(\w+)/.exec(t);
     return { file: R(f), db: db?.[1], keys };
   });
-  // The project's own modules (named after their folders) and build plugins are not dependencies.
-  const own = new Set([
-    path.basename(root),
-    ...files.filter((f) => /(^|\/)pom\.xml$/.test(f)).map((f) => path.basename(path.dirname(f))),
-  ]);
-  const buildFiles = files
-    .filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3)
-    .map((f) => ({
-      file: R(f),
-      deps: (
-        read(f).match(
-          /(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g,
-        ) ?? []
-      )
-        .map((s) => s.replace(/<\/?artifactId>|"/g, ''))
-        .filter((s, i, a) => a.indexOf(s) === i && !own.has(s) && !/^maven-.*-plugin$|-maven-plugin$/.test(s))
-        .slice(0, 60),
-    }));
-
   // state: who writes each entity (repository mutations per caller), copies of state
   const repoEntity = new Map([
     ...repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]),
@@ -664,34 +613,9 @@ export function scan(root) {
       ].map((n) => [n, entity]),
     ),
   ]);
-  const writes = {};
-  for (const j of nonEntity) {
-    if (repoEntity.has(j.name)) continue;
-    const vars = new Map(
-      [...j.text.matchAll(/\b(\w+(?:Repository|Repo|Dao))\s+(\w+)\s*[;,)=]/g)]
-        .filter((m) => repoEntity.has(m[1]))
-        .map((m) => [m[2], repoEntity.get(m[1])]),
-    );
-    for (const [v, ent] of vars)
-      for (const m of linesMatching(
-        j.text,
-        new RegExp(`\\b${v}\\.((?:save|delete|update|insert|store|persist|merge|remove)\\w*)\\(`),
-      ))
-        ((writes[ent] ??= {})[j.p] ??= []).push(m.line);
-  }
   const modifying = repos.flatMap((r) =>
     linesMatching(r.text, /@Modifying/).map((m) => ({ file: r.p, line: m.line, entity: repoEntity.get(r.name) })),
   );
-  const caches = pick(/@Cacheable|@CacheEvict|@CachePut|@EnableCaching|expireAfter|\.ttl\(|entryTtl/)
-    .concat(
-      fe.flatMap((f) =>
-        linesMatching(
-          f.text,
-          /localStorage\.|sessionStorage\.|staleTime|invalidateQueries|configureStore|\bcreate\(\s*\(set|persist\(/,
-        ).map((m) => ({ file: f.p, ...m })),
-      ),
-    )
-    .slice(0, 80);
   const sdkFiles = new Set(
     java
       .filter((j) =>
@@ -699,13 +623,6 @@ export function scan(root) {
       )
       .map((j) => j.p),
   );
-  const seams = pick(
-    /@Transactional\b|@TransactionalEventListener|publishEvent\(|TransactionSynchronization|kafkaTemplate\.send|rabbitTemplate\.convertAndSend/,
-    java.filter(
-      (j) => sdkFiles.has(j.p) || /publishEvent\(|@TransactionalEventListener|TransactionSynchronization/.test(j.text),
-    ),
-  ).slice(0, 60);
-
   const deep = javaFacts({
     java,
     repoEntity,
@@ -795,7 +712,7 @@ export function scan(root) {
   })();
 
   return {
-    version: 1,
+    version: 2,
     root,
     scannedAt: new Date().toISOString().slice(0, 10),
     inventory: { byExt, topDirs: [...new Set(files.map((f) => R(f).split('/').slice(0, 2).join('/')))].slice(0, 60) },
@@ -818,6 +735,7 @@ export function scan(root) {
       repositories: repos.map((r) => ({ file: r.p, extends: r.extends })),
     },
     endpoints,
+    coverage: cov,
     frontend: {
       files: fe.length,
       routes,
@@ -830,19 +748,12 @@ export function scan(root) {
     views: { count: views.length, returnedBy: viewUse, deadViews },
     runtime: { security, methodSecurity, interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
     background: { scheduledAsyncListeners: [...background, ...batchJobs], sockets, runners },
-    state: {
-      writes: Object.fromEntries(
-        Object.entries(writes).map(([e, byFile]) => [
-          e,
-          Object.entries(byFile).map(([file, lines]) => `${file}:${lines.join(',')}`),
-        ]),
-      ),
-      modifying,
-      caches,
-      seams,
-    },
+    state: { modifying },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
-    seams: deep.seams,
+    transactions,
+    outsideCalls,
+    stateWrites: stateFacts.filter((f) => f.family === 'state-write'),
+    stateCaches: stateFacts.filter((f) => f.family === 'state-cache'),
     lifecycle: deep.lifecycle,
     schedules: deep.schedules,
     flows: deep.flows,
@@ -903,6 +814,39 @@ export function summarize(f) {
     `# facts for ${path.basename(f.root)} (scanned ${f.scannedAt})`,
     "Paths are relative to the project root. Details: facts.json (search it, don't read it whole).",
   );
+  if (f.coverage?.line) L.push(`**Coverage:** ${f.coverage.line}`);
+  // The blind spots by name: a writer checks the code behind anything listed here before claiming it (rule P4a).
+  if (f.coverage) {
+    const c = f.coverage;
+    const blind = [];
+    if (c.unknownAnnotations?.length) {
+      const top = c.unknownAnnotations.slice(0, 6).map((u) => `${u.name}×${u.count} (${ab(u.samples[0])})`);
+      blind.push(
+        `- unknown annotations: ${top.join('; ')}${c.unknownAnnotations.length > 6 ? `; +${c.unknownAnnotations.length - 6} more in facts.json` : ''}`,
+      );
+    }
+    if (c.unknownBaseClasses?.length) {
+      blind.push(
+        `- base classes no catalog explains: ${c.unknownBaseClasses.slice(0, 8).map((b) => `${b.name}×${b.count}`).join(', ')}${c.unknownBaseClasses.length > 8 ? `, +${c.unknownBaseClasses.length - 8}` : ''}`,
+      );
+    }
+    if (c.uncataloguedDependencies?.length) {
+      blind.push(
+        `- uncatalogued dependencies (by files importing them): ${c.uncataloguedDependencies.slice(0, 10).map((d) => `${d.coordinate} ${d.files}`).join(', ')}${c.uncataloguedDependenciesTotal > Math.min(10, c.uncataloguedDependencies.length) ? `, +${c.uncataloguedDependenciesTotal - Math.min(10, c.uncataloguedDependencies.length)} more in facts.json` : ''}`,
+      );
+    }
+    const langs = Object.entries(c.unparsedLanguages ?? {}).filter(([, n]) => n > 0);
+    if (langs.length) blind.push(`- source files the model cannot read: ${langs.map(([k, n]) => `${k} ${n}`).join(', ')}`);
+    if (c.generatedSources?.length)
+      blind.push(
+        `- generated code (not hand-written): ${c.generatedSources.map((g) => `${g.file}: ${g.plugin}${g.packages.length ? ` -> ${g.packages.slice(0, 2).join(', ')}` : ''}`).join('; ')}`,
+      );
+    if (c.degradedFiles?.length) blind.push(`- files that failed to parse: ${c.degradedFiles.length}`);
+    if (blind.length) {
+      sec('What the engine did not understand');
+      push(blind);
+    }
+  }
   if (J.length > 8) L.push('**J/ = @@J@@**');
   if (I) L.push('**~/ = @@I@@** (inside each module: "mod/~/x" means "mod/@@I@@x")');
   if (F.length > 8) L.push('**F/ = @@F@@**');
@@ -917,7 +861,13 @@ export function summarize(f) {
   push(
     cap(
       f.build.map(
-        (b) => `- ${b.file}: ${b.deps.slice(0, 20).join(', ')}${b.deps.length > 20 ? `, +${b.deps.length - 20}` : ''}`,
+        (b) =>
+          `- ${b.file}: ${(b.deps ?? [])
+            .slice(0, 20)
+            .map((d) => `${d.group}:${d.artifact}`)
+            .join(', ')}${(b.deps ?? []).length > 20 ? `, +${b.deps.length - 20}` : ''}${
+            b.plugins?.length ? ` (plugins: ${b.plugins.map((p) => p.id).join(', ')})` : ''
+          }`,
       ),
       8,
       'build',
@@ -1073,18 +1023,22 @@ export function summarize(f) {
           .map(([k, v]) => `${k}=${v}`)
           .join('; ')}`,
       );
-  // Shortlisted entities only, files without line lists: the full write sites stay in facts.json (state.writes).
-  sec('State (which files write each shortlisted entity; copies)');
+  // Shortlisted entities only: the full write sites stay in facts.json (stateWrites).
+  sec('State (which methods write each shortlisted entity; caches)');
   const top = new Set(f.entities.funnel.slice(0, 15).map((e) => e.name));
-  for (const [e, byFile] of Object.entries(f.state.writes)
-    .filter(([e]) => top.has(e))
-    .sort((a, b) => b[1].length - a[1].length)) {
-    const files = byFile.map((x) => {
-      const [p, l] = x.split(/:(?=[\d,]+$)/);
-      return `${p}:${l.split(',')[0]}${l.includes(',') ? ` (+${l.split(',').length - 1})` : ''}`;
-    });
+  const byEntity = new Map();
+  for (const w of f.stateWrites) {
+    const short = (w.entity ?? 'no entity').split('.').pop();
+    if (!top.has(short)) continue;
+    const cite = (w.evidence?.[0] ?? '').replace(/#.*$/, '');
+    if (!byEntity.has(short)) byEntity.set(short, new Map());
+    const files = byEntity.get(short);
+    files.set(cite, (files.get(cite) ?? 0) + 1);
+  }
+  for (const [e, sites] of [...byEntity.entries()].sort((a, b) => b[1].size - a[1].size)) {
+    const files = [...sites.entries()].map(([f, n]) => `${f}${n > 1 ? ` (+${n - 1})` : ''}`);
     L.push(
-      `- ${e} written from ${byFile.length} file(s): ${files.slice(0, 8).join(' ; ')}${files.length > 8 ? ` ; +${files.length - 8} more in facts.json` : ''}`,
+      `- ${e} written from ${sites.size} site(s): ${files.slice(0, 8).join(' ; ')}${files.length > 8 ? ` ; +${files.length - 8} more in facts.json` : ''}`,
     );
   }
   const mod = {};
@@ -1093,20 +1047,34 @@ export function summarize(f) {
     L.push(
       `- ${e}: ${ls.length} @Modifying quer${ls.length > 1 ? 'ies' : 'y'} in ${f.state.modifying.find((m) => m.entity === e).file}:${ls.join(',')}`,
     );
-  for (const c of f.state.caches.slice(0, 25)) L.push(`- copy/cache ${c.file}:${c.line} ${c.text}`);
-  sec('Seams, computed (each must be listed in the map or dismissed on purpose)');
-  // Ranked: half-done outside effects on money first, then other outside effects, then the rest.
-  const seamRank = (x) =>
-    (/NO TRANSACTION/.test(x) ? 4 : /^OUTSIDE CALL IN/.test(x) ? 3 : /^JOB DELETES|^AFTER COMMIT/.test(x) ? 2 : 1) +
-    (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(x) ? 2 : 0);
-  push(
-    cap(
-      [...f.seams].sort((a, b) => seamRank(b) - seamRank(a)).map((x) => `- ${x}`),
-      30,
-      'seams',
-    ),
+  if (f.stateCaches.length)
+    L.push(
+      `- caches: ${f.stateCaches.length} cache annotation(s), e.g. ${f.stateCaches.slice(0, 5).map((c) => `${c.action} ${c.method}`).join(', ')}`,
+    );
+  sec('Transaction boundaries, computed (each must be listed in the map or dismissed on purpose)');
+  // Ranked: half-done outside effects first, then the rest; money-related methods float up.
+  const seamRank = (t) =>
+    (t.kind === 'outside-then-save' ? 4 : t.kind === 'outside-in-transaction' ? 3 : 2) +
+    (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(t.method) ? 2 : 0);
+  const seamText = (t) => {
+    const at = t.evidence?.[0]?.replace(/#.*$/, '') ?? t.method;
+    if (t.kind === 'outside-in-transaction')
+      return `OUTSIDE CALL IN TRANSACTION ${t.method} (${at}): ${(t.outside ?? []).join('; ')}. If the transaction rolls back after this, the outside side stays done.`;
+    if (t.kind === 'outside-then-save')
+      return `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${t.method} (${at}): ${(t.outside ?? []).join('; ')}; then ${(t.saves ?? []).join('; ')}. If a save fails, the outside side stays done.`;
+    if (t.kind === 'requires-new')
+      return `NEW TRANSACTION ${t.method} (${at}): commits on its own, even if the caller rolls back.`;
+    if (t.kind === 'after-commit')
+      return `AFTER COMMIT ${t.method} (${at}): ${t.mechanism === 'synchronization' ? (t.runs ?? []).join(', ') || 'code' : t.mechanism} runs only once the transaction has committed; if that fails, the commit is not undone.`;
+    return null;
+  };
+  const seams = f.transactions.filter((t) => t.kind !== 'transactional').sort((a, b) => seamRank(b) - seamRank(a));
+  push(cap(seams.map((t) => `- ${seamText(t)}`), 30, 'transactions'));
+  const txCount = f.transactions.filter((t) => t.kind === 'transactional' || t.kind === 'requires-new').length;
+  L.push(
+    `- ${txCount} transactional method(s); ${f.outsideCalls.length} outside call(s) across ${new Set(f.outsideCalls.map((c) => c.method)).size} method(s)`,
   );
-  if (!f.seams.length) L.push('- none found');
+  if (!seams.length) L.push('- no transaction seam found');
   sec(
     'Flow skeletons, computed (entry point → what happens, in order; start stories here and open only the methods you need)',
   );

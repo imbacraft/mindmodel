@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
-import { index, methodAt } from './java.mjs';
+import { index, methodAt } from './syntax/java.mjs';
 import { fileURLToPath } from 'node:url';
 import { gitWindow, activityFor } from './activity.mjs';
 

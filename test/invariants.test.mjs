@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
-import { index } from '../engine/java.mjs';
+import { index } from '../engine/syntax/java.mjs';
 import { parseCite } from '../engine/validate.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -74,6 +74,27 @@ for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))
     }
     show(badEndpoints, 'endpoint(s) without a valid handler method', app.name);
 
+    // 1.ids. Two facts may share a path and a handler name (an overload), never an id.
+    const ids = facts.endpoints.map((e) => e.id);
+    show(
+      [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))],
+      'duplicate endpoint id(s)',
+      app.name,
+    );
+
+    // 1a. A path is either whole or marked `{?}`: braces balance, so no `/api/v1/jobs/{` reaches a writer.
+    const badPaths = facts.endpoints
+      .filter((e) => (e.path.match(/\{/g) ?? []).length !== (e.path.match(/\}/g) ?? []).length)
+      .map((e) => `${e.verb} ${e.path} ${e.handler}`);
+    show(badPaths, 'endpoint path(s) with unbalanced braces', app.name);
+
+    // 1b. Facts belong to the deployable: no endpoint may sit in a module the app excludes from its component scan.
+    // (hertzbeat-ai-gateway is such a module in hertzbeat; the scan reports it as excluded.)
+    if (app.name === 'hertzbeat') {
+      const outOfScope = facts.endpoints.filter((e) => e.file.includes('hertzbeat-ai-gateway')).map((e) => e.file);
+      show(outOfScope, 'endpoint(s) in an excluded module', app.name);
+    }
+
     // 2. Every entity field is cited on a line inside the entity's own type range.
     const badFields = [];
     for (const ent of facts.entities.funnel) {
@@ -108,6 +129,11 @@ for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))
         const nameLine = m.nameLine ?? m.start;
         if (!(m.start <= nameLine && nameLine <= m.end))
           badIndex.push(`${rel}#${m.name}: start ${m.start}, name ${nameLine}, end ${m.end}`);
+        // Interface and abstract methods have a signature and no body; they are indexed for the resolver.
+        if (m.hasBody === false) {
+          if (m.open !== null || m.close !== null) badIndex.push(`${rel}#${m.name}: bodiless method with body offsets`);
+          continue;
+        }
         if (!(m.open < m.close)) badIndex.push(`${rel}#${m.name}: open ${m.open} >= close ${m.close}`);
         else if (text[m.open] !== '{' || text[m.close] !== '}')
           badIndex.push(`${rel}#${m.name}: body offsets are not braces`);

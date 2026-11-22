@@ -4,9 +4,12 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 (`/mindmodel-system`). Deterministic engine (scan → digest → validate → render) plus one writer subagent per run.
 
 ## Layout
-- `engine/`: Node scripts, no dependencies. Scanners (`scan.mjs`, `system.mjs`), validators (`validate.mjs`,
-  `system-render.mjs`), renderers, and the code-model helpers they share.
-- `rules/`: what the writers follow. `schema/`: the JSON the writers produce. `template/`: the pages.
+- `engine/`: Node scripts, no dependencies. `syntax/` (tree-sitter adapter: declarations, calls, package, imports),
+  `model/` (the symbol model: full names, resolved annotations and supertypes), `catalogs/` (framework meaning as
+  JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/`; `scan.mjs` and `system.mjs`
+  orchestrate, `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs` keep their roles.
+- `rules/`: what the writers follow. `schema/`: the JSON the writers produce (`mindmodel.schema.json`, `facts.schema.json`, `catalog.schema.json`).
+  `template/`: the pages.
 - `agents/`, `skills/`: the writer prompts and the slash commands.
 - `examples/`: published pages (GitHub Pages serves the repo root).
 - `test/`: `node --test` suites.
@@ -27,6 +30,9 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 - `node --test` runs every module's self-checks and the snapshot tests. Run it after every engine change.
 - Snapshot tests scan the public test apps cloned under `~/Projects/test-apps` (list in `test/apps.json`) and compare
   facts, digests, validation results and rendered pages with `test/snapshots/` (local, gitignored).
+- `node test/compare.mjs [--all] [app|system ...]` runs the committed engine (a throwaway worktree of `HEAD`) and the
+  working tree on every corpus app and system, and prints per family what was added, removed or changed. Slice
+  reports quote it; the snapshot diff alone cannot show what the old engine believed.
 - A refactor must leave every snapshot unchanged. An intended change: check the reported difference, then accept it
   with `UPDATE=1 node --test`.
 - The test apps are read-only: never build, run or modify them (their `mindmodel/` output folders are ours).

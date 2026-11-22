@@ -1,0 +1,325 @@
+{
+  "id": "ejb",
+  "version": 1,
+  "when": {
+    "deps": [
+      "jakarta.platform:jakarta.jakartaee-api",
+      "javax:javaee-api",
+      "org.jboss.spec:jboss-javaee-8.0"
+    ],
+    "imports": [
+      "jakarta.ejb.",
+      "javax.ejb.",
+      "jakarta.transaction.",
+      "javax.transaction.",
+      "jakarta.annotation."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "jakarta.ejb.Stateless",
+        "javax.ejb.Stateless"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Stateful",
+        "javax.ejb.Stateful"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Singleton",
+        "javax.ejb.Singleton"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.MessageDriven",
+        "javax.ejb.MessageDriven"
+      ],
+      "means": "listener",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Local",
+        "javax.ejb.Local"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.LocalBean",
+        "javax.ejb.LocalBean"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Remote",
+        "javax.ejb.Remote"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.EJB",
+        "javax.ejb.EJB"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.TransactionAttribute",
+        "javax.ejb.TransactionAttribute"
+      ],
+      "means": "transactional",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.TransactionManagement",
+        "javax.ejb.TransactionManagement"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Schedule",
+        "javax.ejb.Schedule"
+      ],
+      "means": "scheduled",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Schedules",
+        "javax.ejb.Schedules"
+      ],
+      "means": "scheduled",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Timeout",
+        "javax.ejb.Timeout"
+      ],
+      "means": "listener",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Asynchronous",
+        "javax.ejb.Asynchronous"
+      ],
+      "means": "async",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Lock",
+        "javax.ejb.Lock"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.AccessTimeout",
+        "javax.ejb.AccessTimeout"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.ConcurrencyManagement",
+        "javax.ejb.ConcurrencyManagement"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.Startup",
+        "javax.ejb.Startup"
+      ],
+      "means": "startup",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.ejb.ActivationConfigProperty",
+        "javax.ejb.ActivationConfigProperty"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.transaction.Transactional",
+        "javax.transaction.Transactional"
+      ],
+      "means": "transactional",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.transaction.TransactionScoped",
+        "javax.transaction.TransactionScoped"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.PostConstruct",
+        "javax.annotation.PostConstruct"
+      ],
+      "means": "startup",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.PreDestroy",
+        "javax.annotation.PreDestroy"
+      ],
+      "means": "ignore",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.Resource",
+        "javax.annotation.Resource"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.Resources",
+        "javax.annotation.Resources"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.annotation.Priority",
+        "javax.annotation.Priority"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

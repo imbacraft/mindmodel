@@ -1,0 +1,113 @@
+{
+ "hertzbeat": {
+  "rates": {
+   "supertypes resolved": [
+    1081,
+    1083,
+    100
+   ],
+   "fields with a resolved type": [
+    6539,
+    6546,
+    100
+   ],
+   "receiver typing": [
+    92982,
+    110822,
+    84
+   ],
+   "project targets": [
+    45522,
+    48644,
+    94
+   ],
+   "endpoints with a fully resolved path": [
+    320,
+    320,
+    100
+   ],
+   "annotations understood": [
+    8991,
+    9322,
+    96
+   ]
+  },
+  "unknownAnnotations": 3,
+  "unknownBaseClasses": 54,
+  "uncataloguedDependencies": 96
+ },
+ "fineract": {
+  "rates": {
+   "supertypes resolved": [
+    3987,
+    3987,
+    100
+   ],
+   "fields with a resolved type": [
+    23309,
+    23318,
+    100
+   ],
+   "receiver typing": [
+    140304,
+    154481,
+    91
+   ],
+   "project targets": [
+    97163,
+    102525,
+    95
+   ],
+   "endpoints with a fully resolved path": [
+    974,
+    974,
+    100
+   ],
+   "annotations understood": [
+    32716,
+    33661,
+    97
+   ]
+  },
+  "unknownAnnotations": 6,
+  "unknownBaseClasses": 104,
+  "uncataloguedDependencies": 44
+ },
+ "cargotracker": {
+  "rates": {
+   "supertypes resolved": [
+    71,
+    71,
+    100
+   ],
+   "fields with a resolved type": [
+    277,
+    277,
+    100
+   ],
+   "receiver typing": [
+    1284,
+    1383,
+    93
+   ],
+   "project targets": [
+    596,
+    619,
+    96
+   ],
+   "endpoints with a fully resolved path": [
+    3,
+    3,
+    100
+   ],
+   "annotations understood": [
+    362,
+    367,
+    99
+   ]
+  },
+  "unknownAnnotations": 0,
+  "unknownBaseClasses": 2,
+  "uncataloguedDependencies": 0
+ }
+}

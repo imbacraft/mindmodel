@@ -1,0 +1,100 @@
+// The walking skeleton, end to end: syntax -> model -> catalogs -> call resolution -> facts, compared with the
+// scanner it replaces. cargotracker is small enough to assert exact properties; large apps are measured in reports.
+import test from 'node:test';
+import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { index } from '../engine/syntax/java.mjs';
+import { buildModel } from '../engine/model/model.mjs';
+import { bindCalls } from '../engine/model/calls.mjs';
+import { loadCatalogs, selectCatalogs, signatureIndex } from '../engine/catalogs/catalog.mjs';
+import { extractEndpoints } from '../engine/extract/endpoints.mjs';
+import { extractOutside } from '../engine/extract/outside.mjs';
+import { extractState } from '../engine/extract/state.mjs';
+import { extractTransactions } from '../engine/extract/transactions.mjs';
+import { parseCite } from '../engine/validate.mjs';
+
+const SKIP = new Set(['node_modules', 'target', 'build', '.git', 'mindmodel', 'mindmodel-system']);
+
+function javaFiles(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!e.name.startsWith('.') && !SKIP.has(e.name)) javaFiles(p, out);
+    } else if (p.endsWith('.java') && !/[\\/]src[\\/]test[\\/]/.test(p)) out.push(p);
+  }
+  return out;
+}
+
+const root = path.join(os.homedir(), 'Projects/test-apps/cargotracker');
+
+function pipeline() {
+  const files = javaFiles(root).map((p) => ({
+    p: path.relative(root, p).split(path.sep).join('/'),
+    ix: index(fs.readFileSync(p, 'utf8')),
+  }));
+  const model = buildModel(files);
+  const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
+  const selected = selectCatalogs(loadCatalogs(), { imports });
+  bindCalls(model, signatureIndex(selected));
+  const endpoints = extractEndpoints(model, selected);
+  const outside = extractOutside(model, selected);
+  const state = extractState(model, selected);
+  const transactions = extractTransactions(model, selected, { outside, writes: state.filter((f) => f.family === 'state-write') });
+  return { model, selected, endpoints, outside, state, transactions };
+}
+
+const envelope = (f) => {
+  assert.equal(f.family !== undefined, true, 'a fact has a family');
+  assert.ok(['parsed', 'resolved', 'inferred', 'unresolved'].includes(f.confidence), f.confidence);
+  assert.ok(f.why?.length >= 1, `a fact says why it exists: ${f.id}`);
+  for (const e of f.evidence ?? []) assert.ok(parseCite(e), `evidence resolves: ${e}`);
+};
+
+test('skeleton: endpoints walk the whole pipeline on cargotracker', { skip: !fs.existsSync(root) && 'app not found' }, () => {
+  const { endpoints: facts } = pipeline();
+  assert.ok(facts.length > 0, 'the app has endpoints');
+  assert.ok(facts.every((f) => f.handler && f.path), 'every fact names a handler and a path');
+  assert.equal(new Set(facts.map((f) => f.id)).size, facts.length, 'ids are unique');
+  for (const f of facts) {
+    assert.equal(f.family, 'endpoint');
+    envelope(f);
+  }
+});
+
+test('skeleton: calls resolve to methods that exist, and the rates are measured', { skip: !fs.existsSync(root) && 'app not found' }, () => {
+  const { model } = pipeline();
+  const ids = new Set();
+  for (const t of model.types.values()) for (const m of t.methods) if (m.id) ids.add(m.id);
+  let calls = 0;
+  for (const t of model.types.values())
+    for (const m of t.methods)
+      for (const c of m.calls ?? []) {
+        if (c.kind === 'new') continue;
+        calls++;
+        assert.ok(
+          ['direct', 'super', 'impl', 'convention', 'ambiguous', 'external', 'unresolved'].includes(c.how),
+          `a call names how it resolved: ${c.how}`,
+        );
+        // Every target a call names is a method the model holds: no invented ids.
+        for (const id of c.targets ?? []) assert.ok(ids.has(id), `call target exists in the model: ${id}`);
+        if (c.recvFqn && model.types.has(c.recvFqn) && c.targets?.length)
+          assert.ok(c.how !== 'external', 'a project receiver with a project target is not external');
+      }
+  assert.ok(calls > 500, `cargotracker has call sites: ${calls}`);
+  assert.ok(model.bindings.calls > 0 && model.bindings.typed <= model.bindings.calls, 'receiver typing is a rate');
+  assert.ok(model.bindings.targeted <= model.bindings.project, 'project targets is a rate');
+});
+
+test('skeleton: the slice-2 families keep their envelope and ids', { skip: !fs.existsSync(root) && 'app not found' }, () => {
+  const { endpoints, outside, state, transactions } = pipeline();
+  for (const f of [...outside, ...state, ...transactions]) envelope(f);
+  for (const list of [outside, state, transactions]) {
+    const ids = list.map((f) => f.id);
+    assert.equal(new Set(ids).size, ids.length, 'ids are unique within a family');
+  }
+  // cargotracker has no HTTP client and no cache; it does have transactions (EJB container-managed).
+  assert.ok(transactions.length > 0, 'the EJB app has transaction facts');
+  assert.ok(endpoints.length > 0 && outside.length === 0, 'no outside client in this app');
+});
