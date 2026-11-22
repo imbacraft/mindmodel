@@ -33,13 +33,15 @@
 
 **P5. Plain names first, code names second.** Use the words the users and the business use ("School"). Show the code name after it (`OrgUnit`). Once a plain name is chosen, use exactly that name everywhere on the page. Don't name a region with a word that is also a concept's name unless the region is about that concept.
 
-**P6. State behavior, never exploits.** The map describes how the code actually behaves, **including behavior that is flawed**, plainly and neutrally, because a developer can't work on a system they have been given a cleaned-up picture of (e.g. "the price is sent by the browser and charged as sent"). The map never explains how to abuse a weakness, never includes secrets, credentials or keys, and never labels anything a bug or vulnerability. **Separately**, report every security weakness and serious bug you find to the person who asked for the map.
+**P6. State behavior, never exploits.** The map describes how the code actually behaves, **including behavior that is flawed**, plainly and neutrally, because a developer can't work on a system they have been given a cleaned-up picture of (e.g. "the price is sent by the browser and charged as sent"). The map never explains how to abuse a weakness, never includes secrets, credentials or keys, and never labels anything a bug or vulnerability. **Separately**, report every security weakness and serious bug you find to the person who asked for the map: they go in `findings.md` (see the writer steps), never into the map's rules as a convention. Where a developer must know the behavior, the page says it neutrally and points at the findings — no exploit details, no "bug" label.
 
 **P7. Words first.** About 80% words. The only diagram is the request-path sequence. Draw any other diagram only if the relations it shows branch, loop or are many-to-many (a chain is a sentence).
 
 **P8. Budgets are hard limits.** Core map (everything except stories) ≤ 3,000 words. Per-section limits are given below. Cut, merge or group; never cram.
 
 **P9. Rank, don't list.** Where a section has several items of unequal weight (rules, stories), order them by importance and say in one line why each ranks where it does.
+
+**P10a. State the condition; absolutes only when the code guarantees them.** A claim is true under conditions — a tenant, a role, a configuration key, a transaction, a path prefix. Write them down: "when `sureness.excludedResource` lists it, `/api/webhooks/**` skips authentication", not "requests are authenticated". Words like *never*, *always*, *all requests*, *no one* are allowed only when the code guarantees them (a constant, an exhaustive switch, a single entry point); otherwise the rule carries a `condition` field saying when it holds, and the validator rejects an absolute without one. A probable defect does not become a rule either: rules describe how the system works, so the defect goes in the owner's findings and the map's text stays neutral (P6).
 
 **P10. Exact numbers or none.** "42 entities", "every 30 s", "14 of 40 commits": exact and cited. Never "many", "several", "frequently".
 
@@ -256,8 +258,11 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - Money handling.
 - Cross-cutting "touch X, also change Y" couplings.
 - **Whatever surprised you while tracing the stories.**
+- Paths the security layer excludes (`facts.authExclusions`, read from `sureness.yml` or Spring Security): an authentication rule must say which paths skip it, not assume every request is checked.
 
-**Qualify:** non-obvious **and** consequential **and** verifiable in code. Not code smells, not style guides (unless breaking them causes real damage), not doc mismatches (P4). Flawed behavior a developer must know to work safely (e.g. "the charged price comes from the browser") qualifies, stated as behavior, never as a vulnerability or an exploit (P6).
+**Qualify:** non-obvious **and** consequential **and** verifiable in code, and stated with its condition (P10a). Not code smells, not style guides (unless breaking them causes real damage), not doc mismatches (P4). Flawed behavior a developer must know to work safely (e.g. "the charged price comes from the browser") qualifies, stated as behavior, never as a vulnerability or an exploit (P6).
+
+**A probable defect is not a rule.** The digest's *Security warnings, computed* section names prefixes that allow anonymous access and expose writes with no method-level check. The map states the condition neutrally ("`/api/shop/**` is anonymous, so `ProductController#create` needs no token") and the gap goes to `findings.md`; it never becomes a rule like "always check the tenant", because that is the missing code, not the code.
 
 **Kind:** *rule* = something you must do or never do. *Surprise* = something that behaves unexpectedly.
 

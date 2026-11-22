@@ -296,6 +296,31 @@ export function validate(map, root) {
     list.forEach((x, i) => {
       if (!x.importance) err(`${what} ${i + 1}: missing "importance" (why it ranks here)`);
     });
+  // A rule that is absolute should say when it holds (P10a), but the check is a warning: an instruction ("never read
+  // the tenant from the request") is not a claim that something never happens, and rejecting it as an error would
+  // punish a correct, verified rule for its grammar.
+  const ABSOLUTE =
+    /\b(never|always|all requests|every request|no authentication|requires? authentication|guaranteed|impossible)\b/i;
+  map.rules.forEach((r, i) => {
+    if (ABSOLUTE.test(`${r.title ?? ''} ${r.text ?? ''}`) && !String(r.condition ?? '').trim())
+      warn(`rule ${i + 1}: absolute wording without a "condition" (state when it holds, or say why it is unconditional)`);
+  });
+  // A rule that cites an endpoint under an anonymous-write warning is describing missing code, not the system's
+  // conventions. The warning is not fatal, but it should point the writer at findings.md.
+  const factsFile = path.join(root, 'mindmodel', '.work', 'facts.json');
+  if (fs.existsSync(factsFile)) {
+    try {
+      const facts = JSON.parse(fs.readFileSync(factsFile, 'utf8'));
+      const warned = new Set((facts.securityWarnings ?? []).map((w) => String(w.evidence?.[0] ?? '').replace(/:.*$/, '')));
+      map.rules.forEach((r, i) => {
+        const files = (r.cites ?? []).map((c) => String(typeof c === 'string' ? c : c.path ?? '').replace(/[:#].*$/, ''));
+        if (files.some((f) => warned.has(f)))
+          warn(`rule ${i + 1}: cites code covered by an anonymous-write warning; state the condition neutrally and put the gap in findings.md`);
+      });
+    } catch {
+      // Facts are optional for validation; an unreadable file is not a validation error.
+    }
+  }
   if (map.stories.some((s) => s.kind === 'change'))
     err('change stories are not part of the map; stories are ranked main flows');
   const inferred = map.stories.flatMap((s) => s.steps.filter((x) => x.inferred).map(() => s.id));

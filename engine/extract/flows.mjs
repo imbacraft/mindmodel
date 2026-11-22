@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { accessFor } from './security.mjs';
 
 // Flow skeletons (§5.3, revised): a path from an entry point to at least one effect. An effect is a state write (a
 // repository or EntityManager call, from the state family), an outside call (HTTP, mail, messaging, from the outside
@@ -13,6 +14,11 @@ const ENTRY_VERB = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'ANY']);
 const SCHEDULE = /(?:^|\.)(Scheduled|Schedules|Schedule)$/;
 const LISTENER = /(?:^|\.)(JmsListener|RabbitListener|KafkaListener|MessageDriven|EventListener)$/;
 const BOUNDARY = new Set(['requires-new', 'after-commit', 'outside-in-transaction', 'outside-then-save']);
+// A consumer loop is walked further than a request: its effect is often four or five hops away.
+const WORKER_DEPTH = 18;
+// A worker is summarized by reachability, not by every trail: the alert pipeline alone has hundreds of call chains,
+// and what a reader needs is the ordered first sighting of each method plus every effect it can reach.
+const WORKER_METHODS = 1500;
 const MESSAGING = /^(Kafka|Rabbit|RabbitMQ|JMS|SQS|PubSub|Messaging|MQ|AMQP)$/i;
 // Call names that are plumbing in any program: they are never a hop and never an effect.
 const NOISE =
@@ -28,6 +34,13 @@ export const FLOW_WEIGHTS = {
   entryWriteVerb: 3, // POST/PUT/PATCH/DELETE
   entryJob: 3, // scheduled job or message listener
   entryUi: 3, // a JSF action method on a UI bean (weighted like POST)
+  entryWorker: 5, // a continuous worker that fans out to every channel is at least as consequential as a request
+  // Visibility: a public, visitor-facing path is what the product is; an admin or internal path is not. The facts
+  // decide (security rules and the frontend's API calls), never the path's spelling alone.
+  publicEntry: 12,
+  frontendCall: 4,
+  internalEntry: -3,
+  importEntityCap: 2, // a bulk import writes many entities because it loops them, not because it is complex
   entryGet: 0, // a GET with an effect is still a flow
   centralityEntity: 2, // writes an entity many other types refer to (once per flow)
   centralityRefs: 20, // "many" = referenced by at least this many types
@@ -39,6 +52,24 @@ export const FLOW_WEIGHTS = {
 };
 
 const simple = (s) => String(s ?? '').split('.').pop();
+
+// Queue polls and executor hand-offs, from catalog data or the receiver's type name (a project's own `…Queue`,
+// `…WorkerPool`). One classifier so the entry detector and the walk agree on what is a boundary.
+function callClassifier(selected = []) {
+  const means = [];
+  for (const { catalog } of selected)
+    for (const c of catalog.calls ?? [])
+      means.push({ types: new Set(c.types ?? (c.type ? [c.type] : [])), methods: new Set(c.methods ?? []), means: c.means });
+  const meansOf = (fqn, name) => {
+    if (!fqn) return null;
+    const hit = means.find((x) => x.types.has(fqn) && (!x.methods.size || x.methods.has(name)));
+    return hit?.means ?? null;
+  };
+  const isPoll = (c) => meansOf(c.recvFqn, c.name) === 'queue-poll' || /Queue$/.test(simple(c.recvFqn ?? ''));
+  const isExecutor = (c) =>
+    meansOf(c.recvFqn, c.name) === 'executor' || /(?:Executor|Pool)$/.test(simple(c.recvFqn ?? ''));
+  return { isPoll, isExecutor, meansOf };
+}
 const siteKey = (methodId, line, name) => `${methodId}|${line}|${name}`;
 
 // Effects by call site: the fact families already decided what a write and an outside call are; this only indexes them.
@@ -80,13 +111,16 @@ export function flowEntries(model, endpoints = [], selected = []) {
   // are not actions come from the catalog, not from names in this file.
   const uiBean = new Set(),
     lifecycle = new Set(),
+    startup = new Set(),
     frameworkArtifact = new Set();
   for (const { catalog } of selected) {
     for (const a of catalog.annotations ?? []) {
       const fqns = a.fqns ?? (a.fqn ? [a.fqn] : []);
       if (a.means === 'ui-bean') for (const f of fqns) uiBean.add(f);
-      if (a.means === 'lifecycle') for (const f of fqns) lifecycle.add(f);
+      if (a.means === 'lifecycle' || a.means === 'startup') for (const f of fqns) lifecycle.add(f);
+      if (a.means === 'startup') for (const f of fqns) startup.add(f);
     }
+
     // A batch artifact is @Named too (it is injected), but it is run by the scheduler, not by a view.
     for (const t of catalog.types ?? [])
       if (t.means === 'framework-artifact') for (const f of t.fqns ?? [t.fqn]) frameworkArtifact.add(f);
@@ -117,10 +151,56 @@ export function flowEntries(model, endpoints = [], selected = []) {
       entries.push({ kind: 'ui-action', t, m });
     }
   }
+
+  // A worker: a loop that polls a queue, started by the application. The queue and the executor are recognised from
+  // catalog data (`means: 'queue-poll'` / `'executor'`) or, for a project's own abstraction, by the receiver's type
+  // name ending in Queue / Executor / Pool. It is started when the method is itself a lifecycle hook, when it hands a
+  // Runnable to an executor (the loop is in the lambda), or when a lifecycle method calls it.
+  const { isPoll, isExecutor } = callClassifier(selected);
+  const inLoop = (m, line) => (m.loops ?? []).some((l) => l.start <= line && line <= l.end);
+  const pollsInLoop = (m) => (m.calls ?? []).some((c) => inLoop(m, c.line) && isPoll(c));
+  // The Runnable may be handed over inline or through a local (`Runnable r = () -> …; pool.execute(r)`); either way the
+  // method that both polls and talks to an executor is the one that starts the loop.
+  const startsLoop = (m) =>
+    (m.calls ?? []).some(isExecutor) || (m.ann ?? []).some((a) => lifecycle.has(a.fqn ?? ''));
+  const calledFromStartup = (id) =>
+    [...model.types.values()].some(
+      (t) =>
+        (t.ann ?? []).some((a) => startup.has(a.fqn ?? '')) &&
+        t.methods.some((x) => (x.calls ?? []).some((c) => (c.targets ?? []).includes(id) || (c.name === id.split('#')[1]?.split('(')[0] && !c.recv))),
+    );
+  const cls = callClassifier(selected);
+  const pollsByCatalog = (m) =>
+    (m.calls ?? []).some((c) => inLoop(m, c.line) && cls.meansOf(c.recvFqn, c.name) === 'queue-poll');
+  const startsByCatalog = (m) => (m.calls ?? []).some((c) => cls.meansOf(c.recvFqn, c.name) === 'executor');
+  for (const t of model.types.values())
+    for (const m of t.methods)
+      if (m.id && pollsInLoop(m) && (startsLoop(m) || calledFromStartup(m.id)))
+        entries.push({
+          kind: 'worker',
+          t,
+          m,
+          // A queue or a pool recognised only by its name is a guess; the fact says so.
+          inferred: !(pollsByCatalog(m) && startsByCatalog(m)),
+        });
   return entries;
 }
 
-export function buildFlows(model, { entries = [], stateWrites = [], outsideCalls = [], transactions = [], entities = [], activityOf = () => 0 } = {}) {
+export function buildFlows(
+  model,
+  {
+    entries = [],
+    stateWrites = [],
+    outsideCalls = [],
+    transactions = [],
+    entities = [],
+    activityOf = () => 0,
+    selected = [],
+    securityRules = [],
+    frontendPaths = [],
+  } = {},
+) {
+  const { isPoll, isExecutor } = callClassifier(selected);
   const effects = effectIndex({ stateWrites, outsideCalls });
   const boundary = new Map(); // method id -> boundary kind
   for (const t of transactions) if (BOUNDARY.has(t.kind) && t.method) boundary.set(t.method, t.kind);
@@ -154,24 +234,101 @@ export function buildFlows(model, { entries = [], stateWrites = [], outsideCalls
     return out;
   };
 
+  // Worker reachability: breadth-first with parent links, so the hop list is the path to an effect rather than every
+  // method the loop touches. An executor call is not a wall: the calls inside the Runnable handed to it belong to the
+  // same method and run in the worker, so they are walked too (hertzbeat's `pool.executeNotify(type, () -> send(...))`).
+  const workerReach = (t, m) => {
+    const parent = new Map([[m.id, null]]);
+    const hops = [],
+      found = [],
+      effectsSeen = new Set(),
+      handled = new Set();
+    const record = (mm) => {
+      const path = [];
+      for (let id = mm.id; id && id !== m.id; id = parent.get(id)?.id) {
+        const p = parent.get(id);
+        if (p) path.unshift(`${p.t.name}#${p.m.name}`);
+      }
+      for (const h of path) if (h !== `${t.name}#${m.name}` && !hops.includes(h)) hops.push(h);
+    };
+    // Returns the calls to enqueue.
+    const process = (tt, mm, c) => {
+      if (handled.has(c)) return [];
+      handled.add(c);
+      const eff = effects.get(siteKey(mm.id, c.line, c.name));
+      if (eff) {
+        if (!effectsSeen.has(eff.site)) {
+          effectsSeen.add(eff.site);
+          found.push(eff);
+          record(mm);
+        }
+        return [];
+      }
+      const out = [];
+      for (const id of c.targets ?? []) {
+        if (parent.has(id)) continue;
+        const [fqn] = id.split('#');
+        const nt = model.types.get(fqn);
+        const nm = nt?.methods.find((x) => x.id === id);
+        if (!nm || nm.hasBody === false) continue;
+        parent.set(id, { id: mm.id, t: tt, m: mm });
+        out.push([nt, nm]);
+      }
+      return out;
+    };
+    // The Runnable: its calls sit in this method's digest but inside the lambda's line range.
+    const inRunnable = (mm, c) => {
+      const ranges = (c.lambdas ?? []).map((l) => [l.line, l.endLine]);
+      const all = ranges.length ? ranges : (mm.lambdas ?? []).map((l) => [l.start, l.end]);
+      return (mm.calls ?? []).filter((c2) => c2 !== c && all.some(([a, b]) => a <= c2.line && c2.line <= b));
+    };
+    let queue = [[t, m]];
+    for (let d = 0; d < WORKER_DEPTH && queue.length && parent.size < WORKER_METHODS; d++) {
+      const next = [];
+      for (const [tt, mm] of queue)
+        for (const c of mm.calls ?? []) {
+          if (isPoll(c)) continue;
+          if (isExecutor(c)) {
+            next.push(...inRunnable(mm, c).flatMap((c2) => process(tt, mm, c2)));
+            continue;
+          }
+          next.push(...process(tt, mm, c));
+        }
+      queue = next;
+      if (found.length >= 6) break;
+    }
+    return { hops, effects: found };
+  };
+
   const flows = [];
-  for (const { kind, verb, path, t, m } of entries) {
-    const trails = trailsOf(t, m, 3);
-    if (!trails.length) continue; // no effect reachable: not a flow
+  for (const { kind, verb, path, t, m, inferred: entryInferred } of entries) {
+    const trails = kind === 'worker' ? null : trailsOf(t, m, 3);
+    if (kind !== 'worker' && !trails.length) continue; // no effect reachable: not a flow
     // One line per entry: the union of the effect-bearing trails, in discovery order, effects named at the end.
-    const hops = [];
-    const found = [];
-    for (const tr of trails) {
-      for (const h of tr.hops) if (!hops.includes(h)) hops.push(h);
-      for (const e of tr.effects) if (!found.some((x) => x.site === e.site && x.kind === e.kind)) found.push(e);
+    let hops = [],
+      found = [];
+    if (trails) {
+      for (const tr of trails) {
+        for (const h of tr.hops) if (!hops.includes(h)) hops.push(h);
+        for (const e of tr.effects) if (!found.some((x) => x.site === e.site && x.kind === e.kind)) found.push(e);
+      }
+    } else {
+      const r = workerReach(t, m);
+      hops = r.hops.slice(0, 20);
+      found = r.effects;
+      if (!found.length) continue; // a loop that reaches no effect is not a flow
     }
     const written = [...new Set(found.filter((e) => e.kind === 'entity').map((e) => e.key))];
-    const entities = Math.min(written.length, FLOW_WEIGHTS.entityCap);
+    // A bulk import writes one row per loop iteration; its entity count says nothing about the flow's importance.
+    const importish =
+      /^(?:import|bulk|batch|seed)/i.test(m.name) || hops.some((h) => /^(?:DataImport|Import|Template|Seed|Bulk)/.test(h.split('#')[0]));
+    const importCap = importish ? FLOW_WEIGHTS.importEntityCap : FLOW_WEIGHTS.entityCap;
+    const entities = Math.min(written.length, importCap);
     const outs = new Set(found.filter((e) => e.kind === 'outside').map((e) => e.key)).size;
     const msgs = new Set(found.filter((e) => e.kind === 'message').map((e) => e.key)).size;
     // Risk: any method on the path — the entry or a hop — carries a transaction-boundary fact.
     const pathIds = new Set([m.id]);
-    for (const tr of trails) for (const id of tr.ids) pathIds.add(id);
+    for (const tr of trails ?? []) for (const id of tr.ids) pathIds.add(id);
     const withRisk = [...pathIds].map((id) => boundary.get(id)).find(Boolean);
     const central = written.filter((e) => (refs.get(e) ?? 0) >= FLOW_WEIGHTS.centralityRefs);
 
@@ -180,11 +337,19 @@ export function buildFlows(model, { entries = [], stateWrites = [], outsideCalls
     const add = (label, n) => {
       if (!n) return;
       score += n;
-      why.push(`${label} +${n}`);
+      why.push(`${label} ${n > 0 ? '+' : ''}${n}`);
     };
     add(
       `entry ${verb ?? kind}`,
-      verb ? (verb === 'GET' ? FLOW_WEIGHTS.entryGet : FLOW_WEIGHTS.entryWriteVerb) : kind === 'ui-action' ? FLOW_WEIGHTS.entryUi : FLOW_WEIGHTS.entryJob,
+      verb
+        ? verb === 'GET'
+          ? FLOW_WEIGHTS.entryGet
+          : FLOW_WEIGHTS.entryWriteVerb
+        : kind === 'ui-action'
+          ? FLOW_WEIGHTS.entryUi
+          : kind === 'worker'
+            ? FLOW_WEIGHTS.entryWorker
+            : FLOW_WEIGHTS.entryJob,
     );
     add(
       `entities ${written.length}${written.length > entities ? ` (cap ${entities})` : ''}${written.length ? ` (${written.join(', ')})` : ''}`,
@@ -194,6 +359,22 @@ export function buildFlows(model, { entries = [], stateWrites = [], outsideCalls
     add(`messages ${msgs}`, msgs * FLOW_WEIGHTS.message);
     add(`risk ${withRisk}`, withRisk ? FLOW_WEIGHTS.risk : 0);
     add(`centrality ${central.join(', ')}`, central.length ? FLOW_WEIGHTS.centralityEntity : 0);
+    // Visibility, from facts: the security rule that governs the path, and whether the public frontend calls it.
+    if (verb) {
+      const access = accessFor(securityRules, path ?? '');
+      // A visitor-facing call is one the public site makes, not the admin panel: the frontend facts carry the page,
+      // so a call from an admin/dashboard page does not count, however the API path is spelled.
+      const calls = frontendPaths.filter((p) => p.path === path || p.path === path?.replace(/\{\}/g, '*'));
+      const publicPage = calls.some((c) => !/(?:^|\/)(?:admin|dashboard|internal)(?:\/|$)/i.test(c.file ?? ''));
+      const anonymous = access === 'anonymous';
+      // Staff APIs live under the tenant/admin/internal prefixes; a chain that permits them all does not make the
+      // staff panel a visitor-facing surface.
+      const staffApi = /^\/api\/(?:tenant|admin|internal|staff|dashboard)\b/.test(path ?? '');
+      const visitor = anonymous && !staffApi && (publicPage || /^\/api\/public\b/.test(path ?? ''));
+      add(visitor ? 'visibility public' : anonymous ? 'visibility anonymous (staff UI)' : access === 'authenticated' || access.startsWith('role:') ? 'visibility internal' : '',
+        visitor ? FLOW_WEIGHTS.publicEntry : access === 'authenticated' || access.startsWith('role:') ? FLOW_WEIGHTS.internalEntry : 0);
+      add('frontend-called', publicPage ? FLOW_WEIGHTS.frontendCall : 0);
+    }
     const act = activityOf(t.file);
     add(`activity ${act} commit(s)`, act > 0 ? FLOW_WEIGHTS.activity : 0);
 
@@ -204,7 +385,7 @@ export function buildFlows(model, { entries = [], stateWrites = [], outsideCalls
       effects: found,
       score,
       why,
-      confidence: found.every((e) => e.cite) ? 'resolved' : 'inferred',
+      confidence: entryInferred ? 'inferred' : found.every((e) => e.cite) ? 'resolved' : 'inferred',
       evidence: [`${t.file}:${m.nameLine}#${m.name}`, ...found.map((e) => e.cite).filter(Boolean)].slice(0, 6),
       file: t.file,
     });

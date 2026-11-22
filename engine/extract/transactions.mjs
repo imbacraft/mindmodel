@@ -157,7 +157,11 @@ export function extractTransactions(model, selected, { outside = [], writes = []
               confidence: [...unique.values()].every((o) => o.confidence === 'resolved') ? 'resolved' : 'inferred',
               kind: 'outside-in-transaction',
               method: m.id,
-              outside: [...unique.values()].map((o) => `${o.target}${o.via ? ` via ${o.via}` : ''}${o.line ? ` at :${o.line}` : ''}`),
+              // The project hop first: "DashboardService.createOrUpdateDashboard -> RestTemplate.postForEntity". The
+              // client alone says where it leaves the process, not which service made the call, and the line is cut.
+              outside: [...unique.values()].map(
+                (o) => `${o.via ? `${o.via} → ` : ''}${o.target}${o.line ? ` at :${o.line}` : ''}`,
+              ),
               evidence: [citeOf(t, m), ...new Set([...unique.values()].map((o) => `${o.evidence[0]}`))],
               why: ['the method runs in a transaction and reaches an outside client inside it'],
             }),

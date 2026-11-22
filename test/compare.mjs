@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dirOf, loadApps } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
@@ -20,8 +21,8 @@ if (process.env.NODE_TEST_CONTEXT && !process.env.COMPARE_IN_TEST) {
   console.log('test/compare.mjs: skipped under node --test (run it directly)');
   process.exit(0);
 }
-const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
-const root = (process.env.MINDMODEL_TEST_APPS ?? cfg.root).replace(/^~/, os.homedir());
+const cfg = loadApps(here);
+const root = process.env.MINDMODEL_TEST_APPS ?? cfg.root;
 const args = process.argv.slice(2);
 const ALL = args.includes('--all');
 const only = new Set(args.filter((a) => a !== '--all'));
@@ -136,7 +137,7 @@ try {
   execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', head, 'HEAD']);
   worktree = true;
   const targets = [
-    ...cfg.apps.map((a) => ({ kind: 'app', name: a.name, dir: path.join(root, a.name) })),
+    ...cfg.apps.map((a) => ({ kind: 'app', name: a.name, dir: dirOf({ ...cfg, root }, a) })),
     ...cfg.systems.map((s) => ({ kind: 'system', name: s.name, dir: path.join(root, s.name) })),
   ].filter((t) => !only.size || only.has(t.name));
   console.log(`committed engine: ${execFileSync('git', ['-C', repo, 'rev-parse', '--short', 'HEAD']).toString().trim()}`);

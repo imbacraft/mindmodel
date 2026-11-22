@@ -14,6 +14,8 @@ import { bindCalls } from './model/calls.mjs';
 import { generatedRules, loadCatalogs, selectForModel, signatureIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
+import { extractSchedules } from './extract/schedules.mjs';
+import { anonymousWrites, springChains, surenessRules, tenantSources } from './extract/security.mjs';
 import { extractOutside } from './extract/outside.mjs';
 import { extractState } from './extract/state.mjs';
 import { extractTransactions } from './extract/transactions.mjs';
@@ -133,6 +135,7 @@ export function parseJava(text, ix = index(text)) {
     extends: type?.extends,
     implements: type?.implements,
     classLine: type?.nameLine ?? null,
+    constants: type?.constants ?? [],
     annotations: TYPE_ANNOTATIONS.filter(has),
   };
   const table = /name\s*=\s*"([^"]+)"/.exec(argsOf('Table'));
@@ -398,10 +401,8 @@ export function scan(root, { withModel = false } = {}) {
       name: j.name,
       file: j.p,
       line: j.classLine,
-      values: (/\{([^;}]*)/.exec(j.text.slice(j.text.indexOf('enum')))?.[1] ?? '')
-        .split(',')
-        .map((s) => s.trim().split(/[\s(]/)[0])
-        .filter((s) => /^[A-Z][A-Z0-9_]*$/.test(s)),
+      // From the enum's own body (syntax index), not from a search for the word `enum` in the file.
+      values: j.constants ?? [],
     }));
 
   // endpoints: the model and the catalogs decide them; coverage says how much of the project they understand.
@@ -429,6 +430,30 @@ export function scan(root, { withModel = false } = {}) {
     writes: stateFacts.filter((f) => f.family === 'state-write'),
   });
   const transactions = tx.facts;
+  // Recurring work that is not @Scheduled, and the paths that skip authentication: both are read from the model and
+  // from resource files (sureness.yml, Spring Security config), not inferred by the writer.
+  const recurring = extractSchedules(model, selected);
+  const resourceFiles = files
+    .filter((f) => /\.(?:ya?ml|properties)$/.test(f) && /sureness|application|security/i.test(f))
+    .map((f) => ({ p: R(f), text: read(f) }));
+  // Security as facts: one rule per chain prefix (Spring Security chains + sureness.yml), the anonymous writes those
+  // rules expose without a method-level check, and where the tenant comes from.
+  const methodSecurityIndex = new Map();
+  for (const t of model.types.values()) {
+    const cls = (t.ann ?? []).some((a) => selected.some(({ catalog }) => (catalog.annotations ?? []).some((x) => x.means === 'method-security' && (x.fqns ?? [x.fqn]).includes(a.fqn))));
+    if (cls) methodSecurityIndex.set(t.fqn, true);
+    for (const m of t.methods)
+      if ((m.ann ?? []).some((a) => selected.some(({ catalog }) => (catalog.annotations ?? []).some((x) => x.means === 'method-security' && (x.fqns ?? [x.fqn]).includes(a.fqn)))))
+        methodSecurityIndex.set(`${t.fqn}#${m.name}`, true);
+  }
+  // The same rule appears in several copies of a config (startup, manager, e2e); one fact per prefix and access.
+  const ruleSeen = new Set();
+  const securityRules = [
+    ...springChains(javaAll, methodSecurityIndex),
+    ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !/\/src\/test\//.test(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
+  ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
+  const securityWarnings = anonymousWrites(securityRules, endpoints, methodSecurityIndex);
+  const tenantFacts = tenantSources(javaAll);
   const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
   const feCalls = fe.flatMap((f) =>
     f.text.split('\n').flatMap((l, i) => {
@@ -739,6 +764,9 @@ export function scan(root, { withModel = false } = {}) {
     transactions,
     entities: entities.funnel ?? [],
     activityOf,
+    selected,
+    securityRules,
+    frontendPaths: joined.filter((j) => j.path).map((j) => ({ path: j.path, file: j.file })),
   });
   // The flow rank needs git activity for entry files only; the history text is not needed after it.
   forgetActivity();
@@ -789,6 +817,10 @@ export function scan(root, { withModel = false } = {}) {
     stateCaches: stateFacts.filter((f) => f.family === 'state-cache'),
     lifecycle: deep.lifecycle,
     schedules: deep.schedules,
+    recurring,
+    securityRules,
+    securityWarnings,
+    tenantSources: tenantFacts,
     flows,
     externals: {
       sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])),
@@ -809,7 +841,14 @@ export function summarize(f) {
     list.length > n ? [...list.slice(0, n), `- +${list.length - n} more in facts.json (${where})`] : list;
   // A digest line is read, not parsed: long flow and seam lines are cut with a marker and the rest stays in facts.json,
   // so the digest keeps its size on a 5,000-file app.
-  const ell = (list, n = 220) => list.map((l) => (l.length > n ? `${l.slice(0, n - 1)}…` : l));
+  const ell = (list, n = 220) =>
+    list.map((l) => {
+      if (l.length <= n) return l;
+      // Cut at a boundary: a line that ends inside `RestTemplate.postForEntity(` reads like a different call.
+      const cut = l.slice(0, n - 1);
+      const at = Math.max(cut.lastIndexOf('; '), cut.lastIndexOf(' '));
+      return `${cut.slice(0, at > n * 0.6 ? at : cut.length)}…`;
+    });
   const push = (lines) => L.push(...lines);
   const prefix = (list) => {
     if (!list.length) return '';
@@ -1019,6 +1058,40 @@ export function summarize(f) {
       'runtime.security',
     ),
   );
+  push(
+    cap(
+      f.securityRules.map(
+        (r) => `- ${r.pattern}: ${r.access === 'anonymous' ? 'anonymous allowed' : r.access} (${r.source} ${r.chain} ${r.evidence[0]})`,
+      ),
+      20,
+      'securityRules',
+    ),
+  );
+  if (f.securityWarnings.length) {
+    sec('Security warnings, computed (a prefix allows anonymous access and exposes writes with no method-level check)');
+    const byRule = new Map();
+    for (const w of f.securityWarnings) {
+      if (!byRule.has(w.rule)) byRule.set(w.rule, []);
+      byRule.get(w.rule).push(w);
+    }
+    push(
+      cap(
+        [...byRule.entries()].map(([rule, list]) => {
+          const example = list[0];
+          return `- ${rule.split(' is ')[0]} allows anonymous writes: ${list.length} endpoint(s), e.g. ${example.verb} ${example.path} (${example.handler}) — no @PreAuthorize/@Secured/@RolesAllowed`;
+        }),
+        12,
+        'securityWarnings',
+      ),
+    );
+  }
+  push(
+    cap(
+      f.tenantSources.map((t) => `- tenant from ${t.kind} ${t.name} (${t.method} ${t.evidence[0]})`),
+      8,
+      'tenantSources',
+    ),
+  );
   L.push(
     `- method security annotations: ${f.runtime.methodSecurity.map((m) => `${m.file} ×${m.n}`).join(', ') || 'none'}`,
   );
@@ -1094,21 +1167,38 @@ export function summarize(f) {
   // Ranked: half-done outside effects first, then the rest; money-related methods float up.
   const seamRank = (t) =>
     (t.kind === 'outside-then-save' ? 4 : t.kind === 'outside-in-transaction' ? 3 : 2) +
-    (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(t.method) ? 2 : 0);
+    (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(t.method) ? 2 : 0) -
+    // A read that runs in a transaction with an outside call is a smaller seam than a write: rank it below.
+    (/^[a-z0-9]+#(?:get|list|find|read|count|exists|search)/i.test(t.method ?? '') ? 2 : 0);
   const seamText = (t) => {
     const at = t.evidence?.[0]?.replace(/#.*$/, '') ?? t.method;
+    const short = (t.method ?? '').split('.').pop();
+    // Lead with the nouns that matter and keep the sentence short: this line is cut at 300 characters, and the
+    // project service that made the call is the first thing a reader needs.
     if (t.kind === 'outside-in-transaction')
-      return `OUTSIDE CALL IN TRANSACTION ${t.method} (${at}): ${(t.outside ?? []).join('; ')}. If the transaction rolls back after this, the outside side stays done.`;
+      return `OUTSIDE CALL IN TRANSACTION ${short} (${at}): ${(t.outside ?? []).join('; ')}. A rollback does not undo the outside side.`;
     if (t.kind === 'outside-then-save')
-      return `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${t.method} (${at}): ${(t.outside ?? []).join('; ')}; then ${(t.saves ?? []).join('; ')}. If a save fails, the outside side stays done.`;
-    if (t.kind === 'requires-new')
-      return `NEW TRANSACTION ${t.method} (${at}): commits on its own, even if the caller rolls back.`;
+      return `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${short} (${at}): ${(t.outside ?? []).join('; ')}; then ${(t.saves ?? []).join('; ')}.`;
+    if (t.kind === 'requires-new') return `NEW TRANSACTION ${short} (${at}): commits on its own, even if the caller rolls back.`;
     if (t.kind === 'after-commit')
-      return `AFTER COMMIT ${t.method} (${at}): ${t.mechanism === 'synchronization' ? (t.runs ?? []).join(', ') || 'code' : t.mechanism} runs only once the transaction has committed; if that fails, the commit is not undone.`;
+      return `AFTER COMMIT ${short} (${at}): ${t.mechanism === 'synchronization' ? (t.runs ?? []).join(', ') || 'code' : t.mechanism} runs once the transaction commits; a failure is not rolled back.`;
     return null;
   };
   const seams = f.transactions.filter((t) => t.kind !== 'transactional').sort((a, b) => seamRank(b) - seamRank(a));
-  push(cap(ell(seams.map((t) => `- ${seamText(t)}`), 240), 20, 'transactions'));
+  // Group by class: a service with seven boundary methods is one line naming the class, the count, the kinds, and the
+  // strongest method as the example. Every method stays in facts.json.
+  const seamGroups = new Map();
+  for (const t of seams) {
+    const cls = (t.method ?? '').split('#')[0].split('.').pop();
+    if (!seamGroups.has(cls)) seamGroups.set(cls, []);
+    seamGroups.get(cls).push(t);
+  }
+  const seamLines = [...seamGroups.entries()].map(([cls, list]) => {
+    const kinds = [...new Set(list.map((t) => t.kind))];
+    const best = list[0];
+    return `- ${cls} ×${list.length}${kinds.length > 1 ? ` (${kinds.join(', ')})` : ''}: ${seamText(best)}`;
+  });
+  push(cap(ell(seamLines, 300), 12, 'transactions'));
   const txTotal = f.transactionCounts.reduce((n, x) => n + x.count, 0);
   L.push(
     `- ${txTotal} transactional method(s) in ${f.transactionCounts.length} class(es); ${f.outsideCalls.length} outside call(s) across ${new Set(f.outsideCalls.map((c) => c.method)).size} method(s)`,
@@ -1124,23 +1214,23 @@ export function summarize(f) {
   sec(
     'Flows, computed and ranked (entry point → every effect it reaches; the bracket is the rank, the parentheses are its parts)',
   );
-  push(
-    cap(
-      ell(
-        f.flows.map((x) => {
-          const head = x.entry.verb ? `${x.entry.verb} ${x.entry.path}` : x.entry.kind;
-          // Score parts first: the line is cut at 320 characters, and a cut that hides the reasons would make the
-          // rank uncheckable. The steps are what gets trimmed; facts.json keeps them whole.
-          // The digest keeps the parts and the weights; the names they mention (entities, services) stay in facts.json.
-          const parts = x.why.map((w) => w.replace(/\s*\([^)]*\)/, '')).join(', ');
-          return `- [${x.score}] ${head} ${x.entry.cite}: (${parts}) ${x.steps.join('; ')}`;
-        }),
-        320,
-      ),
-      12,
-      'flows',
-    ),
-  );
+  // Flows grouped by entry class, like the seams: the class, its count, the best flow in full. The effects (and so any
+  // outside call's name) come before the steps, because the line is cut and a trimmed tail must not hide them.
+  const flowGroups = new Map();
+  for (const x of f.flows) {
+    const cls = (x.entry.cite.split('/').pop() ?? '').split(':')[0];
+    if (!flowGroups.has(cls)) flowGroups.set(cls, []);
+    flowGroups.get(cls).push(x);
+  }
+  const flowLines = [...flowGroups.entries()].map(([cls, list]) => {
+    const x = list[0];
+    const head = x.entry.verb ? `${x.entry.verb} ${x.entry.path}` : x.entry.kind;
+    const parts = x.why.map((w) => w.replace(/\s*\([^)]*\)/, '')).join(', ');
+    const effects = [...new Set(x.effects.map((e) => e.label))].join(', ');
+    // Effects before the parts: the line is cut, and an outside call's name must survive the cut.
+    return `- ${cls} ×${list.length}${list.length > 1 ? ` (best ${x.score})` : ''}: [${x.score}] ${head} ${x.entry.cite} effects: ${effects || 'none'} (${parts}) | ${x.steps.join('; ')}`;
+  });
+  push(cap(ell(flowLines, 340), 12, 'flows'));
   sec('Lifecycles, computed (every place each status is set; cite these instead of searching)');
   push(
     cap(
@@ -1155,6 +1245,14 @@ export function summarize(f) {
       f.schedules.map((x) => `- ${x}`),
       30,
       'schedules',
+    ),
+  );
+  sec('Recurring work that is not @Scheduled (fixed rate/delay submissions, wheel timers, project schedulers)');
+  push(
+    cap(
+      f.recurring.map((r) => `- ${r.mechanism} in ${r.method} (${r.evidence[0]})${r.confidence === 'inferred' ? ' [shape]' : ''}`),
+      12,
+      'recurring',
     ),
   );
   sec('Runs on its own (async, listeners, sockets; scheduled jobs are listed above)');
@@ -1192,6 +1290,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   fs.writeFileSync(out.replace(/\.json$/, '.md'), summarize(facts));
   const f = facts;
   console.log(
-    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.runtime.security.length} security lines, ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
+    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.runtime.security.length} security lines, ${f.recurring.length} recurring job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
   );
 }

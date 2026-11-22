@@ -428,5 +428,53 @@
         "withZone": "java.time.format.DateTimeFormatter"
       }
     }
+  ],
+  "calls": [
+    {
+      "types": [
+        "java.util.concurrent.BlockingQueue",
+        "java.util.concurrent.BlockingDeque",
+        "java.util.Queue",
+        "java.util.Deque",
+        "java.util.concurrent.LinkedBlockingQueue",
+        "java.util.concurrent.ArrayBlockingQueue",
+        "java.util.concurrent.LinkedBlockingDeque"
+      ],
+      "methods": [
+        "take",
+        "poll",
+        "peek"
+      ],
+      "means": "queue-poll"
+    },
+    {
+      "types": [
+        "java.util.concurrent.ExecutorService",
+        "java.util.concurrent.ScheduledExecutorService",
+        "java.util.concurrent.Executor",
+        "java.util.concurrent.ThreadPoolExecutor",
+        "java.util.concurrent.ScheduledThreadPoolExecutor",
+        "java.util.concurrent.ForkJoinPool"
+      ],
+      "methods": [
+        "submit",
+        "execute",
+        "invokeAll",
+        "invokeAny",
+        "schedule"
+      ],
+      "means": "executor"
+    },
+    {
+      "types": [
+        "java.util.concurrent.ScheduledExecutorService",
+        "java.util.concurrent.ScheduledThreadPoolExecutor"
+      ],
+      "methods": [
+        "scheduleAtFixedRate",
+        "scheduleWithFixedDelay"
+      ],
+      "means": "recurring"
+    }
   ]
 }

@@ -1,23 +1,40 @@
-// Hand-checked calls (§5.1). For about thirty call sites per app, a person read the source line and the receiver's
-// declaration and wrote down what the resolver must answer: the receiver type, how it was found, how the target was
-// found, and the targets themselves. The engine disagreeing with even one of these is a regression in resolution,
-// which the rates alone would hide (a wrong receiver still counts as typed).
+// Hand-checked samples: call resolution (test/truth/<app>.json), flow shape (-flows), fact shape (-facts) and security
+// facts (-security). A person read the source and wrote down the answer; the engine disagreeing is a regression the
+// rates alone would hide.
 //
-// The files are data (test/truth/<app>.json), not expectations generated at test time: they were written from the
-// source, and they change only when someone re-reads the source.
+// The files are discovered, not listed: everything in test/truth/ and in test/truth/local/ (gitignored, for a private
+// app) is run. An app that is not cloned is skipped, so a fresh clone runs the public sample only and a checkout with a
+// private corpus adds it without editing this file.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
+import { dirOf, loadApps } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
-const root = (process.env.MINDMODEL_TEST_APPS ?? cfg.root).replace(/^~/, os.homedir());
+const cfg = loadApps(here);
 
-const APPS = ['cargotracker', 'hertzbeat', 'fineract'];
+function truthFiles() {
+  const dirs = [path.join(here, 'truth'), path.join(here, 'truth', 'local')];
+  const out = [];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      const m = /^([\w.-]+?)(-flows|-facts|-security)?\.json$/.exec(f);
+      if (!m) continue;
+      out.push({ app: m[1], kind: m[2]?.slice(1) ?? 'calls', file: path.join(dir, f) });
+    }
+  }
+  return out;
+}
+
+const appDir = (name) => {
+  const a = cfg.apps.find((x) => x.name === name);
+  return a ? dirOf(cfg, a) : null;
+};
 
 // Every call site the model holds, addressed the way a reader would: file, line, method name, receiver text.
 function callIndex(model) {
@@ -31,18 +48,12 @@ function callIndex(model) {
   return by;
 }
 
-for (const app of APPS) {
-  const dir = path.join(root, app);
-  const file = path.join(here, 'truth', `${app}.json`);
-  if (!fs.existsSync(dir) || !fs.existsSync(file)) continue;
-  test(`truth ${app}`, () => {
-    const truth = JSON.parse(fs.readFileSync(file, 'utf8'));
+const checks = {
+  calls(app, truth, dir, misses) {
     const { model } = scan(dir, { withModel: true });
     const calls = callIndex(model);
-    const misses = [];
     for (const want of truth) {
-      const key = `${want.file}|${want.line}|${want.call}|${want.recv}`;
-      const got = calls.get(key);
+      const got = calls.get(`${want.file}|${want.line}|${want.call}|${want.recv}`);
       if (!got) {
         misses.push(`${want.file}:${want.line} ${want.call}: the call site is gone`);
         continue;
@@ -55,11 +66,111 @@ for (const app of APPS) {
       };
       const expected = { recvFqn: want.recvFqn, recvHow: want.recvHow, how: want.how, targets: want.targets };
       if (JSON.stringify(actual) !== JSON.stringify(expected))
-        misses.push(
-          `${want.file}:${want.line} ${want.call}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-        );
+        misses.push(`${want.file}:${want.line} ${want.call}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
     }
-    assert.deepEqual(misses, [], `${app}: ${misses.length} hand-checked call(s) disagree`);
     assert.ok(truth.length >= 29, `${app}: the hand-checked sample is still there`);
+  },
+
+  flows(app, truth, dir, misses) {
+    const { flows } = scan(dir);
+    for (const want of truth) {
+      const rank = flows.findIndex((f) => f.entry.cite.endsWith(want.entry)) + 1;
+      const got = flows[rank - 1];
+      if (!got) {
+        misses.push(`${want.entry}: no such flow`);
+        continue;
+      }
+      if (want.kind && got.entry.kind !== want.kind) misses.push(`${want.entry}: kind ${got.entry.kind}, expected ${want.kind}`);
+      if (want.maxRank && rank > want.maxRank) misses.push(`${want.entry}: rank ${rank}, expected top ${want.maxRank}`);
+      for (const hop of want.reaches ?? [])
+        if (!got.steps.some((s) => s.startsWith(hop)))
+          misses.push(`${want.entry}: does not reach ${hop} (steps: ${got.steps.join('; ')})`);
+    }
+  },
+
+  facts(app, truth, dir, misses) {
+    const facts = scan(dir);
+    for (const want of truth) {
+      if (want.family === 'enum') {
+        const e = (facts.entities.enums ?? []).find((x) => x.name === want.name);
+        if (!e) misses.push(`enum ${want.name}: missing`);
+        else if (JSON.stringify(e.values) !== JSON.stringify(want.values))
+          misses.push(`enum ${want.name}: ${JSON.stringify(e.values)}, expected ${JSON.stringify(want.values)}`);
+        continue;
+      }
+      if (want.family === 'schedule') {
+        const s = (facts.schedules ?? []).find((x) => x.includes(want.methodContains));
+        if (!s) misses.push(`schedule ${want.methodContains}: missing`);
+        else if (want.when && !s.endsWith(want.when))
+          misses.push(`schedule ${want.methodContains}: "${s.split(': ').pop()}", expected "${want.when}"`);
+        continue;
+      }
+      if (want.family === 'lifecycle') {
+        const line = (facts.lifecycle ?? []).find((x) => new RegExp(`^  ${want.value}: `).test(x));
+        if (!line) {
+          misses.push(`lifecycle ${want.value}: not listed`);
+          continue;
+        }
+        for (const bad of want.notSetIn ?? [])
+          if (line.includes(bad)) misses.push(`lifecycle ${want.value}: wrongly set in ${bad}`);
+        for (const good of want.setIn ?? [])
+          if (!line.includes(good)) misses.push(`lifecycle ${want.value}: does not name ${good} (${line.slice(0, 160)})`);
+        continue;
+      }
+      const list = facts[want.family === 'transaction' ? 'transactions' : `${want.family}s`] ?? [];
+      const got = list.find((f) => (f.method ?? '').includes(want.methodContains) && (!want.kind || f.kind === want.kind));
+      if (!got) {
+        misses.push(`${want.methodContains}: no such fact`);
+        continue;
+      }
+      const outside = (got.outside ?? []).join('; ');
+      if (want.outsideStartsWith && !outside.startsWith(want.outsideStartsWith))
+        misses.push(`${want.methodContains}: outside is "${outside}", expected "${want.outsideStartsWith}…"`);
+      if (want.evidenceContains && !(got.evidence ?? []).some((e) => e.includes(want.evidenceContains)))
+        misses.push(`${want.methodContains}: evidence does not cite ${want.evidenceContains}`);
+    }
+  },
+
+  security(app, truth, dir, misses) {
+    const facts = scan(dir);
+    const WRITE = ['POST', 'PUT', 'PATCH', 'DELETE'];
+    // Only API prefixes: a docs or actuator permit is not an API write, and the truth is about the API surface.
+    const anonWrites = (facts.securityRules ?? [])
+      .filter((r) => /^\/api\b/.test(r.pattern) && r.access === 'anonymous' && (r.verbs ?? ['*']).some((v) => v === '*' || WRITE.includes(v)))
+      .map((r) => `${r.verbs.join('|')} ${r.pattern}`)
+      .sort();
+    for (const want of truth) {
+      if (want.warningCount !== undefined && (facts.securityWarnings ?? []).length !== want.warningCount)
+        misses.push(`warnings: ${facts.securityWarnings.length}, expected ${want.warningCount}`);
+      if (want.anonymousWriteRules) {
+        const got = JSON.stringify(anonWrites),
+          exp = JSON.stringify([...want.anonymousWriteRules].sort());
+        if (got !== exp) misses.push(`anonymous write rules: ${got}, expected ${exp}`);
+      }
+      if (want.warning) {
+        const w = (facts.securityWarnings ?? []).find(
+          (x) => x.verb === want.warning.verb && x.path === want.warning.path && (x.handler ?? '').includes(want.warning.handlerContains),
+        );
+        if (!w) misses.push(`${want.warning.handlerContains}: no anonymous-write warning`);
+        else if (!(w.evidence ?? []).some((e) => e.includes(want.warning.evidenceContains)))
+          misses.push(`${want.warning.handlerContains}: evidence does not cite ${want.warning.evidenceContains}`);
+      }
+      if (want.tenant) {
+        const t = (facts.tenantSources ?? []).find(
+          (x) => x.kind === want.tenant.kind && x.name === want.tenant.name && (x.method ?? '').includes(want.tenant.methodContains),
+        );
+        if (!t) misses.push(`tenant ${want.tenant.kind}:${want.tenant.name} from ${want.tenant.methodContains}: missing`);
+      }
+    }
+  },
+};
+
+for (const { app, kind, file } of truthFiles()) {
+  const dir = appDir(app);
+  test(`truth ${kind} ${app}`, { skip: !dir || !fs.existsSync(dir) ? `${app} is not cloned` : false }, () => {
+    const truth = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const misses = [];
+    checks[kind](app, truth, dir, misses);
+    assert.deepEqual(misses, [], `${app}: ${misses.length} hand-checked ${kind} fact(s) disagree`);
   });
 }

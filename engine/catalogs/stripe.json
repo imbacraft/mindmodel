@@ -1,0 +1,25 @@
+{
+ "id": "stripe",
+ "version": 1,
+ "when": { "imports": ["com.stripe."], "deps": ["com.stripe:stripe-java"] },
+ "annotations": [],
+ "calls": [
+  {
+   "types": [
+    "com.stripe.model.checkout.Session",
+    "com.stripe.model.PaymentIntent",
+    "com.stripe.model.Charge",
+    "com.stripe.model.Refund",
+    "com.stripe.model.Customer",
+    "com.stripe.model.Price",
+    "com.stripe.model.Product",
+    "com.stripe.model.Account",
+    "com.stripe.model.AccountLink",
+    "com.stripe.model.Subscription"
+   ],
+   "methods": ["create", "retrieve", "update", "capture", "confirm", "cancel", "delete", "list", "expire"],
+   "means": "outside-call",
+   "kind": "Stripe"
+  }
+ ]
+}

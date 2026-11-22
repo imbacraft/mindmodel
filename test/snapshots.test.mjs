@@ -14,10 +14,11 @@ import { checkSchema, validate } from '../engine/validate.mjs';
 import { renderPage } from '../engine/render.mjs';
 import { validateSystem, renderSystemPage } from '../engine/system-render.mjs';
 import { git } from '../engine/activity.mjs';
+import { dirOf, loadApps } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
-const root = (process.env.MINDMODEL_TEST_APPS ?? cfg.root).replace(/^~/, os.homedir());
+const cfg = loadApps(here);
+const root = process.env.MINDMODEL_TEST_APPS ?? cfg.root;
 const snapDir = path.join(here, 'snapshots');
 const FACTS_SCHEMA = JSON.parse(fs.readFileSync(path.join(here, '../schema/facts.schema.json'), 'utf8'));
 
@@ -74,7 +75,7 @@ function moved(dir, commit) {
 const skipIf = (dir, app) => (!fs.existsSync(dir) ? `${dir} not found` : moved(dir, app.commit));
 
 for (const app of cfg.apps) {
-  const dir = path.join(root, app.name),
+  const dir = dirOf({ ...cfg, root }, app),
     skip = skipIf(dir, app);
   test(`app ${app.name}`, (t) => {
     if (skip) return t.skip(skip);

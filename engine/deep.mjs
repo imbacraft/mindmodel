@@ -49,9 +49,10 @@ export function humanSchedule(args) {
       `${a('second', '0')} ${a('minute', '0')} ${a('hour', '0')} ${a('dayOfMonth', '*')} ${a('month', '*')} ${a('dayOfWeek', '*')}`,
     );
   }
+  // `fixedRate = 10 * 60 * 1000` is one value, not 10: read the arithmetic, don't take the first integer.
   const num = (k) => {
-    const m = new RegExp(`\\b${k}\\s*=\\s*([\\d_]+)L?`).exec(args);
-    return m ? Number(m[1].replace(/_/g, '')) : null;
+    const m = new RegExp(`\\b${k}\\s*=\\s*([0-9_]+(?:\\s*\\*\\s*[0-9_]+)*)L?`).exec(args);
+    return m ? m[1].split('*').reduce((a, b) => a * Number(b.replace(/_/g, '').trim()), 1) : null;
   };
   const parts = [];
   const cron = /cron\s*=\s*"([^"]+)"/.exec(args);
@@ -159,7 +160,9 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
             .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
           const where = m ? cite(f, m) : `${f.p}:${i + 1}`;
           const stmt = f.lines.slice(Math.max(0, i - 2), i + 1).join(' ');
-          const call = [...conditionalNames].find((n) => new RegExp(`\\.${n}\\s*\\(`).test(stmt));
+          // The call and the value must share a line: a transition on one line and a status literal three lines
+          // later (a repository query argument) are not the same statement.
+          const call = [...conditionalNames].find((n) => new RegExp(`\\.${n}\\s*\\(`).test(l));
           if (call) {
             const vals = [
                 ...f.lines
@@ -168,7 +171,7 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
                   .split(/\)\s*;/)[0]
                   .matchAll(new RegExp(`${en}\\.([A-Z][A-Z0-9_]*)`, 'g')),
               ].map((y) => y[1]),
-              prev = [...stmt.matchAll(new RegExp(`${en}\\.([A-Z][A-Z0-9_]*)`, 'g'))].map((y) => y[1]);
+              prev = [...l.matchAll(new RegExp(`${en}\\.([A-Z][A-Z0-9_]*)`, 'g'))].map((y) => y[1]);
             const all = [...new Set([...prev, ...vals])];
             if (all[all.length - 1] === x[1])
               s.conditional.push(`${where} (from ${all.slice(0, -1).join('/') || '?'} via ${call})`);
@@ -177,7 +180,9 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
           // Direct: setXxxStatus(V), builder .xxxStatus(V), or xxxStatus = V (field default or assignment).
           else if (
             new RegExp(
-              `(\\.set\\w*(Status|State)\\s*\\(\\s*|\\.\\w*(status|Status|state|State)\\s*\\(\\s*|\\w*(status|Status|state|State)\\s*=\\s*)${en}\\.${x[1]}\\b`,
+              // A setter (`setStatus`), a builder field (`status(`), or an assignment. Not every method whose name ends
+              // in Status: `findAllByStatus(X)` is a query, and counting it made a read look like a write.
+              `(\\.set\\w*(Status|State)\\s*\\(\\s*|\\.(status|state)\\s*\\(\\s*|\\w*(status|Status|state|State)\\s*=\\s*)${en}\\.${x[1]}\\b`,
             ).test(l)
           )
             s.set.push(where);
@@ -185,11 +190,35 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
           else if (
             m &&
             !new RegExp(`[=!]=\\s*${en}\\.${x[1]}|${en}\\.${x[1]}\\s*[=!]=|case\\s+${en}|equals\\(`).test(l) &&
-            /[?:=]/.test(l.replace(/[=!]=/g, '')) &&
+            // The literal itself must be what is being chosen: `status = X`, `x ? A : X`. A query argument such as
+            // `List.of(Status.TRIAL)` is a read, even when the method sets a status somewhere else.
+            new RegExp(`[?:=]\\s*[^;]*\\b${en}\\.${x[1]}\\b`).test(l.replace(/[=!]=/g, '')) &&
             STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n'))
           )
             s.set.push(`${where} (via a variable)`);
           else s.read++;
+        }
+      });
+    }
+    // A status chosen by a helper and handed to a builder: `.status(initialStatus)`, where `initialStatus` came
+    // from a method that returns constants through a switch. The literal never appears at the builder line.
+    for (const f of files) {
+      f.lines.forEach((l, i) => {
+        const call = /\.status\(\s*(\w+)\s*\)/.exec(l);
+        if (!call) return;
+        const m = f.ix.methods.find((mm) => mm.start <= i + 1 && i + 1 <= mm.end);
+        if (!m) return;
+        const body = f.lines.slice(m.start - 1, m.end).join('\n');
+        const from = new RegExp('\\b' + call[1] + '\\s*=\\s*([A-Za-z0-9_]+)\\s*\\(').exec(body)?.[1];
+        if (!from) return;
+        const helper = f.ix.methods.find((mm) => mm.name === from);
+        if (!helper) return;
+        const helperText = f.lines.slice(helper.start - 1, helper.end).join('\\n');
+        for (const v of helperText.matchAll(
+          new RegExp('(?:case[^:]*->\\s*|return\\s+)' + en + '\\.([A-Z][A-Z0-9_]*)', 'g'),
+        )) {
+          const st = (sites[v[1]] ??= { set: [], conditional: [], read: 0 });
+          st.set.push(`${cite(f, m)} (chosen in ${cite(f, helper)})`);
         }
       });
     }

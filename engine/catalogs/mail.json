@@ -18,12 +18,24 @@
     {
       "type": "org.springframework.mail.javamail.JavaMailSender",
       "means": "outside-call",
-      "kind": "mail"
+      "kind": "mail",
+      "methods": [
+        "send",
+        "sendAsync",
+        "sendMessage",
+        "sendSimpleMessage"
+      ]
     },
     {
       "type": "org.springframework.mail.javamail.JavaMailSenderImpl",
       "means": "outside-call",
-      "kind": "mail"
+      "kind": "mail",
+      "methods": [
+        "send",
+        "sendAsync",
+        "sendMessage",
+        "sendSimpleMessage"
+      ]
     },
     {
       "type": "org.springframework.mail.SimpleMailMessage",
@@ -33,7 +45,11 @@
     {
       "type": "jakarta.mail.Transport",
       "means": "outside-call",
-      "kind": "mail"
+      "kind": "mail",
+      "methods": [
+        "send",
+        "sendMessage"
+      ]
     }
   ]
 }

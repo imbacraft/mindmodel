@@ -185,7 +185,10 @@
             "ignore",
             "ui-bean",
             "lifecycle",
-            "framework-artifact"
+            "framework-artifact",
+            "queue-poll",
+            "executor",
+            "recurring"
           ]
         },
         "verb": {

@@ -192,6 +192,14 @@ export function index(text) {
             .map((c) => c.childForFieldName('name')?.text ?? c.text.split(/\s/)[0]),
           // A record's header names its components; the accessors and the canonical constructor are implicit.
           components: kind === 'record' ? paramsOf(node) : undefined,
+          // An enum's constants, from its own body. Reading them by searching the file for `enum` attached a
+          // neighbouring enum's constants to the wrong type.
+          constants:
+            kind === 'enum'
+              ? (node.childForFieldName('body')?.namedChildren ?? [])
+                  .filter((c) => c.type === 'enum_constant')
+                  .map((c) => c.childForFieldName('name')?.text ?? c.text.split(/[\s(]/)[0])
+              : undefined,
           abstract: /\babstract\b/.test(modifiersOf(node)?.text ?? ''),
           ann,
           annotations: annotationStrings(ann),
@@ -221,6 +229,8 @@ export function index(text) {
           locals: [],
           assigns: [],
           catches: [],
+          loops: [],
+          lambdas: [],
           // Overloads share a name; arity is what tells them apart in a fact id without touching the source order.
           arity: (node.childForFieldName('parameters')?.namedChildren ?? []).filter((c) =>
             /parameter$/.test(c.type),
@@ -263,6 +273,14 @@ export function index(text) {
       const t = node.childForFieldName('type'),
         n = node.childForFieldName('name');
       if (t && n) method.locals.push({ name: n.text, type: t.text, line: n.startPosition.row + 1, init: null });
+      method.loops.push({ start: node.startPosition.row + 1, end: node.endPosition.row + 1 });
+    } else if (method && node.type === 'lambda_expression') {
+      // The calls inside a lambda belong to the enclosing method, but they run elsewhere (a worker started by an
+      // executor). Their range is what lets a walk step into the Runnable.
+      method.lambdas.push({ start: node.startPosition.row + 1, end: node.endPosition.row + 1 });
+    } else if (method && (node.type === 'while_statement' || node.type === 'do_statement' || node.type === 'for_statement')) {
+      // Loop ranges are what tells a polling consumer from a one-shot call: a queue poll inside a loop is a worker.
+      method.loops.push({ start: node.startPosition.row + 1, end: node.endPosition.row + 1 });
     } else if (method && node.type === 'assignment_expression') {
       const [left, right] = node.namedChildren;
       if (left && right)

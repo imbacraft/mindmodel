@@ -1,0 +1,10 @@
+[
+ {
+  "family": "transaction",
+  "methodContains": "#addMonitor(",
+  "kind": "outside-in-transaction",
+  "outsideStartsWith": "DashboardService.createOrUpdateDashboard → RestTemplate.postForEntity",
+  "evidenceContains": "DashboardService.java",
+  "note": "the HTTP call is made by the Grafana DashboardService, not by the collector job in addMonitor"
+ }
+]

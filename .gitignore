@@ -25,3 +25,8 @@ node_modules/
 
 # --- Local test snapshots (built from locally cloned test apps) ------------------
 test/snapshots/
+
+# --- Private test apps (local only, never published) -----------------------------
+# Private corpus apps live in *.local.json and local/ folders; the loaders merge them in.
+*.local.json
+test/**/local/

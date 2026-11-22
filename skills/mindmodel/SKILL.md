@@ -48,6 +48,6 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
 6. **Report** to the user, briefly:
    - where the page is (`<root>/mindmodel/index.html`; it opens offline in any browser);
    - the map in brief (core sentence, regions, ranked rules and stories), from the subagent's message;
-   - **the owner-only findings** (security weaknesses, serious bugs) from the subagent, clearly marked as *not in the map*;
+   - **the owner-only findings** (security weaknesses, serious bugs) from `mindmodel/.work/findings.md`, clearly marked as *not in the map*: severity, claim, evidence, why it matters, suggested fix. The digest's computed security warnings are where most of them start;
    - the fact corrections the subagent reported, if any (also in `mindmodel/.work/corrections.md`), as engine feedback;
    - that `mindmodel/.work/` holds scan data and is usually not worth committing.

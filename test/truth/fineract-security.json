@@ -1,0 +1,7 @@
+[
+ {
+  "warningCount": 0,
+  "anonymousWriteRules": ["POST /api/*/echo"],
+  "note": "requestMatchers(HttpMethod.OPTIONS, \"/api/**\") opens OPTIONS only; the only anonymous write is the POST echo rule, and no endpoint it names exists in this tree"
+ }
+]

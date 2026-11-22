@@ -8,12 +8,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
+import { dirOf, loadApps } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
+const cfg = loadApps(here);
 const root = (process.env.MINDMODEL_TEST_APPS ?? cfg.root).replace(/^~/, os.homedir());
+// Public apps' baselines are committed; a private app's numbers go beside them in .local.json (gitignored), so a
+// clone without that app sees exactly the public baseline.
 const baselineFile = path.join(here, 'baselines/coverage.json');
-const baseline = fs.existsSync(baselineFile) ? JSON.parse(fs.readFileSync(baselineFile, 'utf8')) : {};
+const localFile = path.join(here, 'baselines/coverage.local.json');
+const readJson = (f) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {});
+const baseline = readJson(baselineFile);
+const localBaseline = readJson(localFile);
+const stores = { public: baseline, local: localBaseline };
 
 // Annotations the shipped catalogs explain. If one of these ever shows up as unknown, a catalog stopped being
 // selected (a build file the reader cannot read, an import the model cannot resolve): that is the regression this
@@ -41,14 +48,14 @@ const snapshot = (cov) => ({
   uncataloguedDependencies: cov.uncataloguedDependenciesTotal,
 });
 
-function compare(t, app, now) {
+function compare(t, app, now, store = baseline) {
   // UPDATE=1 is how the owner accepts an intended change: every app is rewritten, not only a new one.
   if (process.env.UPDATE) {
-    baseline[app] = now;
+    store[app] = now;
     t.diagnostic(`${app}: baseline updated`);
     return;
   }
-  const was = baseline[app];
+  const was = store[app] ?? baseline[app] ?? localBaseline[app];
   if (!was) {
     baseline[app] = now;
     t.diagnostic(`${app}: baseline created (review test/baselines/coverage.json)`);
@@ -81,7 +88,7 @@ function compare(t, app, now) {
 }
 
 for (const app of cfg.apps) {
-  const dir = path.join(root, app.name);
+  const dir = dirOf(cfg, app);
   test(
     `coverage ${app.name}`,
     { skip: !fs.existsSync(dir) && `${dir} not found` },
@@ -118,7 +125,7 @@ for (const app of cfg.apps) {
         );
 
       assert.deepStrictEqual(facts.coverage.degradedFiles, [], 'no file failed to parse');
-      compare(t, app.name, snapshot(cov));
+      compare(t, app.name, snapshot(cov), app.local ? localBaseline : baseline);
     },
   );
 }
@@ -136,4 +143,5 @@ after(() => {
   if (!process.env.UPDATE) return;
   fs.mkdirSync(path.dirname(baselineFile), { recursive: true });
   fs.writeFileSync(baselineFile, `${JSON.stringify(baseline, null, 1)}\n`);
+  if (Object.keys(localBaseline).length) fs.writeFileSync(localFile, `${JSON.stringify(localBaseline, null, 1)}\n`);
 });

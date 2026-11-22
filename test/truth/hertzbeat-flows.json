@@ -1,0 +1,11 @@
+[
+ {
+  "entry": "MetricsRealTimeAlertCalculator.java:130#startCalculate",
+  "kind": "worker",
+  "reaches": [
+   "AlertNoticeDispatch#dispatchAlarm",
+   "AlertNoticeDispatch#sendNoticeMsg"
+  ],
+  "note": "the alert pipeline: calculator worker -> reduce -> group -> dispatch -> notification send"
+ }
+]
