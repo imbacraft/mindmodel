@@ -105,12 +105,12 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
       const hit = Object.entries(EXT).find(([k]) => (m[1] + '.').includes(k + '.') || m[1].startsWith(k));
       if (hit) f.outside.set(m[2], hit[1].replace(/^\((?:HTTP client: )?|\)$/g, ''));
     }
-    f.fields = new Map();
-    const inMethod = (pos) => f.ix.methods.some((m) => m.open < pos && pos < m.close);
-    for (const m of f.ix.src.matchAll(
-      /(?:^|[;{}])\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:(?:private|protected|public|final|static)\s+)*([A-Z][\w.]*)(?:<[^;=(){}]*>)?\s+(\w+)\s*(?=[;=])/g,
-    ))
-      if (!inMethod(m.index + m[0].length)) f.fields.set(m[2], m[1].split('.').pop());
+    // Fields of this class with their declared type: what a receiver is (repository, client, bean).
+    f.fields = new Map(
+      f.ix.fields
+        .filter((x) => x.owner === f.name && /^[A-Z]/.test(x.type))
+        .map((x) => [x.name, x.type.replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop()]),
+    );
     for (const [v, t] of f.fields) {
       if (KNOWN[t]) f.outside.set(v, KNOWN[t]);
       else if (f.outside.has(t)) f.outside.set(v, f.outside.get(t));
@@ -130,22 +130,15 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     // Under JTA (EJBs, jakarta.transaction) a JMS send joins the transaction: it is delivered only on commit.
     f.jta = ejb || /import\s+(jakarta|javax)\.transaction\.(Transactional|\*)/.test(f.text);
   }
-  // Calls in a method's own body (nested methods such as afterCommit() excluded: they run at another time).
-  const callCache = new Map();
-  const callsIn = (f, m) => callCache.get(m) ?? callCache.set(m, callsInUncached(f, m)).get(m);
-  const callsInUncached = (f, m) => {
-    const nested = f.ix.methods.filter((n) => n !== m && n.open > m.open && n.close < m.close);
-    const body = f.ix.src.slice(m.open, m.close);
-    return [...body.matchAll(/\b(\w+)\s*\.\s*(\w+)\s*\(/g)]
-      .filter((c) => !nested.some((n) => n.open - m.open < c.index && c.index < n.close - m.open))
-      .map((c) => ({ recv: c[1], method: c[2], line: f.ix.lineOf(m.open + c.index) }));
-  };
+  // Calls a method makes itself (a nested method keeps its own calls: it runs at another time).
+  const callsIn = (m) =>
+    (m.calls ?? []).filter((c) => c.recv).map((c) => ({ recv: c.recv, method: c.name, line: c.line }));
   const VERB =
     /^(create|retrieve|update|list|cancel|capture|confirm|refund|send|delete|post|put|patch|get|exchange|execute|call|publish|upload|download|invoke|search|convertAndSend)$|^(create|send|publish|upload|refund|charge|post|put)[A-Z]/;
   // Only calls that change something outside make a seam; reads (get, list, retrieve, search) leave nothing behind.
   const READ = /^(get|list|retrieve|search)$/;
   const direct = (f, m) =>
-    callsIn(f, m)
+    callsIn(m)
       .filter((c) => f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method))
       .map((c) => ({ ...c, what: `${f.outside.get(c.recv)} ${c.recv}.${c.method}()` }));
   const targets = (f, c) => {
@@ -153,14 +146,14 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     return t ? implsOf(t).flatMap((g) => g.ix.methods.filter((m) => m.name === c.method).map((m) => ({ g, m }))) : [];
   };
   const reach = (f, m, seen = new Set([m])) => {
-    const body = f.ix.src.slice(m.open, m.close);
-    for (const c of body.matchAll(/(?:^|[^.\w])(?:this\s*\.\s*)?(\w+)\s*\(/g))
-      for (const n of f.ix.methods.filter(
-        (n) => n.name === c[1] && !seen.has(n) && !(n.open > m.open && n.close < m.close),
-      )) {
-        seen.add(n);
-        reach(f, n, seen);
-      }
+    for (const c of m.calls ?? [])
+      if (!c.recv || c.recv === 'this')
+        for (const n of f.ix.methods.filter(
+          (n) => n.name === c.name && !seen.has(n) && !(n.open > m.open && n.close < m.close),
+        )) {
+          seen.add(n);
+          reach(f, n, seen);
+        }
     return [...seen];
   };
   // Outside calls a method reaches: its own, its same-class helpers', and up to two bean hops away.
@@ -171,7 +164,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
     for (const r of reach(f, m)) {
       for (const c of direct(f, r)) res.push({ line: c.line, what: c.what });
       if (depth)
-        for (const c of callsIn(f, r))
+        for (const c of callsIn(r))
           for (const { g, m: t } of targets(f, c))
             for (const d of outsideOf(g, t, depth - 1, seen))
               res.push({ line: c.line, what: `${d.what} via ${g.name}.${t.name}` });
@@ -180,7 +173,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   };
   const savesOf = (f, m) =>
     reach(f, m).flatMap((r) =>
-      callsIn(f, r)
+      callsIn(r)
         .filter((c) => WRITE.test(c.method) && repoEntity.has(f.fields.get(c.recv)))
         .map((c) => ({ line: c.line, what: `${repoEntity.get(f.fields.get(c.recv))} ${c.method}` })),
     );
@@ -201,7 +194,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
       for (const r of span)
         for (const c of direct(f, r)) if (!enlisted(f, c.what)) out.push(`calls ${c.what} at :${c.line}${via(r)}`);
       for (const r of span)
-        for (const c of callsIn(f, r))
+        for (const c of callsIn(r))
           for (const { g, m: t } of targets(f, c)) {
             if (t.annotations.some((a) => ASYNC.test(a)))
               out.push(`starts @Async ${g.name}.${t.name} at :${c.line}${via(r)} (${cite(g.p, t)})`);
@@ -219,7 +212,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
       for (const n of f.ix.methods.filter(
         (n) => n.name === 'afterCommit' && span.some((r) => n.open > r.open && n.close < r.close),
       )) {
-        const then = callsIn(f, n).flatMap((c) =>
+        const then = callsIn(n).flatMap((c) =>
           targets(f, c).map(
             ({ g, m: t }) => `${g.name}.${t.name}${t.annotations.some((a) => ASYNC.test(a)) ? ' (@Async)' : ''}`,
           ),
@@ -252,7 +245,7 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
           `AFTER-COMMIT LISTENER ${f.name}.${m.name} ${cite(f.p, m)}: runs after the publishing transaction commits.`,
         );
       if (!m.annotations.some((a) => JOB.test(a))) continue;
-      const dels = callsIn(f, m).filter((c) => /^delete/.test(c.method) && repoEntity.has(f.fields.get(c.recv)));
+      const dels = callsIn(m).filter((c) => /^delete/.test(c.method) && repoEntity.has(f.fields.get(c.recv)));
       for (const c of dels)
         seams.push(
           `JOB DELETES ${repoEntity.get(f.fields.get(c.recv))} rows ${f.name}.${m.name} ${cite(f.p, m)} (${c.method} at :${c.line}): check whether an outside callback can still arrive for a deleted row.`,
@@ -428,11 +421,10 @@ export function javaFacts({ java, repoEntity, EXT, enums, entities, shortlist, e
   const walk = (f, m, depth, seen, ev) => {
     if (seen.has(m) || ev.length >= 12) return;
     seen.add(m);
-    const calls = [...callsIn(f, m)];
-    const local = [...f.ix.src.slice(m.open, m.close).matchAll(/(?:^|[^.\w])(\w+)\s*\(/g)].map((c) => ({
-      name: c[1],
-      line: f.ix.lineOf(m.open + c.index),
-    }));
+    const calls = callsIn(m);
+    const local = (m.calls ?? [])
+      .filter((c) => !c.recv || c.recv === 'this')
+      .map((c) => ({ name: c.name, line: c.line }));
     const steps = [];
     for (const c of calls) {
       if (f.outside.has(c.recv) && VERB.test(c.method) && !READ.test(c.method))

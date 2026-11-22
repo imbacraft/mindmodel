@@ -99,7 +99,8 @@ for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))
     for (const p of javaFiles(dir)) {
       const rel = path.relative(dir, p).split(path.sep).join('/');
       // Indexed and dropped one at a time: keeping every index of a 27 MB corpus would double the test's memory.
-      const ix = index(fs.readFileSync(p, 'utf8'));
+      const text = fs.readFileSync(p, 'utf8');
+      const ix = index(text);
       if (ix.degraded) degraded++;
       methods += ix.methods.length;
       fields += (ix.fields ?? []).length;
@@ -108,7 +109,7 @@ for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))
         if (!(m.start <= nameLine && nameLine <= m.end))
           badIndex.push(`${rel}#${m.name}: start ${m.start}, name ${nameLine}, end ${m.end}`);
         if (!(m.open < m.close)) badIndex.push(`${rel}#${m.name}: open ${m.open} >= close ${m.close}`);
-        else if (ix.src[m.open] !== '{' || ix.src[m.close] !== '}')
+        else if (text[m.open] !== '{' || text[m.close] !== '}')
           badIndex.push(`${rel}#${m.name}: body offsets are not braces`);
       }
       for (const x of ix.types) {

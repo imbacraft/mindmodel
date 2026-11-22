@@ -20,44 +20,6 @@ await Parser.init();
 const parser = new Parser();
 parser.setLanguage(await Language.load(path.join(VENDOR, 'tree-sitter-java.wasm')));
 
-// Blank out comments, strings, char literals and text blocks (same length, newlines kept) so braces and
-// keywords inside them can't fool the parser. Quotes stay, so `"..."` still reads as a string.
-export function clean(text) {
-  let out = '',
-    i = 0;
-  const n = text.length,
-    blank = (s) => s.replace(/[^\n]/g, ' ');
-  while (i < n) {
-    const c = text[i],
-      d = text[i + 1];
-    let end = -1;
-    if (c === '/' && d === '/') (end = text.indexOf('\n', i)), (end = end < 0 ? n : end);
-    else if (c === '/' && d === '*') (end = text.indexOf('*/', i + 2)), (end = end < 0 ? n : end + 2);
-    else if (text.startsWith('"""', i)) {
-      end = text.indexOf('"""', i + 3);
-      end = end < 0 ? n : end + 3;
-      out += '"""' + blank(text.slice(i + 3, end - 3)) + '"""';
-      i = end;
-      continue;
-    } else if (c === '"' || c === "'") {
-      let j = i + 1;
-      while (j < n && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
-      end = Math.min(j + 1, n);
-      out += c + blank(text.slice(i + 1, end - 1)) + (text[end - 1] === c ? c : '');
-      i = end;
-      continue;
-    }
-    if (end >= 0) {
-      out += blank(text.slice(i, end));
-      i = end;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
-
 // Java's declaration kinds, in the words the facts use.
 const TYPE_KINDS = new Map([
   ['class_declaration', 'class'],
@@ -118,24 +80,9 @@ const paramsOf = (node) => {
   return out;
 };
 
-// Every type, method and field in a file, with exact line ranges and the body offsets callers slice `src` with.
+// Every type, method, field and call in a file, with exact line ranges and body offsets.
 // `start` is the declaration's first line (annotations and modifiers included); `nameLine` is the line of the name.
 export function index(text) {
-  const src = clean(text),
-    starts = [0];
-  for (let i = 0; i < src.length; i++) if (src[i] === '\n') starts.push(i + 1);
-  // Position -> 1-based line. Offsets from the parser are JS string indices, so they index `src` directly.
-  const lineOf = (pos) => {
-    let lo = 0,
-      hi = starts.length - 1;
-    while (lo < hi) {
-      const m = (lo + hi + 1) >> 1;
-      if (starts[m] <= pos) lo = m;
-      else hi = m - 1;
-    }
-    return lo + 1;
-  };
-
   const tree = parser.parse(text);
   const root = tree.rootNode;
 
@@ -143,9 +90,9 @@ export function index(text) {
     methods = [],
     fields = [];
 
-  // One traversal for all three, not one per node kind: a large file has a million nodes. A type's name is carried
-  // down so every field knows the type whose body holds it.
-  const visit = (node, owner) => {
+  // One traversal for all of it, not one per node kind: a large file has a million nodes. The type name is carried
+  // down (a field's owner) and so is the method (a call belongs to the method that makes it, not to its caller).
+  const visit = (node, owner, method) => {
     const kind = TYPE_KINDS.get(node.type);
     if (kind) {
       const name = node.childForFieldName('name'),
@@ -173,7 +120,7 @@ export function index(text) {
       // Abstract and interface methods have no body, and every caller slices the body.
       if (name && body) {
         const ann = annotationsOf(node);
-        methods.push({
+        method = {
           name: name.text,
           start: node.startPosition.row + 1,
           nameLine: name.startPosition.row + 1,
@@ -183,33 +130,51 @@ export function index(text) {
           ann,
           annotations: annotationStrings(ann),
           params: paramsOf(node),
+          calls: [],
           isPublic: /\bpublic\b/.test(modifiersOf(node)?.text ?? ''),
-        });
+        };
+        methods.push(method);
       }
+    } else if (node.type === 'method_invocation' || node.type === 'object_creation_expression') {
+      // A call's receiver is the last identifier of the object (`a.b.repo.save()` -> repo); a chained expression
+      // (`getRepo().save()`) has no receiver we can resolve, so it carries none. `new Foo()` is a call to Foo's
+      // constructor and is kept with no receiver, which is how same-class helper calls are found.
+      const name = node.childForFieldName('name') ?? node.childForFieldName('type');
+      const obj = node.childForFieldName('object')?.text;
+      const recv = obj && /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(obj) ? obj.split('.').pop() : null;
+      if (method && name && (!obj || recv))
+        method.calls.push({
+          name: node.type === 'object_creation_expression' ? name.text.replace(/<.*/, '').split('.').pop() : name.text,
+          recv,
+          line: node.startPosition.row + 1,
+        });
     } else if (node.type === 'field_declaration') {
       const fieldType = node.childForFieldName('type'),
         name = node.childForFieldName('declarator')?.childForFieldName('name'),
         mods = modifiersOf(node)?.text ?? '';
-      if (fieldType && name && !/\bstatic\b/.test(mods) && /\b(public|private|protected)\b/.test(mods)) {
+      // Package-private fields are declarations too (injected repositories and clients often are): keep them, and let
+      // each caller apply the visibility rule it needs.
+      if (fieldType && name && !/\bstatic\b/.test(mods)) {
         const ann = annotationsOf(node);
         fields.push({
           name: name.text,
           type: fieldType.text,
           line: fieldType.startPosition.row + 1,
           owner,
+          mods,
           ann,
           annotations: annotationStrings(ann),
         });
       }
     }
-    for (const c of node.namedChildren) visit(c, owner);
+    for (const c of node.namedChildren) visit(c, owner, method);
   };
-  visit(root, undefined);
+  visit(root, undefined, undefined);
 
   types.sort((a, b) => a.start - b.start);
   methods.sort((a, b) => a.start - b.start);
 
-  const idx = { src, lineOf, types, methods, fields };
+  const idx = { types, methods, fields };
   // A file that does not parse yields a recovered tree: keep what was found, but say so instead of implying a
   // complete parse.
   if (root.hasError) idx.degraded = true;
@@ -242,13 +207,13 @@ export const methodAt = (idx, line) =>
   assert.equal(ix.methods[0].isPublic, true);
   assert.equal(methodAt(ix, 10).name, 'afterCommit');
   assert.equal(methodAt(ix, 12).name, 'pay');
-  // Body offsets index `src` directly: callers slice [open, close) and never include the closing brace.
+  // Body offsets index the source string directly: callers slice [open, close) and never include the '}'.
   for (const m of ix.methods) {
-    assert.equal(ix.src[m.open], '{');
-    assert.equal(ix.src[m.close], '}');
+    assert.equal(t[m.open], '{');
+    assert.equal(t[m.close], '}');
     assert.ok(m.open < m.close);
   }
-  assert.match(ix.src.slice(ix.methods[2].open, ix.methods[2].close), /return 1/);
+  assert.match(t.slice(ix.methods[2].open, ix.methods[2].close), /return 1/);
 }
 
 // A generic return type and annotations with arguments over several lines are ordinary now: the declaration is one
@@ -342,12 +307,34 @@ export const methodAt = (idx, line) =>
   assert.equal(broken.degraded, true);
 }
 
-// Offsets are JS string indices even after non-ASCII text, so `src.slice(open, close)` stays correct.
+// Offsets are JS string indices even after non-ASCII text, so `text.slice(open, close)` stays correct.
 {
-  const ix = index('class U { // é 😀\n  void m() {\n    return;\n  }\n}');
-  const m = ix.methods[0];
+  const text = 'class U { // é 😀\n  void m() {\n    return;\n  }\n}';
+  const m = index(text).methods[0];
   assert.equal(m.nameLine, 2);
-  assert.equal(ix.src[m.open], '{');
-  assert.equal(ix.src[m.close], '}');
-  assert.match(ix.src.slice(m.open, m.close), /return;/);
+  assert.equal(text[m.open], '{');
+  assert.equal(text[m.close], '}');
+  assert.match(text.slice(m.open, m.close), /return;/);
+}
+
+// Calls belong to the method that makes them: nested lambdas included. A chained call (`getRepo().flush()`) carries
+// no receiver, so only the receiver expression itself is recorded.
+{
+  const ix = index(
+    'class C {\n  void a() {\n    repo.save(x);\n    this.help();\n    helper();\n    new Inner();\n    list.forEach(y -> repo.delete(y));\n    getRepo().flush();\n  }\n  void help() {}\n  void helper() {}\n  class Inner {}\n}',
+  );
+  const a = ix.methods.find((m) => m.name === 'a');
+  assert.deepStrictEqual(
+    a.calls.map((c) => [c.name, c.recv]),
+    [
+      ['save', 'repo'],
+      ['help', 'this'],
+      ['helper', null],
+      ['Inner', null],
+      ['forEach', 'list'],
+      ['delete', 'repo'],
+      ['getRepo', null],
+    ],
+  );
+  assert.deepStrictEqual(ix.methods.find((m) => m.name === 'help').calls, []);
 }

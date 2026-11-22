@@ -183,7 +183,7 @@ export function parseJava(text, ix = index(text)) {
   // Entity fields, each with the annotations and the declared type the parser bound to it.
   if (has('Entity') || has('Embeddable') || has('MappedSuperclass')) {
     for (const f of ix.fields) {
-      if (f.owner !== type.name) continue;
+      if (f.owner !== type.name || !/\b(public|private|protected)\b/.test(f.mods ?? '')) continue;
       const names = f.ann.map((a) => a.name);
       const rel = names.find((n) => /^(ManyToOne|OneToMany|OneToOne|ManyToMany)$/.test(n));
       const enumerated = names.includes('Enumerated');
