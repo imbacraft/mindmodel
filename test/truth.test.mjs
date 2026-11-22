@@ -140,6 +140,32 @@ const checks = {
       if (want.of !== undefined && t.counts.of !== want.of) misses.push(`entities: ${t.counts.of}, expected ${want.of}`);
       for (const e of want.withKey ?? []) if (!t.coverage.withKey.includes(e)) misses.push(`coverage: ${e} should carry the key`);
       for (const e of want.withoutKey ?? []) if (!t.coverage.withoutKey.includes(e)) misses.push(`coverage: ${e} should not carry the key`);
+      if (want.tenantSources)
+        for (const ts of want.tenantSources) {
+          const got = (res.tenantSources ?? []).find((x) => x.kind === ts.kind && x.name === ts.name);
+          if (!got) misses.push(`tenant source ${ts.kind} ${ts.name}: missing`);
+          else if (ts.methodContains && !(got.method ?? '').includes(ts.methodContains))
+            misses.push(`tenant source ${ts.name}: set by ${got.method}, expected ${ts.methodContains}`);
+        }
+      for (const bad of want.notTenantSources ?? [])
+        if ((res.tenantSources ?? []).some((x) => (x.method ?? '').includes(bad))) misses.push(`tenant source: ${bad} must not be a source`);
+      if (want.model) {
+        const m = res.securityModel;
+        const w = want.model;
+        if (w.prefixes) for (const [prefix, access] of Object.entries(w.prefixes)) {
+          const p = (m.prefixes ?? []).find((x) => x.prefix === prefix);
+          if (!p) misses.push(`security model: prefix ${prefix} missing`);
+          else if (!p.access.startsWith(access)) misses.push(`security model: ${prefix} is ${p.access}, expected ${access}`);
+        }
+        for (const u of w.userSources ?? []) if (!(m.userSources ?? []).some((x) => x.kind.includes(u))) misses.push(`security model: user source ${u} missing`);
+        if (w.tenantKey !== undefined && (m.tenant?.key ?? null) !== w.tenantKey) misses.push(`security model: tenant ${m.tenant?.key}, expected ${w.tenantKey}`);
+      }
+      if (want.methodSecurity !== undefined && (res.methodSecurity ?? []).length !== want.methodSecurity)
+        misses.push(`method-security facts: ${(res.methodSecurity ?? []).length}, expected ${want.methodSecurity}`);
+      if (want.rules !== undefined && (res.securityRules ?? []).length !== want.rules)
+        misses.push(`security rules: ${(res.securityRules ?? []).length}, expected ${want.rules}`);
+      for (const src of want.ruleSources ?? [])
+        if (!(res.securityRules ?? []).some((r) => r.source === src)) misses.push(`security rule source ${src}: none`);
       for (const q of want.scopedIncludes ?? []) {
         const inU = (t.unscoped ?? []).some((u) => `${u.repo}#${u.method}` === q || u.method === q.split('#').pop());
         if (inU) misses.push(`scoped: ${q} is still listed as unscoped`);

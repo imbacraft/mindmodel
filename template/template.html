@@ -399,6 +399,14 @@ const bgInventory = () => {
 };
 
 add('background', 'What runs on its own', `
+  <h2>How security works</h2>
+  <div class="prose">
+    ${esc(M.security?.intro ?? '')}
+    <ul>${(M.security?.prefixes ?? []).map((p) => `<li><code>${esc(p.prefix)}</code> — ${esc(p.access)}${p.note ? `: ${esc(p.note)}` : ''}</li>`).join('')}</ul>
+    ${M.security?.tenant ? `<p>Tenant: ${esc(M.security.tenant.key)}${M.security.tenant.note ? ` — ${esc(M.security.tenant.note)}` : ''}</p>` : ''}
+    <ul>${(M.security?.developerRule ?? []).map((d) => `<li>${esc(d.text)}</li>`).join('')}</ul>
+  </div>
+
   <h2>What runs on its own</h2>
   <p class="lede">${rich(M.background.intro)}</p>${cites(M.background.cites)}
   <div class="wtc"><table><thead><tr><th>What</th><th>When</th><th>Region</th></tr></thead><tbody>

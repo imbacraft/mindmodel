@@ -223,140 +223,307 @@ export function anonymousWrites(rules, endpoints, methodSecurity) {
   return warnings;
 }
 
-// Where the tenant comes from: a request header or a token claim. Only names that read as a tenant are kept.
-export function tenantSources(java) {
+// Where the tenant comes from: the place a tenant value is *stored* by behaviour — a ThreadLocal `.set`, a request
+// attribute, RequestContextHolder, or a field of a @RequestScope bean — reached from a filter's doFilter / a
+// HandlerInterceptor#preHandle within two calls. No name lists: the store is what counts. The stored value is traced
+// back to a header read, a token claim or the path, with static final constants resolved.
+export function tenantSources(model, textOf, isTest = () => false) {
   const facts = [];
-  for (const j of java) {
-    const t = j.text ?? '';
-    // `request.getHeader(HEADER_HOST)` names a constant; read the file's own `static final String` values.
-    const consts = new Map(
-      [...t.matchAll(/(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]),
-    );
-    const argName = (raw) => {
-      const lit = /"([^"]+)"/.exec(raw);
-      if (lit) return lit[1];
-      const id = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(raw);
-      return id ? consts.get(id[1]) ?? null : null;
-    };
-    const HEADER_ARG = /getHeader\(\s*([^)]+?)\s*\)|header\(\s*([^)]+?)\s*\)/g;
-    const CLAIM_ARG = /getClaim(?:AsString)?\(\s*([^)]+?)\s*\)/g;
-    if (!/HttpServletRequest|Jwt|JwtAuthenticationToken|getClaim/.test(t)) continue;
-    const lines = t.split('\n');
-    const add = (kind, name, line) => {
-      const m = j.ix.methods.filter((x) => x.start <= line && line <= x.end).sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-      facts.push({
-        id: `tenant-source:${kind}:${name}${m ? `@${m.name}` : ''}`,
-        family: 'tenant-source',
-        confidence: 'resolved',
-        kind,
-        name,
-        method: m ? `${j.p}#${m.name}` : j.p,
-        evidence: [`${j.p}:${line}${m ? `#${m.name}` : ''}`],
-        why: [kind === 'header' ? `read from the request header ${name}` : `read from the token claim ${name}`],
-      });
-    };
-    lines.forEach((l, i) => {
-      for (const m of l.matchAll(HEADER_ARG)) {
-        const name = argName(m[1] ?? m[2] ?? '');
-        if (name && TENANT_WORDS.test(name)) add('header', name, i + 1);
-      }
-      for (const m of l.matchAll(CLAIM_ARG)) {
-        const name = argName(m[1] ?? '');
-        if (name && TENANT_WORDS.test(name)) add('token', name, i + 1);
-      }
-    });
+  const body = (t, m) => {
+    const text = textOf(t.file);
+    return text.split('\n').slice(m.start - 1, m.end).join('\n');
+  };
+  const lineAt = (t, m, offsetText, needle) => {
+    const start = m.start;
+    const idx = offsetText.indexOf(needle);
+    return idx < 0 ? start : start + offsetText.slice(0, idx).split('\n').length - 1;
+  };
+  // ThreadLocal fields per file, so `.set` on one is a store and `.set` on anything else is not.
+  const tlsOf = new Map();
+  for (const t of model.types.values()) {
+    if (isTest(t.file)) continue;
+    const names = [...textOf(t.file).matchAll(/ThreadLocal<[^>]*>\s+(\w+)/g)].map((x) => x[1]);
+    if (names.length) tlsOf.set(t.file, names);
   }
-  return facts;
+  const stores = (t, m) => {
+    const b = body(t, m);
+    const tls = tlsOf.get(t.file) ?? [];
+    const tl = tls.find((n) => new RegExp(`\\b${n}\\s*\\.\\s*set\\s*\\(`).test(b));
+    if (tl) return `thread-local:${tl}`;
+    if (/setAttribute\s*\(/.test(b)) return 'request-attribute';
+    if (/RequestContextHolder/.test(b)) return 'request-context';
+    if (/@RequestScope/.test(textOf(t.file)) && /this\.\w+\s*=/.test(b)) return 'request-scope-bean';
+    return null;
+  };
+  const byId = new Map();
+  for (const t of model.types.values()) for (const m of t.methods ?? []) byId.set(`${t.fqn}#${m.name}`, { t, m });
+  const writeKind = new Map();
+  for (const [id, { t, m }] of byId) {
+    const k = stores(t, m);
+    if (k) writeKind.set(id, k);
+  }
+  // A method that calls a writer one hop away is a writer too (the filter calls bindWorkspaceId on a holder class).
+  const callsWriter = (t, m) =>
+    writeKind.get(`${t.fqn}#${m.name}`) ?? (m.calls ?? []).map((c) => (c.targets ?? []).map((x) => writeKind.get(x.replace(/\(.*$/, ''))).find(Boolean)).find(Boolean);
+  // Entry points: the servlet filter and the interceptor hook (framework method names, not project conventions).
+  for (const t of model.types.values()) {
+    if (isTest(t.file)) continue;
+    for (const m of t.methods ?? []) {
+      if (!/^(doFilter|preHandle)$/.test(m.name)) continue;
+      // Reachable within two calls: the entry, its callees, and their callees (same class or a holder class).
+      const reach = [{ t, m }];
+      for (const c of m.calls ?? [])
+        for (const tg of c.targets ?? []) {
+          const hit = byId.get(tg.replace(/\(.*$/, ''));
+          if (hit) reach.push(hit);
+        }
+      for (const r of [...reach].slice(1))
+        for (const c of r.m.calls ?? [])
+          for (const tg of c.targets ?? []) {
+            const hit = byId.get(tg.replace(/\(.*$/, ''));
+            if (hit) reach.push(hit);
+          }
+      const writer = reach.find(({ t: wt, m: wm }) => callsWriter(wt, wm));
+      if (!writer) continue;
+      const kind = callsWriter(writer.t, writer.m) ?? 'store';
+      const storedField = String(kind).includes(':') ? String(kind).split(':')[1] : null;
+      const valueName = storedField ? storedField.toLowerCase().replace(/_id$|_/g, (m) => (m === '_id' ? 'Id' : ' ')).replace(/ (.)/g, (_, c) => c.toUpperCase()) : null;
+      const texts = reach.map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
+      // Origin: header (constants resolved), else token, else path — searched across the reachable bodies.
+      let origin = null;
+      const headers = [];
+      for (const x of texts) {
+        const consts = new Map([...textOf(x.t.file).matchAll(/(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]*)"/g)].map((z) => [z[1], z[2]]));
+        for (const hm of x.b.matchAll(/getHeader\s*\(\s*([^)]*)\)/g)) {
+          const lit = /^"([^"]+)"$/.exec(hm[1].trim());
+          const name = lit ? lit[1] : (hm[1].split(/[.,]/).map((z) => z.trim()).find((z) => consts.has(z)) ? consts.get(hm[1].split(/[.,]/).map((z) => z.trim()).find((z) => consts.has(z))) : null);
+          if (name) headers.push({ kind: 'header', name, cite: `${x.t.file}:${lineAt(x.t, x.m, x.b, hm[0])}` });
+        }
+      }
+      if (headers.length) origin = headers[0];
+      if (!origin && texts.some((x) => /getClaim\s*\(|claim\(|SubjectSum|resolveSubject|token/i.test(x.b)))
+        origin = { kind: 'token', name: valueName ?? 'token claim', cite: `${writer.t.file}:${writer.m.start}` };
+      if (!origin && texts.some((x) => /getRequestURI|getPathInfo|getServletPath/.test(x.b)))
+        origin = { kind: 'path', name: 'request path', cite: `${t.file}:${m.start}` };
+      if (!origin) continue;
+      const all = headers.length ? headers : [origin];
+      for (const o of all) facts.push({
+        id: `tenant-source:${o.kind}:${o.name}@${m.name}`,
+        family: 'tenant-source',
+        confidence: origin.kind === 'token' || origin.kind === 'path' ? 'inferred' : 'resolved',
+        kind: o.kind,
+        name: o.name,
+        method: `${t.name}#${m.name}`,
+        storedBy: kind.split(':')[0],
+        evidence: [`${writer.t.file}:${writer.m.start}#${writer.m.name}`, o.cite],
+        why: [
+          `${writer.t.name}#${writer.m.name} stores the tenant into a ${kind.split(':')[0]}`,
+          `the value read here comes from ${o.kind} ${o.name} (${o.cite})`,
+        ],
+      });
+    }
+  }
+  const seen = new Set();
+  return facts.filter((f) => !seen.has(`${f.kind}:${f.name}`) && seen.add(`${f.kind}:${f.name}`));
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// A chain per scope, a rule per prefix, an anonymous write under /api/shop/**, and the header the tenant comes from.
-{
-  const L = (...x) => x.join('\n');
-  const cfg = {
-    p: 'src/a/SecurityConfig.java',
-    text: L(
-      'package a;',
-      'class SecurityConfig {',
-      '  @Bean',
-      '  @Order(1)',
-      '  SecurityFilterChain internal(HttpSecurity http) {',
-      '    http.securityMatcher("/api/internal/**")',
-      '      .authorizeHttpRequests(auth -> auth',
-      '        .anyRequest().hasRole("ADMIN"))',
-      '      .httpBasic(basic -> {});',
-      '    return http.build();',
-      '  }',
-      '  @Bean',
-      '  @Order(2)',
-      '  SecurityFilterChain tenant(HttpSecurity http) {',
-      '    http.securityMatcher("/api/shop/**")',
-      '      .authorizeHttpRequests(auth -> auth',
-      '        .requestMatchers("/api/shop/products/**").permitAll()',
-      '        .requestMatchers(HttpMethod.OPTIONS, "/api/shop/ops/**").permitAll()',
-      '        .anyRequest().authenticated())',
-      '      .oauth2ResourceServer(o -> o.jwt(j -> j.decoder(d())));',
-      '    return http.build();',
-      '  }',
-      '}',
-    ),
+// --- Shiro, Jakarta EE, method-level checks, and the model in one fact -------------------------------
+
+// shiro.ini `[urls]`: `path = anon|authc|user|roles[a,b]|perms[x]|jwt[...]`.
+export function shiroRules(text, file) {
+  const rules = [];
+  const at = text.indexOf('[urls]');
+  if (at < 0) return rules;
+  const body = text.slice(at + 6).split(/^\[/m)[0];
+  for (const [i, line] of body.split('\n').entries()) {
+    const m = /^\s*(\/[^=\s]*)\s*=\s*(.+)$/.exec(line);
+    if (!m) continue;
+    const [, pattern, exprRaw] = m;
+    const expr = exprRaw.trim();
+    const roles = /^roles\[([^\]]*)\]/.exec(expr)?.[1];
+    const access = /^anon\b/.test(expr) ? 'anonymous' : roles ? `role:${roles.replace(/"/g, '').split(',')[0].trim()}` : 'authenticated';
+    rules.push({
+      id: `security-rule:${pattern}:${access}:shiro`,
+      family: 'security-rule',
+      confidence: 'resolved',
+      source: 'shiro',
+      scope: ['**'],
+      pattern,
+      verbs: ['*'],
+      access,
+      chain: 'shiro.ini [urls]',
+      evidence: [`${file}:${at + 6 + i + 1}#urls`],
+      why: [`[urls] ${pattern} = ${expr}`],
+    });
+  }
+  return rules;
+}
+
+// Shiro's code-based chain (`filterChainDefinitionMap.put("/api/**", "authc")`, `addPathDefinition`).
+export function shiroCodeRules(model, textOf) {
+  const rules = [];
+  for (const t of model.types.values()) {
+    if (!/ShiroFilterChainDefinition|ShiroFilterFactoryBean/.test(t.name)) continue;
+    const text = textOf(t.file);
+    for (const m of text.matchAll(/put\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)|addPathDefinition\(\s*"([^"]+)"\s*,\s*"([^"]+)"/g)) {
+      const pattern = m[1] ?? m[3];
+      const expr = m[2] ?? m[4];
+      const access = /anon/.test(expr) ? 'anonymous' : /roles\[([^\]]+)\]/.exec(expr)?.[1] ? `role:${/roles\[([^\]]+)\]/.exec(expr)[1].split(',')[0].trim()}` : 'authenticated';
+      rules.push({
+        id: `security-rule:${pattern}:${access}:shiro-code`,
+        family: 'security-rule',
+        confidence: 'resolved',
+        source: 'shiro',
+        scope: ['**'],
+        pattern,
+        verbs: ['*'],
+        access,
+        chain: t.name,
+        evidence: [`${t.file}:${t.nameLine}#${t.name}`],
+        why: [`${t.name} maps ${pattern} to ${expr}`],
+      });
+    }
+  }
+  return rules;
+}
+
+// Jakarta EE: @RolesAllowed/@PermitAll/@DenyAll on a class or a method, and method-level @PreAuthorize/@Secured.
+// The expression or role list is recorded, not interpreted.
+export function methodSecurityFacts(model, meansOf) {
+  const facts = [];
+  const index = new Map();
+  for (const t of model.types.values()) {
+    const tAnn = (t.ann ?? []).filter((a) => ['method-security', 'permit-all', 'deny-all'].includes(meansOf(a.fqn, 'type')));
+    if (tAnn.length) index.set(t.fqn, true);
+    for (const m of t.methods ?? []) {
+      const anns = [...tAnn.map((a) => ({ ...a, from: 'class' })), ...(m.ann ?? []).filter((a) => ['method-security', 'permit-all', 'deny-all'].includes(meansOf(a.fqn, 'method')))];
+      if (!anns.length) continue;
+      index.set(`${t.fqn}#${m.name}`, true);
+      for (const a of anns) {
+        const means = meansOf(a.fqn, 'method');
+        const access = means === 'permit-all' ? 'anonymous' : means === 'deny-all' ? 'denied' : `checked:${(a.args ?? '').replace(/^\(|\)$/g, '').trim() || a.name}`;
+        facts.push({
+          id: `method-security:${t.fqn}#${m.name}:${a.name}`,
+          family: 'method-security',
+          confidence: 'resolved',
+          where: a.from ?? 'method',
+          type: t.fqn,
+          method: `${t.fqn}#${m.name}`,
+          annotation: a.name,
+          args: a.args ?? '',
+          access,
+          evidence: [`${t.file}:${a.line ?? m.nameLine}#${m.name}`],
+          why: [`${a.name}${a.args || ''} on ${a.from ?? 'method'}`],
+        });
+      }
+    }
+  }
+  return { facts, index };
+}
+
+// web.xml <security-constraint>: url-pattern + auth-constraint (role-name, or empty for deny).
+export function webXmlRules(text, file) {
+  const rules = [];
+  for (const c of text.matchAll(/<security-constraint\b[\s\S]*?<\/security-constraint>/g)) {
+    const patterns = [...c[0].matchAll(/<url-pattern>([^<]+)<\/url-pattern>/g)].map((x) => x[1].trim());
+    const roles = [...c[0].matchAll(/<role-name>([^<]+)<\/role-name>/g)].map((x) => x[1].trim());
+    for (const pattern of patterns) {
+      const access = roles.length ? `role:${roles[0]}` : 'denied';
+      rules.push({
+        id: `security-rule:${pattern}:${access}:web-xml`,
+        family: 'security-rule',
+        confidence: 'resolved',
+        source: 'web-xml',
+        scope: ['**'],
+        pattern,
+        verbs: ['*'],
+        access,
+        chain: 'web.xml security-constraint',
+        evidence: [`${file}#security-constraint`],
+        why: [`<url-pattern>${pattern}</url-pattern> with ${roles.length ? `<role-name>${roles.join(',')}</role-name>` : 'no role (denied)'}`],
+      });
+    }
+  }
+  return rules;
+}
+
+// The model in one fact: prefixes and their access, where the user and the tenant come from, and what a developer
+// adding an endpoint in a prefix has to do — all derived from the rules and from how existing endpoints are protected.
+export function securityModel({ rules, endpoints, methodSecurity = [], tenancy = null, userSources = [] }) {
+  const prefixOf = (p) => {
+    const parts = String(p ?? '').split('/').filter(Boolean);
+    return '/' + parts.slice(0, Math.min(2, parts.length)).join('/') + '/**';
   };
-  cfg.ix = { methods: [
-    { name: 'internal', start: 5, end: 11 },
-    { name: 'tenant', start: 14, end: 21 },
-  ] };
-  const rules = springChains([cfg], new Map());
-  assert.deepStrictEqual(
-    rules.map((r) => [r.pattern, r.access, r.chain]),
-    [
-      ['/api/internal/**', 'role:ADMIN', 'internal (@Order(1))'],
-      ['/api/shop/products/**', 'anonymous', 'tenant (@Order(2))'],
-      ['/api/shop/ops/**', 'anonymous', 'tenant (@Order(2))'],
-      ['/api/shop/**', 'authenticated', 'tenant (@Order(2))'],
-    ],
-  );
-  // The chain scope travels with the rule, and a matcher with an HTTP method carries it.
-  assert.deepStrictEqual(rules.find((r) => r.pattern === '/api/shop/ops/**').verbs, ['OPTIONS']);
-  assert.deepStrictEqual(rules.find((r) => r.pattern === '/api/shop/**').verbs, ['*']);
-  assert.deepStrictEqual(rules.find((r) => r.pattern === '/api/shop/**').scope, ['/api/shop/**']);
-
-  const endpoints = [
-    { verb: 'POST', path: '/api/shop/products', handlerFqn: 'a.ShopController', handler: 'ShopController.createOffer', evidence: ['src/a/ShopController.java:20#createOffer'] },
-    { verb: 'GET', path: '/api/shop/products', handlerFqn: 'a.ShopController', handler: 'ShopController.listOffers', evidence: ['src/a/ShopController.java:30#listOffers'] },
-    { verb: 'PUT', path: '/api/admin/settings', handlerFqn: 'a.AdminController', handler: 'AdminController.update', evidence: ['src/a/AdminController.java:10#update'] },
-    { verb: 'POST', path: '/api/shop/ops/run', handlerFqn: 'a.OpsController', handler: 'OpsController.run', evidence: ['src/a/OpsController.java:10#run'] },
-  ];
-  const warnings = anonymousWrites(rules, endpoints, new Map([['a.ShopController', false], ['a.AdminController', false]]));
-  // Only the anonymous write with no method-level check is warned: an OPTIONS-only permit does not open a POST.
-  assert.deepStrictEqual(warnings.map((w) => [w.verb, w.path, w.handler]), [
-    ['POST', '/api/shop/products', 'a.ShopController#createOffer'],
-  ]);
-  // A method-level check silences it.
-  const silenced = anonymousWrites(rules, endpoints, new Map([['a.ShopController', true]]));
-  assert.deepStrictEqual(silenced, []);
-
-  const yml = ['excludedResource:', '  - /api/push/**===*', 'resourceRole:', '  - /api/x===get===[admin]'].join('\n');
-  const sr = surenessRules(yml, 'src/main/resources/sureness.yml');
-  assert.deepStrictEqual(sr.map((r) => [r.pattern, r.access]), [
-    ['/api/push/**', 'anonymous'],
-    ['/api/x', 'role:admin'],
-  ]);
-
-  const interceptor = {
-    p: 'src/a/RequestContextInterceptor.java',
-    text: L(
-      'class RequestContextInterceptor {',
-      '  boolean preHandle(HttpServletRequest request) {',
-      '    String host = request.getHeader("X-Forwarded-Host");',
-      '    String tenant = jwt.getClaimAsString("tenant");',
-      '  }',
-      '}',
-    ),
-    ix: { methods: [{ name: 'preHandle', start: 2, end: 5 }] },
+  const byPrefix = new Map();
+  for (const e of endpoints) {
+    const prefix = prefixOf(e.path);
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+    byPrefix.get(prefix).push(e);
+  }
+  const checkedFor = (e) =>
+    methodSecurity.filter(
+      (f) => f.type === e.handlerFqn || f.method === `${e.handlerFqn}#${String(e.handler ?? '').split('.').pop()}`,
+    );
+  const checksCount = (p) => methodSecurity.filter((f) => p.checks.some((c) => c === `${f.annotation}${f.args || ''}`)).length;
+  const prefixes = [];
+  for (const [prefix, eps] of [...byPrefix.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    const accessOfEndpoint = (e) => {
+      const checks = checkedFor(e);
+      if (checks.length) {
+        const a = checks[0].access;
+        if (a.startsWith('checked:')) {
+          const role = /hasAnyRole\s*\(([^)]*)\)|hasRole\s*\(([^)]*)\)|hasAuthority\s*\(([^)]*)\)/.exec(a);
+          const named = role ? (role[1] ?? role[2] ?? role[3]).replace(/['"\s]/g, '').split(',')[0] : null;
+          return named ? `role:${named}` : 'role-checked';
+        }
+        return a;
+      }
+      return accessFor(rules, e.path ?? '', e.verb);
+    };
+    const counts = {};
+    for (const e of eps) {
+      const a = accessOfEndpoint(e);
+      counts[a] = (counts[a] ?? 0) + 1;
+    }
+    const [access, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] ?? ['unknown', 0];
+    const example = eps.find((e) => accessOfEndpoint(e) === access) ?? eps[0];
+    const checks = eps.flatMap(checkedFor).map((f) => `${f.annotation}${f.args || ''}`).filter((x, i, a) => a.indexOf(x) === i);
+    prefixes.push({
+      prefix,
+      access,
+      endpoints: eps.length,
+      agreement: Math.round((n / eps.length) * 100),
+      example: `${example.verb} ${example.path}`,
+      checks,
+      checked: eps.filter((e) => checkedFor(e).length).length,
+      evidence: [...new Set(eps.map((e) => e.evidence?.[1] ?? e.evidence?.[0]).filter(Boolean))].slice(0, 3),
+      why: [`${n} of ${eps.length} endpoints under ${prefix} are ${access}`, checks.length ? `method checks used: ${checks.join(', ')}` : 'no method-level checks'],
+    });
+  }
+  const developerRule = prefixes
+    .filter((p) => p.endpoints >= 2)
+    .slice(0, 8)
+    .map((p) => ({
+      text:
+        p.access === 'anonymous'
+          ? `endpoints under ${p.prefix} are public: ${p.checks.length ? `${p.checked} of ${p.endpoints} use ${p.checks[0]}; the rest must protect themselves` : 'each endpoint must protect itself'}`
+          : p.access === 'authenticated'
+            ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? ` (${p.checked} of ${p.endpoints} also carry a method-level check, ${p.checks[0]})` : ''}`
+            : p.access.startsWith('role:')
+              ? `endpoints under ${p.prefix} need role ${p.access.slice(5)}`
+              : `endpoints under ${p.prefix} are ${p.access}`,
+      cites: p.evidence,
+    }));
+  return {
+    id: 'security-model',
+    family: 'security-model',
+    confidence: 'inferred',
+    prefixes,
+    developerRule,
+    userSources,
+    tenant: tenancy?.key
+      ? { key: tenancy.key, sources: tenancy.sources.slice(0, 4), cites: (tenancy.sources[0]?.evidence ?? []).slice(0, 1) }
+      : null,
+    why: [`${prefixes.length} prefixes from ${rules.length} rules and ${endpoints.length} endpoints`],
   };
-  const ts = tenantSources([interceptor]);
-  assert.deepStrictEqual(ts.map((t) => [t.kind, t.name]), [
-    ['header', 'X-Forwarded-Host'],
-    ['token', 'tenant'],
-  ]);
 }

@@ -1,0 +1,20 @@
+[
+ {
+  "warningCount": 13,
+  "rules": 254,
+  "ruleSources": [
+   "sureness"
+  ],
+  "model": {
+   "prefixes": {
+    "/api/alert/**": "role:admin,user",
+    "/api/config/**": "role:admin"
+   },
+   "userSources": [
+    "API token"
+   ],
+   "tenantKey": "workspaceId"
+  },
+  "note": "sureness.yml: excluded paths anonymous, resourceRole for the rest; the workspace rides in the API token"
+ }
+]

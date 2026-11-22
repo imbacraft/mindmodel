@@ -15,6 +15,13 @@
   "bridged": 0,
   "globalIncludes": [
    "AuthTokenDao#existsByTokenHashAndStatus"
+  ],
+  "tenantSources": [
+   {
+    "kind": "token",
+    "name": "authenticatedWorkspaceId",
+    "methodContains": "ApiTokenValidationFilter#preHandle"
+   }
   ]
  }
 ]

@@ -420,3 +420,14 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | Stories | 1–5, each ≤ 10 steps and about 250–500 words |
 | Diagrams | 1: the request-path sequence |
 | Words, core map (everything except stories) | ≤ 3,000 |
+
+## How security works (S4)
+
+Write a `security` section only from `facts.securityModel` and `facts.methodSecurity`. It states the model as knowledge:
+which path prefixes are public, which need a login, which need a role; where the user comes from; where the tenant
+comes from (quote `facts.tenancy`); and what a developer adding an endpoint in each prefix has to do, derived from how
+the existing endpoints in that prefix are protected.
+
+- Knowledge, not weakness: never name a vulnerability or how to exploit one; a gap goes to `findings.md`. Where the
+  developer must know, say it flatly ("endpoints under `/api/shop/**` are public: each must protect itself"), no detail.
+- Every claim cites code: the prefix's rule or a handler's annotation. A claim without a citation is not written.

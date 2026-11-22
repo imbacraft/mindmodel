@@ -305,6 +305,18 @@ export function validate(map, root) {
     if (ABSOLUTE.test(`${r.title ?? ''} ${r.text ?? ''}`) && !String(r.condition ?? '').trim())
       warn(`rule ${i + 1}: absolute wording without a "condition" (state when it holds, or say why it is unconditional)`);
   });
+  // The security section states knowledge, and every claim in it cites code (S4).
+  if (map.security) {
+    const need = (what, cites) => {
+      if (!cites || !cites.length) err(`security: ${what} has no citation`);
+    };
+    need('intro', map.security.cites);
+    for (const p of map.security.prefixes ?? []) need(`prefix ${p.prefix}`, p.cites);
+    for (const u of map.security.userSources ?? []) need(`user source ${u.kind}`, u.cites);
+    for (const d of map.security.developerRule ?? []) need('developer rule', d.cites);
+    if (map.security.tenant) need('tenant', map.security.tenant.cites);
+  }
+
   // A rule that cites an endpoint under an anonymous-write warning is describing missing code, not the system's
   // conventions. The warning is not fatal, but it should point the writer at findings.md.
   const factsFile = path.join(root, 'mindmodel', '.work', 'facts.json');

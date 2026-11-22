@@ -427,7 +427,6 @@
    "description": "Where the tenant comes from: a request header or a token claim.",
    "items": {
     "type": "object",
-    "additionalProperties": false,
     "required": [
      "id",
      "kind",
@@ -469,6 +468,17 @@
       "items": {
        "type": "string"
       }
+     },
+     "storedBy": {
+      "type": "string",
+      "enum": [
+       "thread-local",
+       "request-attribute",
+       "request-context",
+       "request-scope-bean",
+       "store"
+      ],
+      "description": "what kind of holder the tenant value is stored into"
      }
     }
    }

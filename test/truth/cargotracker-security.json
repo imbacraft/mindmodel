@@ -1,0 +1,7 @@
+[
+ {
+  "rules": 0,
+  "methodSecurity": 0,
+  "note": "cargotracker has no @RolesAllowed, no web.xml security-constraint and no Spring Security chain; the engine reports none rather than guessing"
+ }
+]

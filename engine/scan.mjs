@@ -11,11 +11,21 @@ import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
 import { index } from './syntax/java.mjs';
 import { buildModel } from './model/model.mjs';
 import { bindCalls } from './model/calls.mjs';
-import { annotationIndex, generatedRules, loadCatalogs, selectForModel, signatureIndex, typeIndex } from './catalogs/catalog.mjs';
+import { annotationIndex, generatedRules, loadCatalogs, meanOf, selectForModel, signatureIndex, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
 import { extractSchedules } from './extract/schedules.mjs';
-import { anonymousWrites, springChains, surenessRules, tenantSources } from './extract/security.mjs';
+import {
+  anonymousWrites,
+  methodSecurityFacts,
+  securityModel as buildSecurityModel,
+  shiroCodeRules,
+  shiroRules,
+  springChains,
+  surenessRules,
+  tenantSources,
+  webXmlRules,
+} from './extract/security.mjs';
 import { entityFacts } from './extract/entities.mjs';
 import { noRequestPaths, tenancyFacts } from './extract/tenancy.mjs';
 import { extractOutside } from './extract/outside.mjs';
@@ -395,22 +405,24 @@ export function scan(root, { withModel = false } = {}) {
     .map((f) => ({ p: R(f), text: read(f) }));
   // Security as facts: one rule per chain prefix (Spring Security chains + sureness.yml), the anonymous writes those
   // rules expose without a method-level check, and where the tenant comes from.
-  const methodSecurityIndex = new Map();
-  for (const t of model.types.values()) {
-    const cls = (t.ann ?? []).some((a) => selected.some(({ catalog }) => (catalog.annotations ?? []).some((x) => x.means === 'method-security' && (x.fqns ?? [x.fqn]).includes(a.fqn))));
-    if (cls) methodSecurityIndex.set(t.fqn, true);
-    for (const m of t.methods)
-      if ((m.ann ?? []).some((a) => selected.some(({ catalog }) => (catalog.annotations ?? []).some((x) => x.means === 'method-security' && (x.fqns ?? [x.fqn]).includes(a.fqn)))))
-        methodSecurityIndex.set(`${t.fqn}#${m.name}`, true);
-  }
+  const msIndex = annotationIndex(selected);
+  const methodSec = methodSecurityFacts(model, (fqn, on) => meanOf(msIndex, fqn, on)?.means ?? null);
+  const methodSecurityIndex = methodSec.index;
   // The same rule appears in several copies of a config (startup, manager, e2e); one fact per prefix and access.
   const ruleSeen = new Set();
   const securityRules = [
     ...springChains(javaAll, methodSecurityIndex),
     ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !/\/src\/test\//.test(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
+    ...files
+      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !/\/src\/test\//.test(f))
+      .flatMap((f) => shiroRules(read(f), R(f))),
+    ...shiroCodeRules(model, (rel) => read(path.join(root, rel))),
+    ...files
+      .filter((f) => /web\.xml$/.test(f) && !/\/src\/test\//.test(f))
+      .flatMap((f) => webXmlRules(read(f), R(f))),
   ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
   const securityWarnings = anonymousWrites(securityRules, endpoints, methodSecurityIndex);
-  const tenantFacts = tenantSources(javaAll);
+  const tenantFacts = tenantSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p));
   // Entities and tenancy on the model (§5.4, slice 3): fields (inherited too), relations and their owning side,
   // repository → entity from resolved type arguments; the tenant key decided by counts.
   // Flow entries are needed both by tenancy (worker callers) and by the flows themselves: compute once.
@@ -427,8 +439,37 @@ export function scan(root, { withModel = false } = {}) {
         .map((m) => `${t.fqn}#${m.name}`),
     ),
   ];
-  const requestMethods = endpoints.map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`);
+  // Webhook endpoints are request handlers, but nothing behind them has a logged-in tenant: reads they alone call are
+  // judged like jobs (cross-tenant by design), not as unscoped request reads.
+  const webhookIds = endpoints
+    .filter((e) => /webhook|callback|\bhooks?\b/i.test(e.path ?? ''))
+    .map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`);
+  const requestMethods = endpoints
+    .map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`)
+    .filter((id) => !webhookIds.includes(id));
+  entryMethods.push(...webhookIds);
   const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
+  // Where the user comes from, from what the code and the configs read. Heuristic, and tagged as such.
+  const allText = java.map((j) => j.text).join('\n') + resourceFiles.map((r) => r.text).join('\n');
+  // The exact line that proves a user source: the call or config line, never the first line of the file.
+  const citeFor = (re) => {
+    for (const x of java) {
+      const i = x.text.split('\n').findIndex((l) => re.test(l));
+      if (i >= 0) return [`${x.p}:${i + 1}`];
+    }
+    for (const r of resourceFiles) {
+      const i = r.text.split('\n').findIndex((l) => re.test(l));
+      if (i >= 0) return [`${r.p}:${i + 1}`];
+    }
+    return [];
+  };
+  const userSources = [
+    /httpBasic\(/.test(allText) && { kind: 'basic auth', cites: citeFor(/httpBasic\(/) },
+    /oauth2ResourceServer|JwtDecoder|BearerTokenAuthentication|jwt\(\)/.test(allText) && { kind: 'JWT bearer token', cites: citeFor(/oauth2ResourceServer|JwtDecoder|BearerTokenAuthentication|jwt\(\)/) },
+    /SecurityContextHolder|request\.getSession|HttpSession/.test(allText) && { kind: 'HTTP session', cites: citeFor(/SecurityContextHolder|request\.getSession|HttpSession/) },
+    /ApiToken|X-Api-Token|accesstoken/i.test(allText) && { kind: 'API token', cites: citeFor(/ApiToken|X-Api-Token|accesstoken/i) },
+  ].filter(Boolean);
+  const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources });
   // §5.4's 30% vs the 10% this build uses: report all three and let the owner decide.
   const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
     share,
@@ -487,24 +528,6 @@ export function scan(root, { withModel = false } = {}) {
 
   // runtime machinery
   const pick = (re, list = java) => list.flatMap((j) => linesMatching(j.text, re).map((m) => ({ file: j.p, ...m })));
-  const security = pick(
-    /securityMatcher|requestMatchers|antMatchers|mvcMatchers|authorizeHttpRequests|authorizeRequests|permitAll|authenticated\(\)|hasRole|hasAnyRole|hasAuthority|csrf|formLogin|httpBasic|oauth2ResourceServer|sessionCreationPolicy|logout\(|@Order\(/,
-    java.filter((j) => /HttpSecurity|SecurityFilterChain|WebSecurityConfigurerAdapter/.test(j.text)),
-  );
-  // Jakarta EE: URL security declared in web.xml.
-  for (const f of files.filter((f) => /WEB-INF\/web\.xml$/.test(f))) {
-    const t = read(f);
-    if (/<security-constraint>/.test(t))
-      security.push(
-        ...linesMatching(
-          t,
-          /<(security-constraint|url-pattern|http-method|role-name|auth-method|transport-guarantee)>/,
-        ).map((m) => ({ file: R(f), ...m })),
-      );
-  }
-  const methodSecurity = java
-    .map((j) => ({ file: j.p, n: (j.text.match(/@(PreAuthorize|Secured|RolesAllowed)\b/g) ?? []).length }))
-    .filter((x) => x.n);
   // Registrations and filter classes only: imports, `x = new FilterRegistrationBean<>()` lines and record accessors like item.order() are noise.
   const interceptors = pick(
     /ContainerRequestFilter|ContainerResponseFilter|@WebFilter|@AroundInvoke|@Interceptor\b|addInterceptor|addPathPatterns|excludePathPatterns|(?:public|protected)\s+FilterRegistrationBean|FilterRegistrationBean(?:<[^>]*>)?\s+\w+\s*\(|instanceof FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/,
@@ -821,7 +844,9 @@ export function scan(root, { withModel = false } = {}) {
         .map((j) => `${j.verb ?? ''} ${j.path} ${j.file}:${j.line} -> ${j.handler}`),
     },
     views: { count: views.length, returnedBy: viewUse, deadViews },
-    runtime: { security, methodSecurity, interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
+    runtime: { interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
+    methodSecurity: methodSec.facts,
+    securityModel: securityModelFact,
     background: { scheduledAsyncListeners: [...background, ...batchJobs], sockets, runners },
     state: { modifying },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
@@ -836,6 +861,7 @@ export function scan(root, { withModel = false } = {}) {
     securityRules,
     securityWarnings,
     tenantSources: tenantFacts,
+    ...(tenantFacts.length ? {} : { tenantSourcesNote: 'no tenant source found within depth 2 (no ThreadLocal/request-attribute store reached from doFilter/preHandle)' }),
     flows,
     externals: {
       sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])),
@@ -1056,13 +1082,7 @@ export function summarize(f) {
     );
   }
   sec('Request machinery');
-  push(
-    cap(
-      f.runtime.security.map((s) => `- security ${s.file}:${s.line} ${s.text}`),
-      40,
-      'runtime.security',
-    ),
-  );
+
   push(
     cap(
       f.securityRules.map(
@@ -1092,13 +1112,14 @@ export function summarize(f) {
   }
   push(
     cap(
-      f.tenantSources.map((t) => `- tenant from ${t.kind} ${t.name} (${t.method} ${t.evidence[0]})`),
+      f.tenantSources.length
+        ? f.tenantSources.map((t) => `- tenant from ${t.kind} ${t.name} (${t.method} ${t.evidence[0]})`)
+        : [`- ${f.tenantSourcesNote}`],
       8,
       'tenantSources',
     ),
   );
   L.push(
-    `- method security annotations: ${f.runtime.methodSecurity.map((m) => `${m.file} ×${m.n}`).join(', ') || 'none'}`,
   );
   push(
     cap(
@@ -1338,6 +1359,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   fs.writeFileSync(out.replace(/\.json$/, '.md'), summarize(facts));
   const f = facts;
   console.log(
-    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.runtime.security.length} security lines, ${f.recurring.length} recurring job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
+    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.securityRules.length} security rules, ${f.recurring.length} recurring job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
   );
 }

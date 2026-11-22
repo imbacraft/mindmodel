@@ -199,8 +199,9 @@ export function tenancyFacts(
         const uniq = (uniqueOf.get(entity) ?? []).filter((f) => f !== 'id');
         const hitUnique = uniq.find((f) => new RegExp(f.replace(/([A-Z])/g, '_?$1'), 'i').test(m.query));
         const idName = metaOf.get(entity)?.id ?? 'id';
-        const whereOnlyId =
-          m.dynamic && new RegExp(`\\bwhere\\b[\\s\\S]*\\b${idName}\\b\\s*=|\\bwhere\\b[\\s\\S]*[.:]${idName}\\b\\s*=`, 'i').test(m.query) && !/\band\b|\bor\b/i.test(m.query.split(/\bwhere\b/i).slice(1).join(' '));
+        // A @Query that filters by the entity's @Id is a global lookup, extra conditions and parameter name aside.
+        const idPredicate = new RegExp(`(?:[a-z]\\w*\\.)?${idName}\\s*(?:=|in\\b)|[:.#]${idName}\\b`, 'i');
+        const whereOnlyId = m.dynamic && idPredicate.test(m.query);
         if (whereOnlyId) {
           globalLookups.push({
             confidence: 'inferred',
