@@ -37,7 +37,9 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
       // `${key:default}` in a topic annotation: the configured value, else the default, else the key.
       const spel = /^\$\{([^:}]+)(?::([^}]*))?\}$/.exec(lit[1].trim());
       if (spel) {
-        for (const [k, v] of config) if (k === spel[1] || k.endsWith(`.${spel[1]}`)) return v;
+        const norm = (x) => String(x).toLowerCase().replace(/[-_.]/g, '');
+        const want = norm(spel[1]);
+        for (const [k, v] of config) if (norm(k) === want || norm(k).endsWith(want)) return v;
         return spel[2] || spel[1];
       }
       return lit[1];
@@ -81,8 +83,15 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
       const ann = (m.ann ?? []).find((a) => LISTENERS.has(a.name));
       if (ann) {
         const kind = /Kafka/.test(ann.name) ? 'kafka' : /Rabbit/.test(ann.name) ? 'rabbit' : /Sqs/.test(ann.name) ? 'sqs' : 'jms';
-        const channel = nameOf(t.file, t.fqn, firstString([ann.args])) ?? ((ann.args ?? '').trim() || 'unknown');
-        facts.push({ id: `channel:in:${kind}:${channel}@${m.name}`, family: 'channel', confidence: channel === 'unknown' ? 'inferred' : 'resolved', direction: 'in', kind, channel, method: `${t.name}#${m.name}`, evidence: [`${t.file}:${ann.line ?? m.nameLine}#${m.name}`], why: [`@${ann.name}(${ann.args ?? ''})`] });
+        // The destination may be a named argument, a list, or a placeholder: `destination = "${q.name}"`.
+        const args = ann.args ?? '';
+        const named = /\b(?:destination|topics|queues|value)\s*=\s*(\{[^}]*\}|"[^"]*"|[\w.$:{}]+)/.exec(args)?.[1] ?? args;
+        const names = [...named.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+        const bare = names.length ? names : [named.trim()];
+        for (const raw of bare) {
+          const channel = nameOf(t.file, t.fqn, /^\$\{/.test(raw) ? `"${raw}"` : raw) ?? (raw || 'unknown');
+          facts.push({ id: `channel:in:${kind}:${channel}@${m.name}`, family: 'channel', confidence: channel === 'unknown' ? 'inferred' : 'resolved', direction: 'in', kind, channel, method: `${t.name}#${m.name}`, evidence: [`${t.file}:${ann.line ?? m.nameLine}#${m.name}`], why: [`@${ann.name}(${args.slice(0, 80)})`] });
+        }
       }
       // Eventuate Tram and Spring Cloud Stream: the channel rides a fluent chain or a binding call.
       for (const c of m.calls ?? []) {
@@ -106,9 +115,11 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
         }
         if (nm === 'publish' && /Publisher$/.test((c.recvFqn ?? '').split('.').pop() ?? '')) {
           // Eventuate publishes carry the channel in the fluent `withChannel`, recorded above; the aggregate is the type.
-          const agg = /<\s*(\w+)/.exec((t.supers ?? []).find((x) => /Publisher/.test(x.text ?? ''))?.text ?? '')?.[1];
-          const channel = nameOf(t.file, t.fqn, (c.args ?? [])[0] ?? '') ?? agg ?? 'unknown';
-          facts.push({ id: `channel:out:kafka:${channel}@${m.name}`, family: 'channel', confidence: 'inferred', direction: 'out', kind: 'kafka', channel, method: `${t.name}#${m.name}`, via: 'eventuate', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${t.name}#${m.name} publishes (aggregate ${agg ?? 'unknown'})`] });
+          const aggSimple = /<\s*(\w+)/.exec((t.supers ?? []).find((x) => /Publisher/.test(x.text ?? ''))?.text ?? '')?.[1];
+          const aggFqn = aggSimple ? model.resolveIn(t.file, aggSimple) ?? aggSimple : null;
+          const withCh = (m.calls ?? []).find((x) => x.name === 'withChannel');
+          const channel = withCh ? nameOf(t.file, t.fqn, (withCh.args ?? [])[0] ?? '') ?? 'unknown' : (aggFqn ?? 'unknown');
+          facts.push({ id: `channel:out:kafka:${channel}@${m.name}`, family: 'channel', confidence: 'inferred', direction: 'out', kind: 'kafka', channel, method: `${t.name}#${m.name}`, via: 'eventuate', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${t.name}#${m.name} publishes (aggregate ${aggFqn ?? 'unknown'})`] });
           continue;
         }
         if (!SENDS.has(c.name ?? '')) continue;
