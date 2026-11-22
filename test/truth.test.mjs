@@ -157,6 +157,10 @@ const checks = {
           if (!p) misses.push(`security model: prefix ${prefix} missing`);
           else if (!p.access.startsWith(access)) misses.push(`security model: ${prefix} is ${p.access}, expected ${access}`);
         }
+        for (const bad of w.prefixesExclude ?? [])
+          if ((m.prefixes ?? []).some((x) => x.prefix === bad)) misses.push(`security model: pseudo-prefix ${bad} still listed`);
+        for (const good of w.prefixesInclude ?? [])
+          if (!(m.prefixes ?? []).some((x) => x.prefix === good)) misses.push(`security model: prefix ${good} missing`);
         for (const u of w.userSources ?? []) if (!(m.userSources ?? []).some((x) => x.kind.includes(u))) misses.push(`security model: user source ${u} missing`);
         if (w.tenantKey !== undefined && (m.tenant?.key ?? null) !== w.tenantKey) misses.push(`security model: tenant ${m.tenant?.key}, expected ${w.tenantKey}`);
       }

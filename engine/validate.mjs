@@ -26,8 +26,9 @@ assert.deepStrictEqual(parseCite('a/B.java:5#save'), { file: 'a/B.java', start: 
 export function checkSchema(v, s, defs, at, err) {
   if (s.$ref) return checkSchema(v, defs[s.$ref.split('/').pop()], defs, at, err);
   const type = Array.isArray(v) ? 'array' : v === null ? 'null' : Number.isInteger(v) ? 'integer' : typeof v;
-  if (s.type && s.type !== type && !(s.type === 'number' && type === 'integer'))
-    return err(`${at}: expected ${s.type}, got ${type}`);
+  const types = s.type == null ? null : [].concat(s.type); // JSON Schema allows a list: ["object", "null"]
+  if (types && !types.includes(type) && !(types.includes('number') && type === 'integer'))
+    return err(`${at}: expected ${types.join(' or ')}, got ${type}`);
   if (s.const !== undefined && v !== s.const) err(`${at}: must be ${JSON.stringify(s.const)}`);
   if (s.enum && !s.enum.includes(v)) err(`${at}: "${v}" is not one of ${s.enum.join(', ')}`);
   if (s.pattern && typeof v === 'string' && !new RegExp(s.pattern).test(v))
@@ -60,6 +61,10 @@ export function checkSchema(v, s, defs, at, err) {
     '$.b[1]: expected string, got integer',
     '$: unknown field "c"',
   ]);
+  // A list of types: either is accepted, anything else names both.
+  const t = [], u = { type: ['object', 'null'] };
+  for (const v of [{}, null, 'x']) checkSchema(v, u, {}, '$', (m) => t.push(m));
+  assert.deepStrictEqual(t, ['$: expected object or null, got string']);
 }
 
 const BUDGET = {

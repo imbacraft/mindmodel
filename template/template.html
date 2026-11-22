@@ -201,7 +201,10 @@ details.story .body { padding: 0 22px 22px; }
 .importance { font-style: italic; color: var(--muted); margin-bottom: 8px; }
 .wtc { overflow-x: auto; margin-top: 16px; }
 .wtc table { width: 100%; border-collapse: collapse; font-size: 18px; min-width: 620px; }
-.wtc th, .wtc td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); }
+.wtc th, .wtc td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); overflow-wrap: break-word; }
+/* Wrap rather than scroll: a long schedule or mono citation must not push the last column off the page. */
+.wtc td.when { width: 28%; }
+.wtc .cite, .wtc code { overflow-wrap: anywhere; }
 .wtc th { font: 600 13px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
 #state h3 { margin: 32px 0 10px; }
 #state .rules h3 { margin: 0 0 6px; }
@@ -398,19 +401,25 @@ const bgInventory = () => {
   return `<p class="also">From the code: ${b.total} scheduled / async / listener / socket handler${b.total === 1 ? '' : 's'}.</p>${rows ? `<details><summary>All ${b.total} handlers</summary><div class="wtc"><table><thead><tr><th>Handler</th><th>Kind</th><th>Trigger</th></tr></thead><tbody>${rows}</tbody></table>${b.more ? `<p class="also">+${b.more} more in facts.json</p>` : ''}</div></details>` : ''}`;
 };
 
-add('background', 'What runs on its own', `
+// Knowledge, not weaknesses (rule S4): gaps are in the owner's findings, never on the page.
+const S = M.security;
+if (S) add('security', 'How security works', `
   <h2>How security works</h2>
-  <div class="prose">
-    ${esc(M.security?.intro ?? '')}
-    <ul>${(M.security?.prefixes ?? []).map((p) => `<li><code>${esc(p.prefix)}</code> — ${esc(p.access)}${p.note ? `: ${esc(p.note)}` : ''}</li>`).join('')}</ul>
-    ${M.security?.tenant ? `<p>Tenant: ${esc(M.security.tenant.key)}${M.security.tenant.note ? ` — ${esc(M.security.tenant.note)}` : ''}</p>` : ''}
-    <ul>${(M.security?.developerRule ?? []).map((d) => `<li>${esc(d.text)}</li>`).join('')}</ul>
-  </div>
+  <p class="lede">${rich(S.intro)}</p>${cites(S.cites)}
+  <div class="wtc"><table><thead><tr><th>Paths</th><th>Who may call</th><th>What to know</th></tr></thead><tbody>
+  ${S.prefixes.map((p) => `<tr><td>${p.prefix.split(/,\s*/).map((x) => `<code>${esc(x)}</code>`).join(' ')}</td><td>${rich(p.access)}</td><td>${rich(p.note ?? '')}${cites(p.cites)}</td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="cols2">
+    <div><h4>Who the caller is</h4><ul class="ctx-list">${S.userSources.map((u) => `<li><b>${esc(u.kind)}</b>${u.note ? `<span>${rich(u.note)}</span>` : ''}${cites(u.cites)}</li>`).join('')}
+      ${S.tenant ? `<li><b>Tenant: <code>${esc(S.tenant.key ?? '')}</code></b>${S.tenant.note ? `<span>${rich(S.tenant.note)}</span>` : ''}${cites(S.tenant.cites)}</li>` : ''}</ul></div>
+    <div><h4>When you add an endpoint</h4><ul class="ctx-list">${S.developerRule.map((d) => `<li><span>${rich(d.text)}</span>${cites(d.cites)}</li>`).join('')}</ul></div>
+  </div>`);
 
+add('background', 'What runs on its own', `
   <h2>What runs on its own</h2>
   <p class="lede">${rich(M.background.intro)}</p>${cites(M.background.cites)}
   <div class="wtc"><table><thead><tr><th>What</th><th>When</th><th>Region</th></tr></thead><tbody>
-  ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td style="white-space:nowrap">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
+  ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td class="when">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
   </tbody></table></div>${bgInventory()}`);
 
 add('rules', 'Rules & surprises', `

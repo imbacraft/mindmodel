@@ -148,7 +148,7 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
   const STATUS_VAR = /(\.set\w*(Status|State)|\.\w*(status|Status|state|State))\s*\(\s*[a-z]\w*\s*\)/;
   const lifecycle = [];
   for (const [en, e] of statusEnums) {
-    if (!owner.has(en) || (shortlist && !shortlist.has(owner.get(en)))) continue;
+    if (!owner.has(en)) continue; // every status enum with an owner, not only the shortlisted entities
     const sites = Object.fromEntries(e.values.map((v) => [v, { set: [], conditional: [], read: 0 }]));
     for (const f of files) {
       if (f.name === en) continue;

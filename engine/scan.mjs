@@ -17,6 +17,7 @@ import { buildFlows, flowEntries } from './extract/flows.mjs';
 import { extractSchedules } from './extract/schedules.mjs';
 import {
   anonymousWrites,
+  authSources,
   methodSecurityFacts,
   securityModel as buildSecurityModel,
   shiroCodeRules,
@@ -449,27 +450,48 @@ export function scan(root, { withModel = false } = {}) {
     .filter((id) => !webhookIds.includes(id));
   entryMethods.push(...webhookIds);
   const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
-  // Where the user comes from, from what the code and the configs read. Heuristic, and tagged as such.
-  const allText = java.map((j) => j.text).join('\n') + resourceFiles.map((r) => r.text).join('\n');
-  // The exact line that proves a user source: the call or config line, never the first line of the file.
-  const citeFor = (re) => {
-    for (const x of java) {
-      const i = x.text.split('\n').findIndex((l) => re.test(l));
-      if (i >= 0) return [`${x.p}:${i + 1}`];
-    }
-    for (const r of resourceFiles) {
-      const i = r.text.split('\n').findIndex((l) => re.test(l));
-      if (i >= 0) return [`${r.p}:${i + 1}`];
-    }
-    return [];
+  // Where the user comes from, from what the code configures: the security chain's own calls (httpBasic(),
+  // oauth2ResourceServer().jwt(), formLogin()/sessionManagement()) and filters that authenticate from a header by
+  // setting the security context. Structural, not text matching.
+  const lineIn = (file, needle) => {
+    const i = read(path.join(root, file)).split('\n').findIndex((l) => l.includes(needle));
+    return i >= 0 ? `${file}:${i + 1}` : null;
   };
-  const userSources = [
-    /httpBasic\(/.test(allText) && { kind: 'basic auth', cites: citeFor(/httpBasic\(/) },
-    /oauth2ResourceServer|JwtDecoder|BearerTokenAuthentication|jwt\(\)/.test(allText) && { kind: 'JWT bearer token', cites: citeFor(/oauth2ResourceServer|JwtDecoder|BearerTokenAuthentication|jwt\(\)/) },
-    /SecurityContextHolder|request\.getSession|HttpSession/.test(allText) && { kind: 'HTTP session', cites: citeFor(/SecurityContextHolder|request\.getSession|HttpSession/) },
-    /ApiToken|X-Api-Token|accesstoken/i.test(allText) && { kind: 'API token', cites: citeFor(/ApiToken|X-Api-Token|accesstoken/i) },
-  ].filter(Boolean);
-  const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources });
+  const userSources = [];
+  const addUser = (kind, cite, why) => {
+    if (cite && !userSources.some((u) => u.kind === kind)) userSources.push({ kind, cites: [cite], why });
+  };
+  for (const t of model.types.values())
+    for (const m of t.methods ?? [])
+      for (const c of m.calls ?? []) {
+        if (c.name === 'httpBasic') addUser('basic auth', lineIn(t.file, 'httpBasic'), `${t.name} configures httpBasic()`);
+        if (c.name === 'oauth2ResourceServer' || c.name === 'jwt')
+          addUser('JWT bearer token', lineIn(t.file, c.name === 'jwt' ? '.jwt(' : 'oauth2ResourceServer'), `${t.name} configures ${c.name}()`);
+        if (c.name === 'formLogin') addUser('HTTP session', lineIn(t.file, 'formLogin'), `${t.name} configures formLogin()`);
+        if (c.name === 'sessionManagement') addUser('HTTP session', lineIn(t.file, 'sessionManagement'), `${t.name} configures sessionManagement()`);
+        if (/^(setAuthentication|setContext)$/.test(c.name ?? '') && (/Filter$/.test(t.name) || (m.calls ?? []).some((x) => ['getHeader', 'getCookies'].includes(x.name))))
+          addUser('API token', lineIn(t.file, c.name), `${t.name}#${m.name} sets the authentication from the request`);
+        // A filter that reads the Authorization header and stores the caller (attribute, ThreadLocal, SecurityContext).
+        if (
+          /Filter$/.test(t.name) &&
+          (m.calls ?? []).some((x) => x.name === 'getHeader') &&
+          (m.calls ?? []).some((x) => ['setAttribute', 'set', 'setAuthentication'].includes(x.name)) &&
+          /Authorization|Bearer|token/i.test(read(path.join(root, t.file)))
+        )
+          addUser('API token', lineIn(t.file, 'getHeader'), `${t.name}#${m.name} reads the token header and stores the caller`);
+      }
+
+  // Sureness declares its authentication types as processors; the catalog names them.
+  for (const { catalog } of selected)
+    for (const t of catalog.types ?? [])
+      if (t.means === 'auth-type' && [...model.types.values()].some((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn)) {
+        const holder = [...model.types.values()].find((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn);
+        addUser(t.authType, lineIn(holder.file, holder.name), `${holder.name} is a Sureness ${t.authType} processor`);
+      }
+  for (const a of authSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p)))
+    if (!userSources.some((u) => u.kind === a.kind)) userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
+  const baseControllers = new Set([...model.implsOf.keys()].filter((fqn) => model.types.get(fqn)?.methods?.length && /Controller$/.test(model.types.get(fqn)?.name ?? '')));
+  const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources, baseControllers });
   // §5.4's 30% vs the 10% this build uses: report all three and let the owner decide.
   const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
     share,
@@ -823,6 +845,7 @@ export function scan(root, { withModel = false } = {}) {
       candidates: tenancy.candidates.slice(0, 6),
       coverage: tenancy.coverage,
       unscoped: tenancy.unscoped,
+      unscopedWrites: tenancy.unscopedWrites,
       globalLookups: tenancy.globalLookups,
       crossTenant: tenancy.crossTenant,
       unscopedByRepo: tenancy.unscopedByRepo,
@@ -882,6 +905,14 @@ export function summarize(f) {
     list.length > n ? [...list.slice(0, n), `- +${list.length - n} more in facts.json (${where})`] : list;
   // A digest line is read, not parsed: long flow and seam lines are cut with a marker and the rest stays in facts.json,
   // so the digest keeps its size on a 5,000-file app.
+  // Transaction lines are lists of steps: cut only between steps, never inside one.
+  const ellSteps = (list, n = 300) =>
+    list.map((l) => {
+      if (l.length <= n) return l;
+      const cut = l.slice(0, n - 1);
+      const at = cut.lastIndexOf('; ');
+      return at > n * 0.5 ? `${cut.slice(0, at + 1)}…` : l;
+    });
   const ell = (list, n = 220) =>
     list.map((l) => {
       if (l.length <= n) return l;
@@ -1180,6 +1211,15 @@ export function summarize(f) {
     L.push(`- ${p.kind} ${p.method} reaches ${p.reaches}; tenant context ${p.setsContext ? 'set' : 'NOT set'}`);
   if (f.noRequestPaths.length > 8) L.push(`- +${f.noRequestPaths.length - 8} more no-request paths in facts.json`);
 
+  sec('Security model (prefixes, user sources, tenant; copy into "How security works")');
+  for (const p of (f.securityModel?.prefixes ?? []).slice(0, 14))
+    L.push(`- ${p.prefix}: ${p.access} — ${p.endpoints} endpoint(s)${p.checked ? `, ${p.checked} use ${p.checks[0]}` : ''} (e.g. ${p.example})`);
+  if ((f.securityModel?.prefixes ?? []).length > 14) L.push(`- +${f.securityModel.prefixes.length - 14} more prefixes in facts.json`);
+  if (f.securityModel?.userSources.length)
+    L.push(`- the user comes from: ${f.securityModel.userSources.map((u) => `${u.kind} (${u.cites[0]})`).join('; ')}`);
+  if (f.securityModel?.tenant) L.push(`- the tenant is ${f.securityModel.tenant.key} (linked in the Tenancy section)`);
+  for (const d of (f.securityModel?.developerRule ?? []).slice(0, 6)) L.push(`- ${d.text}`);
+
   sec('Boot, computed (copy into the map; open files only if a line looks wrong)');
   for (const l of f.boot.computed) L.push(`- ${l}`);
   sec('Boot details (entry points, profile switches)');
@@ -1267,7 +1307,7 @@ export function summarize(f) {
     const best = list[0];
     return `- ${cls} ×${list.length}${kinds.length > 1 ? ` (${kinds.join(', ')})` : ''}: ${seamText(best)}`;
   });
-  push(cap(ell(seamLines, 300), 12, 'transactions'));
+  push(cap(ellSteps(seamLines, 300), 12, 'transactions'));
   const txTotal = f.transactionCounts.reduce((n, x) => n + x.count, 0);
   L.push(
     `- ${txTotal} transactional method(s) in ${f.transactionCounts.length} class(es); ${f.outsideCalls.length} outside call(s) across ${new Set(f.outsideCalls.map((c) => c.method)).size} method(s)`,

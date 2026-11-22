@@ -133,6 +133,7 @@ export function tenancyFacts(
   // Unscoped access: a repository read on a keyed entity whose query names the key nowhere.
   const unscoped = [];
   const globalLookups = [];
+  const unscopedWrites = [];
   const crossTenant = [];
   // Field metadata per entity: the id name and the key's own column (from @Column/join), for SQL matching.
   const metaOf = new Map(
@@ -198,6 +199,20 @@ export function tenancyFacts(
         // A read filtered by a unique column is a global lookup by unique key, not an unscoped read.
         const uniq = (uniqueOf.get(entity) ?? []).filter((f) => f !== 'id');
         const hitUnique = uniq.find((f) => new RegExp(f.replace(/([A-Z])/g, '_?$1'), 'i').test(m.query));
+        // An UPDATE/DELETE query is not a lookup: it belongs in its own list.
+        if (m.modifying || /^\s*(update|delete)\b/i.test(m.query)) {
+          unscopedWrites.push({
+            confidence: 'inferred',
+            repo: repo.split('.').pop(),
+            repoFqn: repo,
+            method: m.name,
+            query: m.query,
+            entity,
+            evidence: m.evidence ?? [],
+            why: [`${m.query} changes rows and never mentions ${key}`],
+          });
+          continue;
+        }
         const idName = metaOf.get(entity)?.id ?? 'id';
         // A @Query that filters by the entity's @Id is a global lookup, extra conditions and parameter name aside.
         const idPredicate = new RegExp(`(?:[a-z]\\w*\\.)?${idName}\\s*(?:=|in\\b)|[:.#]${idName}\\b`, 'i');
@@ -325,6 +340,7 @@ export function tenancyFacts(
       withoutKey: entities.filter((e) => !keyed.has(e.name)).map((e) => e.name).sort(),
     },
     unscoped,
+    unscopedWrites,
     globalLookups,
     crossTenant,
     bridged,

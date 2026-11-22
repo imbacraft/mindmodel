@@ -447,16 +447,66 @@ export function webXmlRules(text, file) {
   return rules;
 }
 
+// Authentication sources, found the same way as tenant sources: from a filter's entry, follow calls two deep, and ask
+// what a reached method *stores* (security context, request attribute, ThreadLocal). A filter that stores the caller
+// and reads an Authorization/token header is an API-token source. Sureness's configured processors come from catalog
+// data (`auth-type`), not from names.
+export function authSources(model, textOf, isTest = () => false) {
+  const facts = [];
+  const byId = new Map();
+  const body = (t, m) => textOf(t.file).split('\n').slice(m.start - 1, m.end).join('\n');
+  for (const t of model.types.values()) for (const m of t.methods ?? []) byId.set(`${t.fqn}#${m.name}`, { t, m });
+  for (const t of model.types.values()) {
+    if (isTest(t.file)) continue;
+    for (const m of t.methods ?? []) {
+      if (!/^(doFilter|doFilterInternal|preHandle)$/.test(m.name)) continue;
+      const reach = [{ t, m }];
+      for (const c of m.calls ?? []) for (const tg of c.targets ?? []) {
+        const hit = byId.get(tg.replace(/\(.*$/, ''));
+        if (hit) reach.push(hit);
+      }
+      for (const r of [...reach].slice(1)) for (const c of r.m.calls ?? []) for (const tg of c.targets ?? []) {
+        const hit = byId.get(tg.replace(/\(.*$/, ''));
+        if (hit) reach.push(hit);
+      }
+      const bodies = reach.map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
+      // A store into the security context, a request attribute, or a static ThreadLocal field (`NAME.set(...)`).
+      const stores = bodies.find((x) => /setAuthentication\s*\(|SecurityContextHolder|setAttribute\s*\(|\b[A-Z][A-Z0-9_]{2,}\s*\.\s*set\s*\(/.test(x.b));
+      if (!stores) continue;
+      const headerLine = bodies
+        .flatMap((x) => [...x.b.matchAll(/getHeader\s*\(\s*([^)]*)\)/g)].map((hm) => ({ name: hm[1].replace(/["']/g, '').trim(), t: x.t, m: x.m, idx: hm.index, b: x.b })))
+        .find((h) => /authorization|bearer|token|api[-_]?key/i.test(h.name));
+      if (!headerLine) continue;
+      const line = headerLine.m.start + headerLine.b.slice(0, headerLine.idx).split('\n').length - 1;
+      facts.push({
+        id: `user-source:api-token:${t.name}`,
+        family: 'user-source',
+        confidence: 'resolved',
+        kind: 'API token',
+        method: `${t.name}#${m.name}`,
+        name: headerLine.name,
+        evidence: [`${headerLine.t.file}:${Math.max(1, line + 1)}#${m.name}`],
+        why: [`${t.name}#${m.name} reads the ${headerLine.name} header and stores the caller (${stores.b.trim().slice(0, 60)})`],
+      });
+    }
+  }
+  return facts;
+}
+
 // The model in one fact: prefixes and their access, where the user and the tenant come from, and what a developer
 // adding an endpoint in a prefix has to do — all derived from the rules and from how existing endpoints are protected.
-export function securityModel({ rules, endpoints, methodSecurity = [], tenancy = null, userSources = [] }) {
+export function securityModel({ rules, endpoints, methodSecurity = [], tenancy = null, userSources = [], baseControllers = new Set() }) {
   const prefixOf = (p) => {
     const parts = String(p ?? '').split('/').filter(Boolean);
     return '/' + parts.slice(0, Math.min(2, parts.length)).join('/') + '/**';
   };
   const byPrefix = new Map();
   for (const e of endpoints) {
-    const prefix = prefixOf(e.path);
+    // A path ending in a file name is one endpoint, not a zone; a generic base controller's mappings are not zones.
+    const single = /\.[a-z]{2,5}$/.test(String(e.path ?? ''));
+    const prefix = single ? e.path : prefixOf(e.path);
+    if (baseControllers.has(e.handlerFqn)) continue;
+    if (!single && (/\/\/|\/\{\}/.test(e.path ?? '') || prefix.split('/').filter(Boolean).length < 2)) continue;
     if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
     byPrefix.get(prefix).push(e);
   }
@@ -468,6 +518,9 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
   const prefixes = [];
   for (const [prefix, eps] of [...byPrefix.entries()].sort((a, b) => b[1].length - a[1].length)) {
     const accessOfEndpoint = (e) => {
+      // The chain rule decides the path's access; a method-level check only fills in when no rule matches.
+      const fromRule = accessFor(rules, e.path ?? '', e.verb);
+      if (fromRule !== 'unknown') return fromRule;
       const checks = checkedFor(e);
       if (checks.length) {
         const a = checks[0].access;
@@ -488,6 +541,7 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     const [access, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] ?? ['unknown', 0];
     const example = eps.find((e) => accessOfEndpoint(e) === access) ?? eps[0];
     const checks = eps.flatMap(checkedFor).map((f) => `${f.annotation}${f.args || ''}`).filter((x, i, a) => a.indexOf(x) === i);
+    const checkedCount = eps.filter((e) => checkedFor(e).length).length;
     prefixes.push({
       prefix,
       access,
@@ -495,12 +549,27 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
       agreement: Math.round((n / eps.length) * 100),
       example: `${example.verb} ${example.path}`,
       checks,
-      checked: eps.filter((e) => checkedFor(e).length).length,
+      checked: checkedCount,
       evidence: [...new Set(eps.map((e) => e.evidence?.[1] ?? e.evidence?.[0]).filter(Boolean))].slice(0, 3),
       why: [`${n} of ${eps.length} endpoints under ${prefix} are ${access}`, checks.length ? `method checks used: ${checks.join(', ')}` : 'no method-level checks'],
     });
   }
-  const developerRule = prefixes
+  // Sibling prefixes under one parent with the same access are one zone (`/health/live`, `/health/ready` → `/health/**`).
+  const merged = [];
+  const byParent = new Map();
+  for (const p of prefixes) {
+    if (/\.[a-z]{2,5}$/.test(p.prefix)) { merged.push(p); continue; }
+    const parent = '/' + p.prefix.split('/').filter(Boolean)[0] + '/**';
+    if (!byParent.has(parent)) byParent.set(parent, []);
+    byParent.get(parent).push(p);
+  }
+  for (const [parent, list] of byParent) {
+    if (list.length > 1 && parent !== '/**' && list.every((p) => p.access === list[0].access) && !list.some((p) => p.prefix === parent)) {
+      merged.push({ ...list[0], prefix: parent, endpoints: list.reduce((a, p) => a + p.endpoints, 0), checked: list.reduce((a, p) => a + p.checked, 0), why: [`${list.length} sibling prefixes with the same access`] });
+    } else merged.push(...list);
+  }
+  merged.sort((a, b) => b.endpoints - a.endpoints);
+  const developerRule = merged
     .filter((p) => p.endpoints >= 2)
     .slice(0, 8)
     .map((p) => ({
@@ -508,7 +577,7 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
         p.access === 'anonymous'
           ? `endpoints under ${p.prefix} are public: ${p.checks.length ? `${p.checked} of ${p.endpoints} use ${p.checks[0]}; the rest must protect themselves` : 'each endpoint must protect itself'}`
           : p.access === 'authenticated'
-            ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? ` (${p.checked} of ${p.endpoints} also carry a method-level check, ${p.checks[0]})` : ''}`
+            ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? `; ${p.checked} of ${p.endpoints} also use ${p.checks[0]}` : ''}`
             : p.access.startsWith('role:')
               ? `endpoints under ${p.prefix} need role ${p.access.slice(5)}`
               : `endpoints under ${p.prefix} are ${p.access}`,
@@ -518,7 +587,7 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     id: 'security-model',
     family: 'security-model',
     confidence: 'inferred',
-    prefixes,
+    prefixes: merged,
     developerRule,
     userSources,
     tenant: tenancy?.key

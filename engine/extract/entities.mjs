@@ -137,6 +137,7 @@ export function entityFacts(model, index, types = new Map()) {
         params: (m.params ?? []).map((p) => p.name),
         evidence: [`${t.file}:${m.nameLine}#${m.name}`],
         dynamic: (m.ann ?? []).some((a) => ['Query', 'Select', 'Insert', 'Update', 'Delete'].includes(a.name)),
+        modifying: (m.ann ?? []).some((a) => a.name === 'Modifying') || /^\s*(update|delete)\b/i.test(m.ann?.find((a) => a.name === 'Query')?.args ?? ''),
       })),
     );
   }

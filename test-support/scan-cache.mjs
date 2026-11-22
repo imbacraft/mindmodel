@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
+import { execFileSync } from 'node:child_process';
 import { loadApps } from '../test/apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -38,8 +39,18 @@ export function cacheKey(name) {
 
 // `withModel` needs the in-memory model, which is not serialisable: those callers scan (once per file) and share the
 // result themselves.
+const dirty = (dir) => {
+  try {
+    return execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;
+  } catch {
+    return true; // not a git checkout: do not trust a cache keyed on a commit
+  }
+};
+
 export function cachedScan(name, dir, { withModel = false } = {}) {
   if (withModel) return scan(dir, { withModel });
+  // An app under development changes without the commit moving: never serve it from cache.
+  if (dirty(dir)) return scan(dir);
   fs.mkdirSync(cacheDir, { recursive: true });
   const file = path.join(cacheDir, `${cacheKey(name)}.json`);
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));

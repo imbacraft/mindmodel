@@ -11,7 +11,8 @@
     "/api/config/**": "role:admin"
    },
    "userSources": [
-    "API token"
+    "API token",
+    "JWT bearer token"
    ],
    "tenantKey": "workspaceId"
   },
