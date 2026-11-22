@@ -1,6 +1,6 @@
 {
   "name": "mindmodel",
   "metadata": { "description": "A Claude Code plugin that creates the codebase mental model for humans" },
-  "owner": { "name": "dbouzoukas" },
+  "owner": { "name": "Dimitrios Bouzoukas" },
   "plugins": [ { "name": "mindmodel", "source": "./" } ]
 }
