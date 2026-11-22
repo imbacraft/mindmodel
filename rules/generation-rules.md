@@ -431,3 +431,10 @@ the existing endpoints in that prefix are protected.
 - Knowledge, not weakness: never name a vulnerability or how to exploit one; a gap goes to `findings.md`. Where the
   developer must know, say it flatly ("endpoints under `/api/shop/**` are public: each must protect itself"), no detail.
 - Every claim cites code: the prefix's rule or a handler's annotation. A claim without a citation is not written.
+
+## Facts are where to start, not the answer
+
+- Every story step must be confirmed by reading the method it cites. The fact proves the call exists; only the code
+  proves what the call does.
+- A "not found" fact (no setter, no listener, no channel) is a fact about the engine. Check the code before stating
+  anything is absent, and write it as "no setter found by the engine", never as "never set" or "never called".

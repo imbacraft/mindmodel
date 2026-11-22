@@ -45,3 +45,8 @@ Return exactly these sections:
 4. **Spot-check:** the seed used and how many of the ten rows held as written; the ones you corrected.
 5. **Rule gaps:** any place the rules were ambiguous or didn't fit, and what you decided.
 6. **Fact corrections:** every place the scanner's facts were wrong, missing or misleading and what the code says instead, one line each: `section: facts said X; code says Y (file:line)`. Write the same lines to `<root>/mindmodel/.work/corrections.md` (create it; write `none` if there were none). This is how the engine improves, so report even small ones; don't spend extra reading to find more.
+
+## Facts are where to start, not the answer
+
+Read the method behind every cited fact before writing the step. A fact that says "no setter found by the engine" is a
+statement about the scan, not about the code: check the code, and never turn it into "never set".

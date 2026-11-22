@@ -1,6 +1,7 @@
 // Facts the writer used to dig up by reading code, now stated down to the method with ready-to-copy citations:
 // transaction seams, status lifecycles, schedules in plain words, and how to boot the app locally.
 import fs from 'node:fs';
+import { chosenInline } from './extract/lifecycle.mjs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { index, methodAt } from './syntax/java.mjs';
@@ -187,6 +188,16 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
           )
             s.set.push(where);
           // Chosen into a variable (ternary or assignment) in a method that sets the status from a variable.
+          // A status chosen inline (`cond ? ENUM.A : ENUM.B`) sets both values (extract/lifecycle.mjs).
+          else if (m && chosenInline({ enumName: en, value: x[1], stmt, methodText: f.lines.slice(m.start - 1, m.end).join('\n') }))
+            s.set.push(`${where} (chosen inline)`);
+          else if (
+            m &&
+            /\?[^;]*\b${en}\b/.test(l) &&
+            STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n')) &&
+            new RegExp(`\\?[^;]*${en}\\.${x[1]}\\b`).test(l)
+          )
+            s.set.push(`${where} (chosen inline)`);
           else if (
             m &&
             !new RegExp(`[=!]=\\s*${en}\\.${x[1]}|${en}\\.${x[1]}\\s*[=!]=|case\\s+${en}|equals\\(`).test(l) &&
@@ -231,7 +242,7 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
         s.conditional.length && `conditional update in ${[...new Set(s.conditional)].join(', ')}`,
         s.set.length && `${hasConditional ? 'PLAIN set' : 'set'} in ${[...new Set(s.set)].join(', ')}`,
       ].filter(Boolean);
-      lifecycle.push(`  ${v}: ${parts.join('; ') || 'no set found (confirm before saying it is never set)'}`);
+      lifecycle.push(`  ${v}: ${parts.join('; ') || 'no setter found by the engine (check the code before saying it is never set)'}`);
     }
   }
 

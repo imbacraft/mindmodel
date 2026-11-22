@@ -23,7 +23,7 @@ function truthFiles() {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.json')) continue;
-      const m = /^([\w.-]+?)(-(?:flows|facts|security|tenancy))?\.json$/.exec(f);
+      const m = /^([\w.-]+?)(-(?:flows|facts|security|tenancy|channels))?\.json$/.exec(f);
       if (!m) continue;
       out.push({ app: m[1], kind: m[2]?.slice(1) ?? 'calls', file: path.join(dir, f) });
     }
@@ -131,6 +131,19 @@ const checks = {
     }
   },
 
+  channels(app, truth, res, misses) {
+    const ch = res.channels ?? [];
+    for (const want of truth) {
+      const ins = ch.filter((c) => c.direction === 'in' && (!want.kind || c.kind === want.kind));
+      const outs = ch.filter((c) => c.direction === 'out' && (!want.kind || c.kind === want.kind));
+      if (want.inbound !== undefined && ins.length !== want.inbound) misses.push(`inbound channels: ${ins.length}, expected ${want.inbound}`);
+      if (want.outbound !== undefined && outs.length !== want.outbound) misses.push(`outbound channels: ${outs.length}, expected ${want.outbound}`);
+      for (const q of want.queues ?? []) if (!ch.some((c) => c.channel === q)) misses.push(`channel ${q} missing`);
+      if (want.condition && !ins.some((c) => c.condition)) misses.push('no conditional channel recorded');
+      if (want.paired && !outs.every((o) => ins.some((i) => i.channel === o.channel))) misses.push('outbound channel without a matching consumer');
+    }
+  },
+
   tenancy(app, truth, res, misses) {
     const t = res.tenancy;
     for (const want of truth) {
@@ -161,6 +174,11 @@ const checks = {
           if ((m.prefixes ?? []).some((x) => x.prefix === bad)) misses.push(`security model: pseudo-prefix ${bad} still listed`);
         for (const good of w.prefixesInclude ?? [])
           if (!(m.prefixes ?? []).some((x) => x.prefix === good)) misses.push(`security model: prefix ${good} missing`);
+        if (w.userSourcesExact) {
+          const got = (m.userSources ?? []).map((x) => x.kind).sort();
+          const exp = [...w.userSourcesExact].sort();
+          if (JSON.stringify(got) !== JSON.stringify(exp)) misses.push(`security model: user sources ${JSON.stringify(got)}, expected ${JSON.stringify(exp)}`);
+        }
         for (const u of w.userSources ?? []) if (!(m.userSources ?? []).some((x) => x.kind.includes(u))) misses.push(`security model: user source ${u} missing`);
         if (w.tenantKey !== undefined && (m.tenant?.key ?? null) !== w.tenantKey) misses.push(`security model: tenant ${m.tenant?.key}, expected ${w.tenantKey}`);
       }

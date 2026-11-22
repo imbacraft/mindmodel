@@ -14,6 +14,7 @@ import { bindCalls } from './model/calls.mjs';
 import { annotationIndex, generatedRules, loadCatalogs, meanOf, selectForModel, signatureIndex, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
+import { channelFacts } from './extract/channels.mjs';
 import { extractSchedules } from './extract/schedules.mjs';
 import {
   anonymousWrites,
@@ -297,7 +298,7 @@ export function resolveWildcardAnnotations(model, index) {
   return fixed;
 }
 
-export function scan(root, { withModel = false } = {}) {
+export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
   const files = walk(root);
   const R = (p) => rel(root, p);
   const read = (p) => fs.readFileSync(p, 'utf8');
@@ -401,6 +402,25 @@ export function scan(root, { withModel = false } = {}) {
   // Recurring work that is not @Scheduled, and the paths that skip authentication: both are read from the model and
   // from resource files (sureness.yml, Spring Security config), not inferred by the writer.
   const recurring = extractSchedules(model, selected);
+  // Configured values by property key (application*.yml/.properties): topic and queue names come from here.
+  const channelConfig = new Map();
+  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !/\/src\/test\//.test(x))) {
+    const text = read(f);
+    if (/\.properties$/.test(f)) {
+      for (const m of text.matchAll(/^([\w.-]+)\s*[=:]\s*(.+)$/gm)) channelConfig.set(m[1].trim(), m[2].trim());
+    } else {
+      const stack = [];
+      for (const line of text.split('\n')) {
+        const m = /^(\s*)([\w.-]+):\s*(.*)$/.exec(line);
+        if (!m || /^\s*#/.test(line)) continue;
+        const indent = m[1].length;
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const key = [...stack.map((x) => x[1]), m[2]].join('.');
+        if (m[3].trim() && !/^[|>]/.test(m[3].trim())) channelConfig.set(key, m[3].trim().replace(/^["']|["']$/g, ''));
+        else stack.push([indent, m[2]]);
+      }
+    }
+  }
   const resourceFiles = files
     .filter((f) => /\.(?:ya?ml|properties)$/.test(f) && /sureness|application|security/i.test(f))
     .map((f) => ({ p: R(f), text: read(f) }));
@@ -468,7 +488,10 @@ export function scan(root, { withModel = false } = {}) {
         if (c.name === 'oauth2ResourceServer' || c.name === 'jwt')
           addUser('JWT bearer token', lineIn(t.file, c.name === 'jwt' ? '.jwt(' : 'oauth2ResourceServer'), `${t.name} configures ${c.name}()`);
         if (c.name === 'formLogin') addUser('HTTP session', lineIn(t.file, 'formLogin'), `${t.name} configures formLogin()`);
-        if (c.name === 'sessionManagement') addUser('HTTP session', lineIn(t.file, 'sessionManagement'), `${t.name} configures sessionManagement()`);
+        if (c.name === 'setAttribute' && (m.calls ?? []).some((x) => x.name === 'getSession'))
+          addUser('HTTP session', lineIn(t.file, 'getSession'), `${t.name}#${m.name} stores the caller in the HttpSession`);
+        if (c.name === 'sessionManagement' && !/STATELESS|NEVER/.test((c.args ?? []).join(' ') || read(path.join(root, t.file)).split('\n').slice(m.start - 1, m.end).join(' ')))
+          addUser('HTTP session', lineIn(t.file, 'sessionManagement'), `${t.name} configures a stateful sessionManagement()`);
         if (/^(setAuthentication|setContext)$/.test(c.name ?? '') && (/Filter$/.test(t.name) || (m.calls ?? []).some((x) => ['getHeader', 'getCookies'].includes(x.name))))
           addUser('API token', lineIn(t.file, c.name), `${t.name}#${m.name} sets the authentication from the request`);
         // A filter that reads the Authorization header and stores the caller (attribute, ThreadLocal, SecurityContext).
@@ -870,6 +893,7 @@ export function scan(root, { withModel = false } = {}) {
     runtime: { interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
     methodSecurity: methodSec.facts,
     securityModel: securityModelFact,
+    channels: channelFacts(model, { config: channelConfig, extraConstants }),
     background: { scheduledAsyncListeners: [...background, ...batchJobs], sockets, runners },
     state: { modifying },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },

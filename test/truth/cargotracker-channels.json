@@ -1,0 +1,16 @@
+[
+ {
+  "kind": "jms",
+  "inbound": 5,
+  "outbound": 4,
+  "paired": true,
+  "queues": [
+   "java:app/jms/CargoHandledQueue",
+   "java:app/jms/MisdirectedCargoQueue",
+   "java:app/jms/DeliveredCargoQueue",
+   "java:app/jms/HandlingEventRegistrationAttemptQueue",
+   "java:app/jms/RejectedRegistrationAttemptsQueue"
+  ],
+  "note": "MDB destinationLookup for the consumers; @Resource(lookup) fields for the sends"
+ }
+]
