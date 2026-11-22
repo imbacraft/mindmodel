@@ -89,3 +89,35 @@ export function extractSchedules(model, selected = []) {
     ['newTimeout', 14, 'inferred'],
   ]);
 }
+
+
+// Schedules and retries in plain words, moved unchanged from deep.mjs (slice 6, R2).
+import { humanMs, humanSchedule, windowsIn } from './text/time.mjs';
+
+const JOB = /^(Scheduled|Schedule)\b/;
+export function scheduleFacts({ files, cite }) {
+  const schedules = [];
+  // Schedules and retries in plain words, with the time windows each job uses.
+  for (const f of files)
+    for (const m of f.ix.methods) {
+      const header = f.lines.slice(m.start - 1, m.nameLine),
+        sch = m.annotations.find((a) => JOB.test(a)),
+        raw = sch && header.find((l) => /@Schedul(e|ed)\b/.test(l));
+      if (sch) {
+        const w = windowsIn(f.lines, m);
+        schedules.push(
+          `${f.name}.${m.name} ${cite(f, m)}: ${humanSchedule(raw ?? sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
+        );
+      }
+      const retry = header.join(' ').match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);
+      if (retry) {
+        const a = /maxAttempts\s*=\s*(\d+)/.exec(retry[1])?.[1],
+          d = /delay\s*=\s*(\d+)/.exec(retry[1])?.[1],
+          x = /multiplier\s*=\s*([\d.]+)/.exec(retry[1])?.[1];
+        schedules.push(
+          `RETRY ${f.name}.${m.name} ${cite(f, m)}: ${a ?? 3} attempts${d ? `, first wait ${humanMs(Number(d))}` : ''}${x ? ` ×${x}` : ''}`,
+        );
+      }
+    }
+  return schedules;
+}

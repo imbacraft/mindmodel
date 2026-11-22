@@ -7,7 +7,7 @@ import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { scan, summarize } from './scan.mjs';
-import { configKeys } from './deep.mjs';
+import { configKeys } from './extract/config.mjs';
 
 // --- per-service extraction --------------------------------------------------------
 // Placeholders like "${app.topics.orders:orders}" resolve from the service's own config, else their default.
