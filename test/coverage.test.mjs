@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
+import { cachedScan } from '../test-support/scan-cache.mjs';
 import { dirOf, loadApps } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -93,7 +94,7 @@ for (const app of cfg.apps) {
     `coverage ${app.name}`,
     { skip: !fs.existsSync(dir) && `${dir} not found` },
     (t) => {
-      const facts = scan(dir);
+      const facts = cachedScan(app.name, dir);
       const cov = facts.coverage;
 
       for (const r of cov.rates) {

@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
+import { cachedScan } from '../test-support/scan-cache.mjs';
 import { index } from '../engine/syntax/java.mjs';
 import { parseCite } from '../engine/validate.mjs';
 
@@ -45,7 +46,7 @@ const show = (bad, what, name) => assert.deepStrictEqual(bad.slice(0, 10), [], `
 for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))) {
   test(`invariants ${app.name}`, (t) => {
     const dir = path.join(root, app.name);
-    const facts = scan(dir);
+    const facts = cachedScan(app.name, dir);
     const cache = new Map();
     const at = (rel) => {
       if (!cache.has(rel)) {
@@ -97,14 +98,14 @@ for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))
 
     // 2. Every entity field is cited on a line inside the entity's own type range.
     const badFields = [];
-    for (const ent of facts.entities.funnel) {
+    for (const ent of facts.entities.model) {
       const { ix } = at(ent.file);
       const type = ix.types.find((x) => x.name === ent.name);
       if (!type) {
         badFields.push(`${ent.name}: no type in ${ent.file}`);
         continue;
       }
-      for (const f of [...ent.keyFields, ...ent.relations]) {
+      for (const f of [...(ent.ownKeys ?? ent.keys ?? []), ...(ent.ownRelations ?? ent.relations ?? [])]) {
         const line = Number(f.split(':').pop());
         if (!(type.start <= line && line <= type.end))
           badFields.push(`${ent.name}.${f.split(':')[0]}: line ${line} outside ${type.start}-${type.end}`);

@@ -137,7 +137,9 @@ try {
   execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '--detach', head, 'HEAD']);
   worktree = true;
   const targets = [
-    ...cfg.apps.map((a) => ({ kind: 'app', name: a.name, dir: dirOf({ ...cfg, root }, a) })),
+    ...cfg.apps
+      .filter((a) => !(process.env.SKIP_SLOW === '1' && a.name === 'fineract'))
+      .map((a) => ({ kind: 'app', name: a.name, dir: dirOf({ ...cfg, root }, a) })),
     ...cfg.systems.map((s) => ({ kind: 'system', name: s.name, dir: path.join(root, s.name) })),
   ].filter((t) => !only.size || only.has(t.name));
   console.log(`committed engine: ${execFileSync('git', ['-C', repo, 'rev-parse', '--short', 'HEAD']).toString().trim()}`);

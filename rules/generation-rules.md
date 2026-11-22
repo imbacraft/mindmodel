@@ -69,7 +69,14 @@ Work in this order. Later sections depend on earlier ones: everything is written
 
 ## Part 3. Section rules
 
-### 3.1 Overview
+#
+### Tenancy
+
+- The digest's **Tenancy** section is the whole story of the tenant key: the key, its counts (entities carrying it, repository reads that filter by it), which entities lack it, the reads that skip it, and code without a request. Say "inferred" where it says inferred; a key the engine did not choose is `null`, and that is a finding, not a gap to fill by guessing a field name.
+- "Scoped by X" is only true when the fact says so. If an entity is listed under "without it", every read of it is unscoped unless the code checks the tenant somewhere else — cite that check or say it is missing and put it in `findings.md`.
+- A job, listener, async method or worker listed as reaching a keyed repository with the tenant context **not set** is a probable defect: neutral warning on the page, full evidence in the findings.
+
+## 3.1 Overview
 
 **Goal:** in one breath, the reader knows who the system serves and what they get from it, plus what it will never be.
 

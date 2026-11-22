@@ -33,7 +33,8 @@
   },
   "entities": {
    "type": "object",
-   "description": "Ported in slice 3 (entities and tenancy)."
+   "description": "Ported in slice 3: the annotation count, the funnel, the enums, and the model's entities with table, relations and inherited fields.",
+   "additionalProperties": true
   },
   "state": {
    "type": "object",
@@ -168,7 +169,8 @@
   },
   "tenancy": {
    "type": "object",
-   "description": "Ported in slice 3."
+   "description": "\u00a75.4: the key (inferred from counts, never from the name), its coverage, repository reads that skip it, and the request sources.",
+   "additionalProperties": true
   },
   "inventory": {
    "type": "object",
@@ -469,6 +471,14 @@
       }
      }
     }
+   }
+  },
+  "noRequestPaths": {
+   "type": "array",
+   "description": "Jobs, listeners, async methods and webhooks that reach a repository of a keyed entity, and whether the path sets the tenant context first.",
+   "items": {
+    "type": "object",
+    "additionalProperties": true
    }
   }
  },

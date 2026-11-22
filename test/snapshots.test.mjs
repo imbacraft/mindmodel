@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan, summarize } from '../engine/scan.mjs';
+import { cachedScan } from '../test-support/scan-cache.mjs';
 import { systemScan, systemSummary } from '../engine/system.mjs';
 import { checkSchema, validate } from '../engine/validate.mjs';
 import { renderPage } from '../engine/render.mjs';
@@ -77,9 +78,12 @@ const skipIf = (dir, app) => (!fs.existsSync(dir) ? `${dir} not found` : moved(d
 for (const app of cfg.apps) {
   const dir = dirOf({ ...cfg, root }, app),
     skip = skipIf(dir, app);
-  test(`app ${app.name}`, (t) => {
+  test(
+    `app ${app.name}`,
+    { skip: process.env.SKIP_SLOW === '1' && app.name === 'fineract' ? 'SKIP_SLOW=1 (large app)' : false },
+    (t) => {
     if (skip) return t.skip(skip);
-    const raw = scan(dir),
+    const raw = cachedScan(app.name, dir),
       facts = stable(raw),
       out = { facts, digest: digest(facts) };
     // The contract is checked on the real facts: `stable` drops scannedAt, which the schema requires.

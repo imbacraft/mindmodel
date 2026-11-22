@@ -11,11 +11,13 @@ import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
 import { index } from './syntax/java.mjs';
 import { buildModel } from './model/model.mjs';
 import { bindCalls } from './model/calls.mjs';
-import { generatedRules, loadCatalogs, selectForModel, signatureIndex } from './catalogs/catalog.mjs';
+import { annotationIndex, generatedRules, loadCatalogs, selectForModel, signatureIndex, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
 import { extractSchedules } from './extract/schedules.mjs';
 import { anonymousWrites, springChains, surenessRules, tenantSources } from './extract/security.mjs';
+import { entityFacts } from './extract/entities.mjs';
+import { noRequestPaths, tenancyFacts } from './extract/tenancy.mjs';
 import { extractOutside } from './extract/outside.mjs';
 import { extractState } from './extract/state.mjs';
 import { extractTransactions } from './extract/transactions.mjs';
@@ -252,6 +254,38 @@ const linesMatching = (text, re) =>
   text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
 
 // --- main ---------------------------------------------------------------------
+// `import jakarta.persistence.*;` then `@Entity`: an annotation with no explicit import is resolved through the
+// catalog, not guessed. Only names a catalog knows resolve; everything else stays unknown and shows up in coverage.
+export function resolveWildcardAnnotations(model, index) {
+  const known = new Map();
+  for (const [fqn, hits] of index.byFqn) known.set(fqn, hits);
+  let fixed = 0;
+  const apply = (anns, imports) => {
+    for (const a of anns ?? []) {
+      if (a.fqn) continue;
+      for (const i of imports) {
+        if (!i.wildcard) continue;
+        const cand = `${i.name}.${a.name}`;
+        if (known.has(cand)) {
+          a.fqn = cand;
+          fixed++;
+          break;
+        }
+      }
+    }
+  };
+  for (const t of model.types.values()) {
+    const imports = model.importsOf.get(t.file)?.imports ?? [];
+    apply(t.ann, imports);
+    for (const m of t.methods ?? []) {
+      apply(m.ann, imports);
+      for (const p of m.params ?? []) apply(p.ann, imports);
+    }
+    for (const f of t.fields ?? []) apply(f.ann, imports);
+  }
+  return fixed;
+}
+
 export function scan(root, { withModel = false } = {}) {
   const files = walk(root);
   const R = (p) => rel(root, p);
@@ -293,22 +327,6 @@ export function scan(root, { withModel = false } = {}) {
     (j) =>
       /\b(Jpa|Crud|PagingAndSorting)Repository\s*</.test(j.extends ?? '') || /Repository\s*</.test(j.extends ?? ''),
   );
-  const repoFor = (n) => repos.find((r) => new RegExp(`Repository\\s*<\\s*${n}\\b`).test(r.extends));
-  // Jakarta EE repositories hold an EntityManager: their entity is the one they name most (X.class, TypedQuery<X>, "X.query").
-  const emRepos = java
-    .filter(
-      (j) => /\bEntityManager\s+\w+\s*;/.test(j.text) && /(Repository|Dao)\b/.test(`${j.name} ${j.implements ?? ''}`),
-    )
-    .map((j) => {
-      const n = {};
-      for (const m of j.text.matchAll(/\b(\w+)\.class\b|TypedQuery<(\w+)>|createNamedQuery\(\s*"(\w+)\./g)) {
-        const e = m[1] ?? m[2] ?? m[3];
-        if (entityNames.has(e)) n[e] = (n[e] ?? 0) + 1;
-      }
-      return { j, entity: Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] };
-    })
-    .filter((x) => x.entity);
-
   // frontend: React/TS and server-rendered views
   const built = (f) =>
     /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) ||
@@ -332,67 +350,6 @@ export function scan(root, { withModel = false } = {}) {
         !/templates\/(emails?|library)\//.test(f),
     )
     .map((p) => ({ p: R(p), text: read(p) }));
-
-  // entity funnel (R12): score + family flags
-  const suffix = (n) => (n.match(/[A-Z][a-z0-9]*$/) ?? [n])[0];
-  const famCount = {};
-  for (const e of entities) famCount[suffix(e.name)] = (famCount[suffix(e.name)] ?? 0) + 1;
-  const INFRA = /(Log|Event|Token|Audit|History|PageView|Pending\w*|Failed\w*|Join\w*|Joined\w*|Variant|Mapping)$/;
-  const LINE_ITEM = /(Item|Line|Detail|Details)$/;
-  // Each file's identifiers, collected once: a set lookup per entity instead of a regex over every file. Not after @
-  // or a dot, so an entity named Component doesn't count every @Component annotation or stereotype import.
-  const wordSets = new Map(),
-    words = (text) => {
-      let s = wordSets.get(text);
-      if (!s) wordSets.set(text, (s = new Set(text.match(/(?<![@.\w])[A-Za-z_]\w*/g))));
-      return s;
-    };
-  const funnel = entities
-    .map((e) => {
-      const named = (x) => words(x.text).has(e.name);
-      const relIn = entities.filter((o) => o !== e && named(o)).length;
-      const refs = nonEntity.filter(named).length;
-      const ctrl = controllers.filter(named).length;
-      const svc = nonEntity.filter((j) => /Service(Impl)?$/.test(j.name ?? '') && named(j)).length;
-      const feRefs = fe.filter(named).length;
-      const vre = new RegExp(
-        `[$#]\\{\\s*${lc(e.name)}(s|List)?[.\\s}]|var\\s*=\\s*"${lc(e.name)}"|modelAttribute\\s*=\\s*"${lc(e.name)}"`,
-      );
-      const viewRefs = views.filter((v) => vre.test(v.text)).length;
-      const status = e.fields.some(
-        (f) => /^(status|state)$/i.test(f.name) || (f.enumerated && /status|state/i.test(f.type)),
-      );
-      const family = famCount[suffix(e.name)] >= 3 ? suffix(e.name) : undefined;
-      const used = !!repoFor(e.name) || refs > 0;
-      const flags = [
-        family && `family:*${family}`,
-        INFRA.test(e.name) && 'infrastructure',
-        LINE_ITEM.test(e.name) && 'line-item?',
-        !used && 'dead?',
-      ].filter(Boolean);
-      const score =
-        Math.round(
-          (relIn * 3 + Math.log2(1 + refs) * 4 + ctrl + Math.log2(1 + feRefs + viewRefs) * 3 + (status ? 2 : 0)) * 10,
-        ) / 10;
-      return {
-        name: e.name,
-        file: e.p,
-        line: e.classLine,
-        table: e.table,
-        score,
-        relIn,
-        refs,
-        controllers: ctrl,
-        services: svc,
-        frontendFiles: feRefs,
-        viewFiles: viewRefs,
-        status,
-        flags,
-        relations: e.fields.filter((f) => f.rel).map((f) => `${f.rel} ${f.type} ${f.name}:${f.line}`),
-        keyFields: e.fields.filter((f) => !f.rel).map((f) => `${f.name}:${f.type}:${f.line}`),
-      };
-    })
-    .sort((a, b) => b.score - a.score);
 
   // status enums with values (lifecycles)
   const enums = java
@@ -454,6 +411,36 @@ export function scan(root, { withModel = false } = {}) {
   ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
   const securityWarnings = anonymousWrites(securityRules, endpoints, methodSecurityIndex);
   const tenantFacts = tenantSources(javaAll);
+  // Entities and tenancy on the model (§5.4, slice 3): fields (inherited too), relations and their owning side,
+  // repository → entity from resolved type arguments; the tenant key decided by counts.
+  // Flow entries are needed both by tenancy (worker callers) and by the flows themselves: compute once.
+  const flowEntryList = flowEntries(model, endpoints, selected);
+  const catalogIndex = annotationIndex(selected);
+  resolveWildcardAnnotations(model, catalogIndex);
+  const entFacts = entityFacts(model, catalogIndex, typeIndex(selected));
+  // Callers that are no-request code: jobs, listeners, async methods and worker loops.
+  const entryMethods = [
+    ...flowEntryList.filter((e) => e.kind === 'worker').map((e) => `${e.t.fqn}#${e.m.name}`),
+    ...[...model.types.values()].flatMap((t) =>
+      (t.methods ?? [])
+        .filter((m) => (m.ann ?? []).some((a) => /(Scheduled|Schedule|JmsListener|KafkaListener|RabbitListener|EventListener|Async)$/.test(a.name ?? '')))
+        .map((m) => `${t.fqn}#${m.name}`),
+    ),
+  ];
+  const requestMethods = endpoints.map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`);
+  const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
+  // §5.4's 30% vs the 10% this build uses: report all three and let the owner decide.
+  const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
+    share,
+    key: tenancyFacts(entFacts, { tenantSources: tenantFacts, model, minShare: share }).key,
+  }));
+  const withoutRequest = noRequestPaths({
+    model,
+    tenancy,
+    repos: entFacts.repos,
+    // Worker entries only matter when there is a key to reach; skipping the build keeps large keyless apps fast.
+    extra: tenancy.key ? flowEntryList.filter((e) => e.kind === 'worker').map((e) => ({ kind: 'worker', t: e.t, m: e.m })) : [],
+  });
   const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
   const feCalls = fe.flatMap((f) =>
     f.text.split('\n').flatMap((l, i) => {
@@ -629,18 +616,8 @@ export function scan(root, { withModel = false } = {}) {
     return { file: R(f), db: db?.[1], keys };
   });
   // state: who writes each entity (repository mutations per caller), copies of state
-  const repoEntity = new Map([
-    ...repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]),
-    ...emRepos.flatMap(({ j, entity }) =>
-      [
-        j.name,
-        ...(j.implements ?? '')
-          .split(/\s*,\s*/)
-          .map((s) => s.replace(/<.*/, ''))
-          .filter((n) => /(Repository|Dao)$/.test(n)),
-      ].map((n) => [n, entity]),
-    ),
-  ]);
+  // The repository → entity map comes from the model's resolved type arguments (entities.mjs); no name patterns.
+  const repoEntity = new Map([...entFacts.repos].map(([fqn, e]) => [fqn.split('.').pop(), e.split('.').pop()]));
   const modifying = repos.flatMap((r) =>
     linesMatching(r.text, /@Modifying/).map((m) => ({ file: r.p, line: m.line, entity: repoEntity.get(r.name) })),
   );
@@ -657,7 +634,7 @@ export function scan(root, { withModel = false } = {}) {
     EXT,
     enums,
     entities,
-    shortlist: new Set(funnel.slice(0, 15).map((e) => e.name)),
+    shortlist: new Set([...entFacts.entities].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15).map((e) => e.name)),
     endpoints,
   });
   const bootComputed = bootFacts({ root, files, rel: R, git, app });
@@ -741,7 +718,6 @@ export function scan(root, { withModel = false } = {}) {
 
   // Flow ranking reads activity: how many commits in the window touched the entry's file. One git log, counted per
   // file on demand (validate.mjs computes the same numbers for the map's regions).
-  const flowEntryList = flowEntries(model, endpoints, selected);
   const activityOf = (() => {
     const win = gitInfo?.window;
     if (!win) return () => 0;
@@ -762,7 +738,7 @@ export function scan(root, { withModel = false } = {}) {
     stateWrites: stateFacts.filter((x) => x.family === 'state-write'),
     outsideCalls,
     transactions,
-    entities: entities.funnel ?? [],
+    entities: entFacts.entities,
     activityOf,
     selected,
     securityRules,
@@ -789,11 +765,50 @@ export function scan(root, { withModel = false } = {}) {
       .map(([dir, n]) => ({ dir, javaFiles: n }))
       .sort((a, b) => a.dir.localeCompare(b.dir)),
     entities: {
-      count: entities.length,
-      funnel,
+      count: entFacts.entities.length,
+      model: entFacts.entities.map((e) => ({
+        name: e.name,
+        file: e.file,
+        line: e.line,
+        table: e.table,
+        relations: e.relations,
+        keys: e.keyFields.slice(0, 12),
+        unique: e.uniqueFields,
+        // Own fields only, for the invariant that a field's line sits inside its type (inherited lines live elsewhere).
+        ownKeys: e.fields.filter((f) => f.owner === e.name && !f.relation).map((f) => `${f.name}:${f.type}:${f.line}`),
+        ownRelations: e.fields.filter((f) => f.owner === e.name && f.relation).map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
+      })),
       enums,
       repositories: repos.map((r) => ({ file: r.p, extends: r.extends })),
+      model: entFacts.entities.map((e) => ({
+        name: e.name,
+        file: e.file,
+        line: e.line,
+        table: e.table,
+        relations: e.relations,
+        keys: e.keyFields.slice(0, 12),
+        unique: e.uniqueFields,
+        // Own fields only, for the invariant that a field's line sits inside its type (inherited lines live elsewhere).
+        ownKeys: e.fields.filter((f) => f.owner === e.name && !f.relation).map((f) => `${f.name}:${f.type}:${f.line}`),
+        ownRelations: e.fields.filter((f) => f.owner === e.name && f.relation).map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
+      })),
     },
+    tenancy: {
+      key: tenancy.key,
+      confidence: tenancy.confidence,
+      counts: tenancy.counts,
+      candidates: tenancy.candidates.slice(0, 6),
+      coverage: tenancy.coverage,
+      unscoped: tenancy.unscoped,
+      globalLookups: tenancy.globalLookups,
+      crossTenant: tenancy.crossTenant,
+      unscopedByRepo: tenancy.unscopedByRepo,
+      bridged: tenancy.bridged,
+      bases: tenancy.bases,
+      thresholds: tenancyThresholds,
+      sources: tenancy.sources,
+    },
+    noRequestPaths: withoutRequest,
     endpoints,
     coverage: cov,
     frontend: {
@@ -982,23 +997,13 @@ export function summarize(f) {
       'packages',
     ),
   );
-  sec(
-    `Entity funnel (${f.entities.count} entities; score = relIn·3 + log refs·4 + controllers + log frontend/views·3 + status·2)`,
-  );
-  f.entities.funnel
-    .slice(0, 20)
-    .forEach((e, i) =>
-      L.push(
-        `${i + 1}. ${e.name} ${e.score} · ${e.file}:${e.line}${e.table ? ' table ' + e.table : ''} · relIn ${e.relIn}, refs ${e.refs}, ctrl ${e.controllers}, svc ${e.services}, fe ${e.frontendFiles}, views ${e.viewFiles}${e.status ? ', status' : ''}${e.flags.length ? ' · ' + e.flags.join(' ') : ''}${e.relations.length ? '\n   rel: ' + e.relations.slice(0, 8).join('; ') + (e.relations.length > 8 ? `; +${e.relations.length - 8} more in facts.json` : '') : ''}`,
-      ),
-    );
-  if (f.entities.funnel.length > 20)
+  sec(`Entities (${f.entities.model.length}; from the model: table, relations, keys)`);
+  for (const e of [...f.entities.model].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15))
     L.push(
-      `rest: ${f.entities.funnel
-        .slice(20)
-        .map((e) => `${e.name}(${e.score}${e.flags.length ? ' ' + e.flags.join(' ') : ''})`)
-        .join(', ')}`,
+      `- ${e.name} table ${e.table} · ${e.relations.length} relation(s)${e.relations.length ? ': ' + e.relations.slice(0, 6).join('; ') : ''} · keys ${e.keys.slice(0, 8).join(', ')}${e.unique?.length ? ` · unique ${e.unique.join(', ')}` : ''}`,
     );
+  if (f.entities.model.length > 15) L.push(`- +${f.entities.model.length - 15} more in facts.json`);
+
   sec('Enums');
   push(
     cap(
@@ -1113,6 +1118,47 @@ export function summarize(f) {
     L.push(`- @ExceptionHandler in ${f.runtime.exceptionHandlers.length} files (list in facts.json)`);
   for (const b of f.runtime.baseClasses) L.push(`- base class ${b.base}: ${b.subclasses} subclasses`);
   for (const s of f.runtime.sessionState.slice(0, 20)) L.push(`- session ${s.file}:${s.line} ${s.text}`);
+  // Tenancy (§5.4): the key decided by counts, its coverage, the reads that skip it, and code without a request.
+  sec('Tenancy (the key is inferred from counts, never from the name)');
+  if (f.tenancy.key) {
+    const t = f.tenancy;
+    L.push(
+      `- key ${t.key}: ${t.counts.entities} of ${t.counts.of} entities (${t.counts.percent}%), ` +
+        `${t.counts.filteredMethods} of ${t.counts.repoMethods} repository reads filter by it (${t.counts.filteredPercent}%) — inferred`,
+    );
+    const src = t.sources.slice(0, 3).map((s) => `${s.kind} ${s.name} (${s.method})`);
+    if (src.length) L.push(`- the request carries it: ${src.join(', ')}`);
+    L.push(`- with the key: ${t.coverage.withKey.slice(0, 10).join(', ')}${t.coverage.withKey.length > 10 ? ` +${t.coverage.withKey.length - 10}` : ''}`);
+    const no = t.coverage.withoutKey.filter((n) => /Monitor|Alert|Group|Dashboard|Metric|Collect|Job|Task|Agent/.test(n));
+    if (no.length)
+      L.push(
+        `- without it: ${no.slice(0, 10).join(', ')}${no.length > 10 ? ` +${no.length - 10}` : ''} — reads of these are not scoped by ${t.key}`,
+      );
+    if (t.globalLookups?.length)
+      L.push(
+        `- global lookups by unique key (not unscoped): ${t.globalLookups.length}, e.g. ${t.globalLookups
+          .slice(0, 4)
+          .map((g) => `${g.repo}#${g.method} (${g.uniqueField})`)
+          .join('; ')}`,
+      );
+    if (t.unscopedByRepo.length)
+      L.push(
+        `- unscoped reads, by repository: ${t.unscopedByRepo
+          .slice(0, 8)
+          .map((r) => {
+            const first = t.unscoped.find((u) => u.repo === r.repo);
+            return `${r.repo} ×${r.n} (e.g. ${first.query})`;
+          })
+          .join('; ')}${t.unscopedByRepo.length > 8 ? `; +${t.unscopedByRepo.length - 8} repositories in facts.json` : ''}`,
+      );
+  } else {
+    const near = f.tenancy.candidates.slice(0, 3).map((c) => `${c.key} ${c.counts.entities}/${c.counts.of}`);
+    L.push(`- no tenant key: no identifier field reaches 3 entities and 10% with a request source (closest: ${near.join(', ') || 'none'})`);
+  }
+  for (const p of f.noRequestPaths.slice(0, 8))
+    L.push(`- ${p.kind} ${p.method} reaches ${p.reaches}; tenant context ${p.setsContext ? 'set' : 'NOT set'}`);
+  if (f.noRequestPaths.length > 8) L.push(`- +${f.noRequestPaths.length - 8} more no-request paths in facts.json`);
+
   sec('Boot, computed (copy into the map; open files only if a line looks wrong)');
   for (const l of f.boot.computed) L.push(`- ${l}`);
   sec('Boot details (entry points, profile switches)');
@@ -1137,7 +1183,9 @@ export function summarize(f) {
       );
   // Shortlisted entities only: the full write sites stay in facts.json (stateWrites).
   sec('State (which methods write each shortlisted entity; caches)');
-  const top = new Set(f.entities.funnel.slice(0, 15).map((e) => e.name));
+  const top = new Set(
+    [...f.entities.model].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15).map((e) => e.name),
+  );
   const byEntity = new Map();
   for (const w of f.stateWrites) {
     const short = (w.entity ?? 'no entity').split('.').pop();

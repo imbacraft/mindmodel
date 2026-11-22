@@ -454,7 +454,7 @@ export function systemSummary(sys) {
   L.push('## Services (size, data, interface)');
   if (sys.libraries.length) L.push(`- shared libraries (no entry point, not services): ${sys.libraries.join(', ')}`);
   for (const s of sys.services) {
-    const ents = s.facts.entities.funnel
+    const ents = s.facts.entities.model
       .slice(0, 5)
       .map((e) => e.name)
       .join(', ');
@@ -520,7 +520,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         services: sys.services.map(({ facts, ...s }) => ({
           ...s,
           endpoints: facts.endpoints.length,
-          entities: facts.entities.funnel.slice(0, 10).map((e) => e.name),
+          entities: facts.entities.model.slice(0, 10).map((e) => e.name),
         })),
       },
       null,

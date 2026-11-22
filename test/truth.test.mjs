@@ -23,7 +23,7 @@ function truthFiles() {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.json')) continue;
-      const m = /^([\w.-]+?)(-flows|-facts|-security)?\.json$/.exec(f);
+      const m = /^([\w.-]+?)(-(?:flows|facts|security|tenancy))?\.json$/.exec(f);
       if (!m) continue;
       out.push({ app: m[1], kind: m[2]?.slice(1) ?? 'calls', file: path.join(dir, f) });
     }
@@ -49,8 +49,8 @@ function callIndex(model) {
 }
 
 const checks = {
-  calls(app, truth, dir, misses) {
-    const { model } = scan(dir, { withModel: true });
+  calls(app, truth, res, misses) {
+    const { model } = res;
     const calls = callIndex(model);
     for (const want of truth) {
       const got = calls.get(`${want.file}|${want.line}|${want.call}|${want.recv}`);
@@ -71,8 +71,8 @@ const checks = {
     assert.ok(truth.length >= 29, `${app}: the hand-checked sample is still there`);
   },
 
-  flows(app, truth, dir, misses) {
-    const { flows } = scan(dir);
+  flows(app, truth, res, misses) {
+    const { flows } = res;
     for (const want of truth) {
       const rank = flows.findIndex((f) => f.entry.cite.endsWith(want.entry)) + 1;
       const got = flows[rank - 1];
@@ -88,8 +88,8 @@ const checks = {
     }
   },
 
-  facts(app, truth, dir, misses) {
-    const facts = scan(dir);
+  facts(app, truth, res, misses) {
+    const facts = res;
     for (const want of truth) {
       if (want.family === 'enum') {
         const e = (facts.entities.enums ?? []).find((x) => x.name === want.name);
@@ -131,8 +131,37 @@ const checks = {
     }
   },
 
-  security(app, truth, dir, misses) {
-    const facts = scan(dir);
+  tenancy(app, truth, res, misses) {
+    const t = res.tenancy;
+    for (const want of truth) {
+      if ('key' in want && t.key !== want.key) misses.push(`key: ${t.key}, expected ${want.key}`);
+      if (want.entities !== undefined && t.counts.entities !== want.entities)
+        misses.push(`entities with the key: ${t.counts.entities}, expected ${want.entities}`);
+      if (want.of !== undefined && t.counts.of !== want.of) misses.push(`entities: ${t.counts.of}, expected ${want.of}`);
+      for (const e of want.withKey ?? []) if (!t.coverage.withKey.includes(e)) misses.push(`coverage: ${e} should carry the key`);
+      for (const e of want.withoutKey ?? []) if (!t.coverage.withoutKey.includes(e)) misses.push(`coverage: ${e} should not carry the key`);
+      for (const q of want.scopedIncludes ?? []) {
+        const inU = (t.unscoped ?? []).some((u) => `${u.repo}#${u.method}` === q || u.method === q.split('#').pop());
+        if (inU) misses.push(`scoped: ${q} is still listed as unscoped`);
+      }
+      for (const q of want.crossIncludes ?? [])
+        if (!(t.crossTenant ?? []).some((g) => `${g.repo}#${g.method}` === q)) misses.push(`cross-tenant read: ${q} missing`);
+      for (const q of want.globalIncludes ?? [])
+        if (!(t.globalLookups ?? []).some((g) => `${g.repo}#${g.method}` === q))
+          misses.push(`global lookup: ${q} missing`);
+      for (const q of want.unscopedIncludes ?? [])
+        if (!t.unscoped.some((u) => `${u.repo}#${u.method}` === q || u.query.includes(q)))
+          misses.push(`unscoped: ${q} missing`);
+      if (want.bridged !== undefined && (t.bridged ?? 0) !== want.bridged)
+        misses.push(`bridged (reads scoped by a base service): ${t.bridged}, expected ${want.bridged}`);
+      for (const b of want.bases ?? []) if (!(t.bases ?? []).includes(b)) misses.push(`base service ${b}: not detected`);
+      if (want.noRequest !== undefined && (res.noRequestPaths ?? []).length < want.noRequest)
+        misses.push(`no-request paths: fewer than ${want.noRequest}`);
+    }
+  },
+
+  security(app, truth, res, misses) {
+    const facts = res;
     const WRITE = ['POST', 'PUT', 'PATCH', 'DELETE'];
     // Only API prefixes: a docs or actuator permit is not an API write, and the truth is about the API surface.
     const anonWrites = (facts.securityRules ?? [])
@@ -165,12 +194,19 @@ const checks = {
   },
 };
 
+// One scan per app for every truth kind: the model is needed for call resolution, so these scans stay in-memory.
+const scanned = new Map();
+const factsFor = (app, dir) => {
+  if (!scanned.has(app)) scanned.set(app, scan(dir, { withModel: true }));
+  return scanned.get(app);
+};
+
 for (const { app, kind, file } of truthFiles()) {
   const dir = appDir(app);
   test(`truth ${kind} ${app}`, { skip: !dir || !fs.existsSync(dir) ? `${app} is not cloned` : false }, () => {
     const truth = JSON.parse(fs.readFileSync(file, 'utf8'));
     const misses = [];
-    checks[kind](app, truth, dir, misses);
+    checks[kind](app, truth, factsFor(app, dir), misses);
     assert.deepEqual(misses, [], `${app}: ${misses.length} hand-checked ${kind} fact(s) disagree`);
   });
 }

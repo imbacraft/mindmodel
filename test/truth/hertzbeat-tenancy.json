@@ -1,0 +1,20 @@
+[
+ {
+  "key": "workspaceId",
+  "entities": 9,
+  "of": 59,
+  "withoutKey": [
+   "Monitor"
+  ],
+  "withKey": [
+   "GroupAlert",
+   "SingleAlert",
+   "AuthToken"
+  ],
+  "note": "alerts are scoped by workspace; Monitor has no workspace field, so monitor reads are not scoped",
+  "bridged": 0,
+  "globalIncludes": [
+   "AuthTokenDao#existsByTokenHashAndStatus"
+  ]
+ }
+]
