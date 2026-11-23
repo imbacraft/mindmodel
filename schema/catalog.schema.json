@@ -1,0 +1,410 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "mindmodel framework catalog",
+ "description": "Framework meaning as data: what an annotation, type, call, config key or file means. One file per framework family.",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "id",
+  "version",
+  "when",
+  "annotations"
+ ],
+ "properties": {
+  "id": {
+   "type": "string",
+   "pattern": "^[a-z0-9-]+$"
+  },
+  "version": {
+   "type": "integer"
+  },
+  "when": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "deps": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "imports": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "annotations": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/annotation"
+   }
+  },
+  "types": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/type"
+   }
+  },
+  "signatures": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/signature"
+   }
+  },
+  "calls": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/call"
+   }
+  },
+  "config": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/config"
+   }
+  },
+  "files": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/file"
+   }
+  },
+  "generates": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "Members the annotation writes for you (Lombok's @Slf4j log field, @Data accessors), as data.",
+   "properties": {
+    "loggers": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "annotations",
+       "field",
+       "type"
+      ],
+      "properties": {
+       "annotations": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "field": {
+        "type": "string"
+       },
+       "type": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    "getters": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "setters": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ },
+ "$defs": {
+  "annotation": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "means"
+   ],
+   "properties": {
+    "fqn": {
+     "type": "string"
+    },
+    "fqns": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "on": {
+     "type": "array",
+     "items": {
+      "enum": [
+       "type",
+       "method",
+       "field",
+       "parameter"
+      ]
+     }
+    },
+    "means": {
+     "enum": [
+      "endpoint",
+      "endpoint-base",
+      "endpoint-path",
+      "app-path",
+      "controller",
+      "bean",
+      "config-bean",
+      "entity",
+      "embeddable",
+      "mapped-superclass",
+      "table",
+      "id",
+      "version",
+      "relation",
+      "enumerated",
+      "repository",
+      "repository-query",
+      "transactional",
+      "no-transaction",
+      "requires-new",
+      "after-commit",
+      "async",
+      "scheduled",
+      "listener",
+      "publisher",
+      "injected",
+      "startup",
+      "security-config",
+      "method-security",
+      "security-rules",
+      "interceptor",
+      "exception-handler",
+      "cache",
+      "view",
+      "ignore",
+      "ui-bean",
+      "lifecycle",
+      "framework-artifact",
+      "queue-poll",
+      "executor",
+      "recurring"
+     ]
+    },
+    "verb": {
+     "enum": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS",
+      "ANY",
+      "STOMP"
+     ]
+    },
+    "verbFromArg": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "arg"
+     ],
+     "properties": {
+      "arg": {
+       "type": "string"
+      },
+      "enum": {
+       "type": "string"
+      },
+      "default": {
+       "enum": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD",
+        "OPTIONS",
+        "ANY"
+       ]
+      }
+     }
+    },
+    "path": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "args": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    "reader": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string"
+    }
+   }
+  },
+  "type": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "means"
+   ],
+   "properties": {
+    "fqn": {
+     "type": "string"
+    },
+    "fqns": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "means": {
+     "type": "string"
+    },
+    "entityTypeArg": {
+     "type": "integer"
+    },
+    "kind": {
+     "type": "string"
+    },
+    "authType": {
+     "type": "string"
+    }
+   }
+  },
+  "call": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "means"
+   ],
+   "properties": {
+    "type": {
+     "type": "string"
+    },
+    "types": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "methods": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "means": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string"
+    }
+   }
+  },
+  "config": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "key",
+    "means"
+   ],
+   "properties": {
+    "key": {
+     "type": "string"
+    },
+    "means": {
+     "enum": [
+      "port",
+      "profile",
+      "ignore"
+     ]
+    }
+   }
+  },
+  "file": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "glob",
+    "means"
+   ],
+   "properties": {
+    "glob": {
+     "type": "string"
+    },
+    "means": {
+     "type": "string"
+    },
+    "reader": {
+     "type": "string"
+    }
+   }
+  },
+  "signature": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "type",
+    "methods"
+   ],
+   "properties": {
+    "type": {
+     "type": "string"
+    },
+    "typeParams": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "supers": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "methods": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "byArg": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/argReturn"
+      }
+     }
+    }
+   }
+  },
+  "argReturn": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "match",
+    "returns"
+   ],
+   "properties": {
+    "match": {
+     "type": "string"
+    },
+    "returns": {
+     "type": "string"
+    }
+   }
+  }
+ }
+}

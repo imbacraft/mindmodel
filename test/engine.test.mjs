@@ -6,8 +6,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const engine = path.join(path.dirname(fileURLToPath(import.meta.url)), '../engine');
-for (const f of fs
-  .readdirSync(engine)
-  .filter((f) => f.endsWith('.mjs'))
-  .sort())
-  test(`self-checks: ${f}`, () => import(path.join(engine, f)));
+const SKIP = new Set(['vendor']);
+
+// Every module under engine/, including the layered subfolders; vendored code is not ours to self-check.
+function modules(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!SKIP.has(e.name)) modules(p, out);
+    } else if (e.name.endsWith('.mjs')) out.push(p);
+  }
+  return out;
+}
+
+for (const f of modules(engine).sort()) {
+  const name = path.relative(engine, f).split(path.sep).join('/');
+  test(`self-checks: ${name}`, () => import(f));
+}

@@ -1,0 +1,209 @@
+{
+  "id": "jsf",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.glassfish:jakarta.faces",
+      "jakarta.platform:jakarta.jakartaee-api",
+      "javax:javaee-api",
+      "org.primefaces:primefaces"
+    ],
+    "imports": [
+      "jakarta.faces.",
+      "javax.faces."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "jakarta.faces.bean.ViewScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.RequestScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.SessionScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.ApplicationScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.CustomScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.view.ViewScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.bean.ViewScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.bean.RequestScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.bean.SessionScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.bean.ApplicationScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.view.ViewScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.ManagedBean"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.bean.ManagedBean"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.annotation.ManagedProperty"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "javax.faces.bean.ManagedProperty"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.application.FacesMessage"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.event.PhaseId"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.flow.FlowScoped",
+        "javax.faces.flow.FlowScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "jakarta.faces.bean.ConversationScoped",
+        "javax.faces.bean.ConversationScoped"
+      ],
+      "means": "ui-bean",
+      "on": [
+        "type"
+      ]
+    }
+  ]
+}

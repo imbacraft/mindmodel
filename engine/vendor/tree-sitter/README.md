@@ -17,14 +17,14 @@ Sources:
 
 ## How it is loaded
 
-`engine/java.mjs`, once per process, at import time:
+`engine/syntax/java.mjs`, once per process, at import time:
 
 1. checks that all three files are present; a missing file throws an error naming the path;
 2. `await Parser.init()` — the runtime wasm is looked up next to `web-tree-sitter.mjs`;
 3. `await Language.load(tree-sitter-java.wasm)`.
 
 After that `index()` and every caller stay synchronous. `Parser.init()` and `Language.load()` are asynchronous, which
-is why `engine/java.mjs` uses top-level `await`.
+is why `engine/syntax/java.mjs` uses top-level `await`.
 
 ## Upgrading
 

@@ -1,0 +1,100 @@
+{
+  "id": "feign",
+  "version": 1,
+  "when": {
+    "deps": [
+      "io.github.openfeign:feign-core",
+      "org.springframework.cloud:spring-cloud-starter-openfeign",
+      "io.github.openfeign:feign-jackson"
+    ],
+    "imports": [
+      "feign."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "feign.Param"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "feign.RequestLine"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "feign.Headers"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "feign.HeaderMap"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "feign.QueryMap"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "feign.Body"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "feign.CollectionFormat"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

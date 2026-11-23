@@ -1,0 +1,191 @@
+{
+  "id": "mapstruct",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.mapstruct:mapstruct"
+    ],
+    "imports": [
+      "org.mapstruct."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.mapstruct.Mapper"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.Mapping"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.Mappings"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.MappingTarget"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.Named"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.ValueMapping"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.ValueMappings"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.BeanMapping"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.InheritConfiguration"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.InheritInverseConfiguration"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.ObjectFactory"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.AfterMapping"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.BeforeMapping"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.Context"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.mapstruct.MapperConfig"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

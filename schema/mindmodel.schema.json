@@ -1,843 +1,967 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mindmodel.dev/schema/mindmodel-0.7.json",
-  "title": "mindmodel",
-  "description": "A codebase mind map for humans. Layers follow PRD §5: purpose, context, core concepts, regions, main flow, rules, stories. A citation is a string 'path', 'path:line' or 'path:line-line', relative to the project root. Diagrams are drawn only where they encode relationships or order; in v0.3 that is the main-flow sequence (from mainFlow.lanes/steps). How the core concepts relate is told in one sentence (coreSentence).",
-  "type": "object",
-  "required": [
-    "version",
-    "project",
-    "purpose",
-    "context",
-    "coreSentence",
-    "concepts",
-    "state",
-    "regionSentence",
-    "regions",
-    "runtime",
-    "background",
-    "rules",
-    "stories"
-  ],
-  "additionalProperties": false,
-  "$defs": {
-    "cite": {
-      "type": "string",
-      "pattern": "^[^:#]+(:[0-9]+(-[0-9]+)?)?(#\\S+)?$",
-      "description": "path, path:line or path:start-end, optionally #symbol: the validator checks the symbol appears in the cited lines."
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://mindmodel.dev/schema/mindmodel-0.7.json",
+ "title": "mindmodel",
+ "description": "A codebase mind map for humans. Layers follow PRD \u00a75: purpose, context, core concepts, regions, main flow, rules, stories. A citation is a string 'path', 'path:line' or 'path:line-line', relative to the project root. Diagrams are drawn only where they encode relationships or order; in v0.3 that is the main-flow sequence (from mainFlow.lanes/steps). How the core concepts relate is told in one sentence (coreSentence).",
+ "type": "object",
+ "required": [
+  "version",
+  "project",
+  "purpose",
+  "context",
+  "coreSentence",
+  "concepts",
+  "state",
+  "regionSentence",
+  "regions",
+  "runtime",
+  "background",
+  "rules",
+  "stories"
+ ],
+ "additionalProperties": false,
+ "$defs": {
+  "cite": {
+   "type": "string",
+   "pattern": "^[^:#]+(:[0-9]+(-[0-9]+)?)?(#\\S+)?$",
+   "description": "path, path:line or path:start-end, optionally #symbol: the validator checks the symbol appears in the cited lines."
+  },
+  "cites": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/cite"
+   }
+  },
+  "id": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9-]*$"
+  },
+  "named": {
+   "type": "object",
+   "required": [
+    "id",
+    "name",
+    "text"
+   ],
+   "properties": {
+    "id": {
+     "$ref": "#/$defs/id"
+    },
+    "name": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
     },
     "cites": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/cite"
-      }
+     "$ref": "#/$defs/cites"
     },
-    "id": {
-      "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*$"
-    },
-    "named": {
-      "type": "object",
-      "required": [
-        "id",
-        "name",
-        "text"
-      ],
-      "properties": {
-        "id": {
-          "$ref": "#/$defs/id"
-        },
-        "name": {
-          "type": "string"
-        },
-        "text": {
-          "type": "string"
-        },
-        "cites": {
-          "$ref": "#/$defs/cites"
-        },
-        "importance": {
-          "type": "string",
-          "description": "People: one line on why this actor ranks where it does (who pays first, staff last)."
-        }
-      }
+    "importance": {
+     "type": "string",
+     "description": "People: one line on why this actor ranks where it does (who pays first, staff last)."
     }
+   }
+  }
+ },
+ "properties": {
+  "version": {
+   "const": "0.6"
   },
-  "properties": {
-    "version": {
-      "const": "0.6"
+  "project": {
+   "type": "object",
+   "required": [
+    "name",
+    "commit",
+    "generatedAt"
+   ],
+   "properties": {
+    "name": {
+     "type": "string"
     },
-    "project": {
-      "type": "object",
-      "required": [
-        "name",
-        "commit",
-        "generatedAt"
-      ],
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "commit": {
-          "type": "string"
-        },
-        "generatedAt": {
-          "type": "string"
-        },
-        "stack": {
-          "type": "string"
-        }
+    "commit": {
+     "type": "string"
+    },
+    "generatedAt": {
+     "type": "string"
+    },
+    "stack": {
+     "type": "string"
+    }
+   }
+  },
+  "purpose": {
+   "type": "object",
+   "required": [
+    "text",
+    "cites"
+   ],
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "One sentence: what the system does in the world."
+    },
+    "metaphor": {
+     "type": "string"
+    },
+    "cites": {
+     "$ref": "#/$defs/cites"
+    },
+    "nonGoals": {
+     "type": "object",
+     "required": [
+      "text",
+      "cites"
+     ],
+     "description": "What the system deliberately is not and will not become (constraints / non-goals).",
+     "properties": {
+      "text": {
+       "type": "string"
+      },
+      "cites": {
+       "$ref": "#/$defs/cites"
       }
+     }
     },
-    "purpose": {
-      "type": "object",
-      "required": [
-        "text",
-        "cites"
-      ],
-      "properties": {
-        "text": {
-          "type": "string",
-          "description": "One sentence: what the system does in the world."
-        },
-        "metaphor": {
-          "type": "string"
-        },
-        "cites": {
-          "$ref": "#/$defs/cites"
-        },
-        "nonGoals": {
-          "type": "object",
-          "required": [
-            "text",
-            "cites"
-          ],
-          "description": "What the system deliberately is not and will not become (constraints / non-goals).",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "cites": {
-              "$ref": "#/$defs/cites"
-            }
-          }
-        },
-        "boot": {
-          "type": "object",
-          "description": "Overview: where the system starts and how to run it locally (rules 3.1).",
-          "additionalProperties": false,
-          "properties": {
-            "entries": {
-              "type": "array",
-              "maxItems": 4,
-              "items": {
-                "type": "object",
-                "required": [
-                  "name",
-                  "text",
-                  "cites"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "text": {
-                    "type": "string"
-                  },
-                  "cites": {
-                    "$ref": "#/$defs/cites"
-                  }
-                }
-              }
-            },
-            "run": {
-              "type": "array",
-              "maxItems": 3,
-              "items": {
-                "type": "object",
-                "required": [
-                  "cmd",
-                  "cites"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "cmd": {
-                    "type": "string"
-                  },
-                  "note": {
-                    "type": "string"
-                  },
-                  "cites": {
-                    "$ref": "#/$defs/cites"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "context": {
-      "type": "object",
-      "required": [
-        "actors",
-        "externals"
-      ],
-      "properties": {
-        "actors": {
-          "type": "array",
-          "maxItems": 7,
-          "items": {
-            "$ref": "#/$defs/named"
-          }
-        },
-        "externals": {
-          "type": "array",
-          "maxItems": 7,
-          "items": {
-            "$ref": "#/$defs/named"
-          }
-        }
-      }
-    },
-    "coreSentence": {
-      "description": "One sentence that links the core concepts in their natural order. Mark each concept as [[conceptId|display text]]; every concept must appear.",
-      "type": "object",
-      "required": [
-        "text",
-        "cites"
-      ],
-      "properties": {
-        "text": {
-          "type": "string"
-        },
-        "cites": {
-          "$ref": "#/$defs/cites"
-        }
-      }
-    },
-    "concepts": {
-      "description": "Core concepts: the ≤5 things everything else is about, each a concept card. A concept may span several entities.",
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 5,
-      "items": {
+    "boot": {
+     "type": "object",
+     "description": "Overview: where the system starts and how to run it locally (rules 3.1).",
+     "additionalProperties": false,
+     "properties": {
+      "entries": {
+       "type": "array",
+       "maxItems": 4,
+       "items": {
         "type": "object",
         "required": [
-          "id",
-          "name",
-          "codeNames",
-          "what",
-          "lifecycle",
-          "relations",
-          "keyFields",
-          "lives",
-          "cites"
+         "name",
+         "text",
+         "cites"
         ],
+        "additionalProperties": false,
         "properties": {
-          "id": {
-            "$ref": "#/$defs/id"
-          },
-          "name": {
-            "type": "string",
-            "description": "Plain domain name."
-          },
-          "codeNames": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "what": {
-            "type": "string"
-          },
-          "notToConfuse": {
-            "type": "array",
-            "maxItems": 2,
-            "items": {
-              "type": "object",
-              "required": [
-                "name",
-                "how"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "how": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "lifecycle": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "state",
-                "text"
-              ],
-              "properties": {
-                "state": {
-                  "type": "string"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "cites": {
-                  "$ref": "#/$defs/cites"
-                }
-              }
-            }
-          },
-          "relations": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "to",
-                "label",
-                "cites"
-              ],
-              "properties": {
-                "to": {
-                  "$ref": "#/$defs/id"
-                },
-                "label": {
-                  "type": "string",
-                  "maxLength": 40
-                },
-                "cites": {
-                  "$ref": "#/$defs/cites"
-                }
-              }
-            }
-          },
-          "keyFields": {
-            "type": "array",
-            "maxItems": 4,
-            "items": {
-              "type": "object",
-              "required": [
-                "name",
-                "text"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "text": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "rule": {
-            "type": "object",
-            "required": [
-              "text",
-              "cites"
-            ],
-            "properties": {
-              "text": {
-                "type": "string"
-              },
-              "cites": {
-                "$ref": "#/$defs/cites"
-              }
-            }
-          },
-          "lives": {
-            "type": "object",
-            "properties": {
-              "entity": {
-                "type": "string"
-              },
-              "table": {
-                "type": "string"
-              },
-              "api": {
-                "type": "string"
-              },
-              "frontend": {
-                "type": "string"
-              }
-            }
-          },
-          "cites": {
-            "$ref": "#/$defs/cites"
-          }
-        }
-      }
-    },
-    "regionSentence": {
-      "description": "One sentence that tells how the code is organized: which regions have their own packages/apps and which live in shared code. Mark each region as [[regionId|display text]]; every region must appear.",
-      "type": "object",
-      "required": [
-        "text"
-      ],
-      "properties": {
-        "text": {
+         "name": {
           "type": "string"
+         },
+         "text": {
+          "type": "string"
+         },
+         "cites": {
+          "$ref": "#/$defs/cites"
+         }
+        }
+       }
+      },
+      "run": {
+       "type": "array",
+       "maxItems": 3,
+       "items": {
+        "type": "object",
+        "required": [
+         "cmd",
+         "cites"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "cmd": {
+          "type": "string"
+         },
+         "note": {
+          "type": "string"
+         },
+         "cites": {
+          "$ref": "#/$defs/cites"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "context": {
+   "type": "object",
+   "required": [
+    "actors",
+    "externals"
+   ],
+   "properties": {
+    "actors": {
+     "type": "array",
+     "maxItems": 7,
+     "items": {
+      "$ref": "#/$defs/named"
+     }
+    },
+    "externals": {
+     "type": "array",
+     "maxItems": 7,
+     "items": {
+      "$ref": "#/$defs/named"
+     }
+    }
+   }
+  },
+  "coreSentence": {
+   "description": "One sentence that links the core concepts in their natural order. Mark each concept as [[conceptId|display text]]; every concept must appear.",
+   "type": "object",
+   "required": [
+    "text",
+    "cites"
+   ],
+   "properties": {
+    "text": {
+     "type": "string"
+    },
+    "cites": {
+     "$ref": "#/$defs/cites"
+    }
+   }
+  },
+  "concepts": {
+   "description": "Core concepts: the \u22645 things everything else is about, each a concept card. A concept may span several entities.",
+   "type": "array",
+   "minItems": 1,
+   "maxItems": 5,
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "codeNames",
+     "what",
+     "lifecycle",
+     "relations",
+     "keyFields",
+     "lives",
+     "cites"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/$defs/id"
+     },
+     "name": {
+      "type": "string",
+      "description": "Plain domain name."
+     },
+     "codeNames": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "what": {
+      "type": "string"
+     },
+     "notToConfuse": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+       "type": "object",
+       "required": [
+        "name",
+        "how"
+       ],
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "how": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "lifecycle": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "state",
+        "text"
+       ],
+       "properties": {
+        "state": {
+         "type": "string"
+        },
+        "text": {
+         "type": "string"
         },
         "cites": {
-          "$ref": "#/$defs/cites"
+         "$ref": "#/$defs/cites"
         }
+       }
       }
-    },
-    "regions": {
-      "description": "The codemap: at most 6 domain capabilities plus shared infrastructure, spanning frontend and backend, rendered as text cards in array order (order them along the user's journey), with a shared-infrastructure card last.",
+     },
+     "relations": {
       "type": "array",
-      "minItems": 1,
+      "items": {
+       "type": "object",
+       "required": [
+        "to",
+        "label",
+        "cites"
+       ],
+       "properties": {
+        "to": {
+         "$ref": "#/$defs/id"
+        },
+        "label": {
+         "type": "string",
+         "maxLength": 40
+        },
+        "cites": {
+         "$ref": "#/$defs/cites"
+        }
+       }
+      }
+     },
+     "keyFields": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+       "type": "object",
+       "required": [
+        "name",
+        "text"
+       ],
+       "properties": {
+        "name": {
+         "type": "string"
+        },
+        "text": {
+         "type": "string"
+        }
+       }
+      }
+     },
+     "rule": {
+      "type": "object",
+      "required": [
+       "text",
+       "cites"
+      ],
+      "properties": {
+       "text": {
+        "type": "string"
+       },
+       "cites": {
+        "$ref": "#/$defs/cites"
+       }
+      }
+     },
+     "lives": {
+      "type": "object",
+      "properties": {
+       "entity": {
+        "type": "string"
+       },
+       "table": {
+        "type": "string"
+       },
+       "api": {
+        "type": "string"
+       },
+       "frontend": {
+        "type": "string"
+       }
+      }
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     }
+    }
+   }
+  },
+  "regionSentence": {
+   "description": "One sentence that tells how the code is organized: which regions have their own packages/apps and which live in shared code. Mark each region as [[regionId|display text]]; every region must appear.",
+   "type": "object",
+   "required": [
+    "text"
+   ],
+   "properties": {
+    "text": {
+     "type": "string"
+    },
+    "cites": {
+     "$ref": "#/$defs/cites"
+    }
+   }
+  },
+  "regions": {
+   "description": "The codemap: at most 6 domain capabilities plus shared infrastructure, spanning frontend and backend, rendered as text cards in array order (order them along the user's journey), with a shared-infrastructure card last.",
+   "type": "array",
+   "minItems": 1,
+   "maxItems": 7,
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "role",
+     "owns"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/$defs/id"
+     },
+     "name": {
+      "type": "string"
+     },
+     "codeName": {
+      "type": "string",
+      "description": "Module/package names, shown second."
+     },
+     "role": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "owns": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/id"
+      }
+     },
+     "parts": {
+      "type": "array",
       "maxItems": 7,
       "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "role",
-          "owns"
-        ],
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/id"
-          },
-          "name": {
-            "type": "string"
-          },
-          "codeName": {
-            "type": "string",
-            "description": "Module/package names, shown second."
-          },
-          "role": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "owns": {
-            "type": "array",
-            "items": {
-              "$ref": "#/$defs/id"
-            }
-          },
-          "parts": {
-            "type": "array",
-            "maxItems": 7,
-            "items": {
-              "type": "object",
-              "required": [
-                "name",
-                "text"
-              ],
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "tier": {
-                  "enum": [
-                    "frontend",
-                    "backend",
-                    "both"
-                  ]
-                },
-                "text": {
-                  "type": "string"
-                },
-                "cites": {
-                  "$ref": "#/$defs/cites"
-                }
-              }
-            }
-          },
-          "activity": {
-            "type": "object",
-            "required": [
-              "commits",
-              "of",
-              "since"
-            ],
-            "description": "Computed by validate.mjs from `paths`; don't write it.",
-            "properties": {
-              "commits": {
-                "type": "integer"
-              },
-              "of": {
-                "type": "integer"
-              },
-              "since": {
-                "type": "string"
-              }
-            }
-          },
-          "paths": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Folders or files that make up the region (relative to the project root). The validator computes `activity` from them; don't write activity by hand."
-          }
-        }
-      }
-    },
-    "runtime": {
-      "description": "How a request travels through the system: one generic path every feature uses, drawn as a sequence across lanes.",
-      "type": "object",
-      "required": [
-        "title",
-        "lanes",
-        "steps"
-      ],
-      "properties": {
-        "title": {
-          "type": "string"
+       "type": "object",
+       "required": [
+        "name",
+        "text"
+       ],
+       "properties": {
+        "name": {
+         "type": "string"
         },
-        "lanes": {
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 5,
-          "items": {
-            "$ref": "#/$defs/named"
-          }
+        "tier": {
+         "enum": [
+          "frontend",
+          "backend",
+          "both"
+         ]
         },
-        "steps": {
-          "type": "array",
-          "minItems": 2,
-          "maxItems": 7,
-          "items": {
-            "type": "object",
-            "required": [
-              "region",
-              "from",
-              "to",
-              "label",
-              "text",
-              "cites"
-            ],
-            "properties": {
-              "region": {
-                "$ref": "#/$defs/id"
-              },
-              "from": {
-                "$ref": "#/$defs/id",
-                "description": "Lane id."
-              },
-              "to": {
-                "$ref": "#/$defs/id",
-                "description": "Lane id; equal to from for work inside one lane."
-              },
-              "label": {
-                "type": "string",
-                "maxLength": 56,
-                "description": "Short label drawn on the arrow."
-              },
-              "async": {
-                "type": "boolean",
-                "description": "Happens later, not in the visitor's request."
-              },
-              "text": {
-                "type": "string"
-              },
-              "cites": {
-                "$ref": "#/$defs/cites"
-              }
-            }
-          }
-        }
-      }
-    },
-    "background": {
-      "type": "object",
-      "required": [
-        "intro",
-        "items"
-      ],
-      "properties": {
-        "intro": {
-          "type": "string"
+        "text": {
+         "type": "string"
         },
         "cites": {
-          "$ref": "#/$defs/cites"
-        },
-        "items": {
-          "type": "array",
-          "minItems": 0,
-          "maxItems": 10,
-          "items": {
-            "type": "object",
-            "required": [
-              "region",
-              "name",
-              "when",
-              "what",
-              "cites"
-            ],
-            "properties": {
-              "region": {
-                "$ref": "#/$defs/id"
-              },
-              "name": {
-                "type": "string"
-              },
-              "when": {
-                "type": "string"
-              },
-              "what": {
-                "type": "string"
-              },
-              "cites": {
-                "$ref": "#/$defs/cites"
-              }
-            }
-          }
+         "$ref": "#/$defs/cites"
         }
-      },
-      "description": "What runs on its own: webhooks, scheduled jobs, queue workers and async work, with their schedules."
-    },
-    "rules": {
+       }
+      }
+     },
+     "activity": {
+      "type": "object",
+      "required": [
+       "commits",
+       "of",
+       "since"
+      ],
+      "description": "Computed by validate.mjs from `paths`; don't write it.",
+      "properties": {
+       "commits": {
+        "type": "integer"
+       },
+       "of": {
+        "type": "integer"
+       },
+       "since": {
+        "type": "string"
+       }
+      }
+     },
+     "paths": {
       "type": "array",
-      "maxItems": 5,
       "items": {
-        "type": "object",
-        "required": [
-          "kind",
-          "title",
-          "text",
-          "cites",
-          "importance"
-        ],
-        "properties": {
-          "kind": {
-            "enum": [
-              "rule",
-              "surprise"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "cites": {
-            "$ref": "#/$defs/cites"
-          },
-          "importance": {
-            "type": "string",
-            "description": "One line: why it ranks here."
-          }
-        }
+       "type": "string"
       },
-      "description": "Ranked by importance: how much of the code the rule touches × how bad it is when broken. Array order is the rank."
+      "description": "Folders or files that make up the region (relative to the project root). The validator computes `activity` from them; don't write activity by hand."
+     }
+    }
+   }
+  },
+  "runtime": {
+   "description": "How a request travels through the system: one generic path every feature uses, drawn as a sequence across lanes.",
+   "type": "object",
+   "required": [
+    "title",
+    "lanes",
+    "steps"
+   ],
+   "properties": {
+    "title": {
+     "type": "string"
     },
-    "stories": {
+    "lanes": {
+     "type": "array",
+     "minItems": 2,
+     "maxItems": 5,
+     "items": {
+      "$ref": "#/$defs/named"
+     }
+    },
+    "steps": {
+     "type": "array",
+     "minItems": 2,
+     "maxItems": 7,
+     "items": {
+      "type": "object",
+      "required": [
+       "region",
+       "from",
+       "to",
+       "label",
+       "text",
+       "cites"
+      ],
+      "properties": {
+       "region": {
+        "$ref": "#/$defs/id"
+       },
+       "from": {
+        "$ref": "#/$defs/id",
+        "description": "Lane id."
+       },
+       "to": {
+        "$ref": "#/$defs/id",
+        "description": "Lane id; equal to from for work inside one lane."
+       },
+       "label": {
+        "type": "string",
+        "maxLength": 56,
+        "description": "Short label drawn on the arrow."
+       },
+       "async": {
+        "type": "boolean",
+        "description": "Happens later, not in the visitor's request."
+       },
+       "text": {
+        "type": "string"
+       },
+       "cites": {
+        "$ref": "#/$defs/cites"
+       }
+      }
+     }
+    }
+   }
+  },
+  "background": {
+   "type": "object",
+   "required": [
+    "intro",
+    "items"
+   ],
+   "properties": {
+    "intro": {
+     "type": "string"
+    },
+    "cites": {
+     "$ref": "#/$defs/cites"
+    },
+    "items": {
+     "type": "array",
+     "minItems": 0,
+     "maxItems": 10,
+     "items": {
+      "type": "object",
+      "required": [
+       "region",
+       "name",
+       "when",
+       "what",
+       "cites"
+      ],
+      "properties": {
+       "region": {
+        "$ref": "#/$defs/id"
+       },
+       "name": {
+        "type": "string"
+       },
+       "when": {
+        "type": "string"
+       },
+       "what": {
+        "type": "string"
+       },
+       "cites": {
+        "$ref": "#/$defs/cites"
+       }
+      }
+     }
+    }
+   },
+   "description": "What runs on its own: webhooks, scheduled jobs, queue workers and async work, with their schedules."
+  },
+  "rules": {
+   "type": "array",
+   "maxItems": 5,
+   "items": {
+    "type": "object",
+    "required": [
+     "kind",
+     "title",
+     "text",
+     "cites",
+     "importance"
+    ],
+    "properties": {
+     "kind": {
+      "enum": [
+       "rule",
+       "surprise"
+      ]
+     },
+     "title": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     },
+     "importance": {
+      "type": "string",
+      "description": "One line: why it ranks here."
+     },
+     "condition": {
+      "type": "string",
+      "description": "When the rule holds. Required when the text uses never/always: the code must guarantee it, and a probable defect belongs in the owner's notes instead."
+     }
+    }
+   },
+   "description": "Ranked by importance: how much of the code the rule touches \u00d7 how bad it is when broken. Array order is the rank."
+  },
+  "stories": {
+   "type": "array",
+   "minItems": 1,
+   "maxItems": 5,
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "kind",
+     "title",
+     "setup",
+     "steps",
+     "takeaways",
+     "importance"
+    ],
+    "properties": {
+     "id": {
+      "$ref": "#/$defs/id"
+     },
+     "kind": {
+      "enum": [
+       "usage",
+       "failure"
+      ]
+     },
+     "title": {
+      "type": "string"
+     },
+     "setup": {
+      "type": "string"
+     },
+     "steps": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 10,
+      "items": {
+       "type": "object",
+       "required": [
+        "region",
+        "text",
+        "cites"
+       ],
+       "properties": {
+        "region": {
+         "$ref": "#/$defs/id"
+        },
+        "text": {
+         "type": "string"
+        },
+        "inferred": {
+         "type": "boolean"
+        },
+        "cites": {
+         "$ref": "#/$defs/cites"
+        }
+       }
+      }
+     },
+     "takeaways": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 5,
+      "maxItems": 3,
       "items": {
-        "type": "object",
-        "required": [
-          "id",
-          "kind",
-          "title",
-          "setup",
-          "steps",
-          "takeaways",
-          "importance"
-        ],
-        "properties": {
-          "id": {
-            "$ref": "#/$defs/id"
-          },
-          "kind": {
-            "enum": [
-              "usage",
-              "failure"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "setup": {
-            "type": "string"
-          },
-          "steps": {
-            "type": "array",
-            "minItems": 2,
-            "maxItems": 10,
-            "items": {
-              "type": "object",
-              "required": [
-                "region",
-                "text",
-                "cites"
-              ],
-              "properties": {
-                "region": {
-                  "$ref": "#/$defs/id"
-                },
-                "text": {
-                  "type": "string"
-                },
-                "inferred": {
-                  "type": "boolean"
-                },
-                "cites": {
-                  "$ref": "#/$defs/cites"
-                }
-              }
-            }
-          },
-          "takeaways": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 3,
-            "items": {
-              "type": "string"
-            }
-          },
-          "importance": {
-            "type": "string",
-            "description": "One line: why it ranks here."
-          }
-        }
-      },
-      "description": "The main flows of the system as stories, ranked by importance (1-5, never padded; each must run through the absolute core of the app): how central to what the product does × how much of the system it runs through. Array order is the rank. No change stories."
+       "type": "string"
+      }
+     },
+     "importance": {
+      "type": "string",
+      "description": "One line: why it ranks here."
+     }
+    }
+   },
+   "description": "The main flows of the system as stories, ranked by importance (1-5, never padded; each must run through the absolute core of the app): how central to what the product does \u00d7 how much of the system it runs through. Array order is the rank. No change stories."
+  },
+  "state": {
+   "type": "object",
+   "description": "State & source of truth (rules 3.4).",
+   "required": [
+    "owners"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "intro": {
+     "type": "string"
     },
-    "state": {
+    "cites": {
+     "$ref": "#/$defs/cites"
+    },
+    "owners": {
+     "type": "array",
+     "maxItems": 5,
+     "items": {
       "type": "object",
-      "description": "State & source of truth (rules 3.4).",
       "required": [
-        "owners"
+       "concept",
+       "truth",
+       "writer",
+       "gate",
+       "cites"
       ],
       "additionalProperties": false,
       "properties": {
-        "intro": {
-          "type": "string"
-        },
-        "cites": {
-          "$ref": "#/$defs/cites"
-        },
-        "owners": {
-          "type": "array",
-          "maxItems": 5,
-          "items": {
-            "type": "object",
-            "required": [
-              "concept",
-              "truth",
-              "writer",
-              "gate",
-              "cites"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "concept": {
-                "$ref": "#/$defs/id"
-              },
-              "truth": {
-                "type": "string"
-              },
-              "writer": {
-                "$ref": "#/$defs/id",
-                "description": "region id"
-              },
-              "gate": {
-                "type": "string"
-              },
-              "cites": {
-                "$ref": "#/$defs/cites"
-              },
-              "others": {
-                "type": "array",
-                "description": "Other writers; non-empty = shared write.",
-                "items": {
-                  "type": "object",
-                  "required": [
-                    "region",
-                    "text",
-                    "cites"
-                  ],
-                  "additionalProperties": false,
-                  "properties": {
-                    "region": {
-                      "$ref": "#/$defs/id"
-                    },
-                    "text": {
-                      "type": "string"
-                    },
-                    "cites": {
-                      "$ref": "#/$defs/cites"
-                    }
-                  }
-                }
-              }
-            }
+       "concept": {
+        "$ref": "#/$defs/id"
+       },
+       "truth": {
+        "type": "string"
+       },
+       "writer": {
+        "$ref": "#/$defs/id",
+        "description": "region id"
+       },
+       "gate": {
+        "type": "string"
+       },
+       "cites": {
+        "$ref": "#/$defs/cites"
+       },
+       "others": {
+        "type": "array",
+        "description": "Other writers; non-empty = shared write.",
+        "items": {
+         "type": "object",
+         "required": [
+          "region",
+          "text",
+          "cites"
+         ],
+         "additionalProperties": false,
+         "properties": {
+          "region": {
+           "$ref": "#/$defs/id"
+          },
+          "text": {
+           "type": "string"
+          },
+          "cites": {
+           "$ref": "#/$defs/cites"
           }
-        },
-        "copies": {
-          "type": "array",
-          "maxItems": 5,
-          "items": {
-            "type": "object",
-            "required": [
-              "name",
-              "holds",
-              "wins",
-              "stale",
-              "cites"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "holds": {
-                "type": "string"
-              },
-              "wins": {
-                "type": "string"
-              },
-              "stale": {
-                "type": "string"
-              },
-              "cites": {
-                "$ref": "#/$defs/cites"
-              }
-            }
-          }
-        },
-        "seams": {
-          "type": "array",
-          "maxItems": 4,
-          "items": {
-            "type": "object",
-            "required": [
-              "span",
-              "text",
-              "onFailure",
-              "cites"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "span": {
-                "type": "string"
-              },
-              "text": {
-                "type": "string"
-              },
-              "onFailure": {
-                "type": "string"
-              },
-              "cites": {
-                "$ref": "#/$defs/cites"
-              }
-            }
-          }
+         }
         }
+       }
       }
+     }
+    },
+    "copies": {
+     "type": "array",
+     "maxItems": 5,
+     "items": {
+      "type": "object",
+      "required": [
+       "name",
+       "holds",
+       "wins",
+       "stale",
+       "cites"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "holds": {
+        "type": "string"
+       },
+       "wins": {
+        "type": "string"
+       },
+       "stale": {
+        "type": "string"
+       },
+       "cites": {
+        "$ref": "#/$defs/cites"
+       }
+      }
+     }
+    },
+    "seams": {
+     "type": "array",
+     "maxItems": 4,
+     "items": {
+      "type": "object",
+      "required": [
+       "span",
+       "text",
+       "onFailure",
+       "cites"
+      ],
+      "additionalProperties": false,
+      "properties": {
+       "span": {
+        "type": "string"
+       },
+       "text": {
+        "type": "string"
+       },
+       "onFailure": {
+        "type": "string"
+       },
+       "cites": {
+        "$ref": "#/$defs/cites"
+       }
+      }
+     }
     }
+   }
+  },
+  "security": {
+   "type": "object",
+   "required": [
+    "intro",
+    "prefixes",
+    "userSources",
+    "developerRule",
+    "cites"
+   ],
+   "properties": {
+    "intro": {
+     "type": "string"
+    },
+    "prefixes": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "prefix",
+       "access",
+       "cites"
+      ],
+      "properties": {
+       "prefix": {
+        "type": "string"
+       },
+       "access": {
+        "type": "string"
+       },
+       "note": {
+        "type": "string"
+       },
+       "cites": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+         "$ref": "#/$defs/cite"
+        }
+       }
+      }
+     }
+    },
+    "userSources": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "kind",
+       "cites"
+      ],
+      "properties": {
+       "kind": {
+        "type": "string"
+       },
+       "note": {
+        "type": "string"
+       },
+       "cites": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+         "$ref": "#/$defs/cite"
+        }
+       }
+      }
+     }
+    },
+    "tenant": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "properties": {
+      "key": {
+       "type": "string"
+      },
+      "note": {
+       "type": "string"
+      },
+      "cites": {
+       "type": "array",
+       "minItems": 1,
+       "items": {
+        "$ref": "#/$defs/cite"
+       }
+      }
+     }
+    },
+    "developerRule": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "text",
+       "cites"
+      ],
+      "properties": {
+       "text": {
+        "type": "string"
+       },
+       "cites": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+         "$ref": "#/$defs/cite"
+        }
+       }
+      }
+     }
+    },
+    "cites": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "$ref": "#/$defs/cite"
+     }
+    }
+   },
+   "additionalProperties": false
   }
+ }
 }

@@ -1,0 +1,716 @@
+{
+  "id": "spring-core",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework:spring-context",
+      "org.springframework:spring-beans",
+      "org.springframework:spring-core",
+      "org.springframework.boot:spring-boot-starter",
+      "org.springframework.boot:spring-boot-autoconfigure"
+    ],
+    "imports": [
+      "org.springframework.stereotype.",
+      "org.springframework.context.",
+      "org.springframework.beans."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.stereotype.Component"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.stereotype.Service"
+      ],
+      "means": "bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.stereotype.Repository"
+      ],
+      "means": "repository",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Configuration"
+      ],
+      "means": "config-bean",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Bean"
+      ],
+      "means": "config-bean",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Primary"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Lazy"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.DependsOn"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Profile"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Conditional"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.ComponentScan"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Import"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.ImportResource"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.PropertySource"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Scope"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.event.EventListener"
+      ],
+      "means": "listener",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.beans.factory.annotation.Autowired"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.beans.factory.annotation.Qualifier"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.beans.factory.annotation.Value"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.beans.factory.annotation.Required"
+      ],
+      "means": "injected",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.RequestBody"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.PathVariable"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.RequestParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.RequestHeader"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.RequestAttribute"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.ModelAttribute"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.SessionAttribute"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.CookieValue"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.MatrixVariable"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.ResponseStatus"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.ResponseBody"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.CrossOrigin"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.ControllerAdvice"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.RestControllerAdvice"
+      ],
+      "means": "ignore",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.web.bind.annotation.ExceptionHandler"
+      ],
+      "means": "exception-handler",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnBean"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnProperty"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnClass"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.autoconfigure.condition.ConditionalOnExpression"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.boot.context.properties.ConfigurationProperties"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.scheduling.annotation.Scheduled"
+      ],
+      "means": "scheduled",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.scheduling.annotation.Schedules"
+      ],
+      "means": "scheduled",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.scheduling.annotation.Async"
+      ],
+      "means": "async",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.scheduling.annotation.EnableScheduling"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.scheduling.annotation.EnableAsync"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.Id"
+      ],
+      "means": "id",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.Version"
+      ],
+      "means": "version",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.CreatedDate"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.LastModifiedDate"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.CreatedBy"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.LastModifiedBy"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.Transient"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.core.annotation.Order"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.Role"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.ImportRuntimeHints"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.context.annotation.EnableAspectJAutoProxy"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.core.annotation.AliasFor"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.core.annotation.AliasForAnnotation"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

@@ -9,16 +9,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan, summarize } from '../engine/scan.mjs';
+import { cachedScan } from '../test-support/scan-cache.mjs';
 import { systemScan, systemSummary } from '../engine/system.mjs';
-import { validate } from '../engine/validate.mjs';
+import { checkSchema, validate } from '../engine/validate.mjs';
 import { renderPage } from '../engine/render.mjs';
 import { validateSystem, renderSystemPage } from '../engine/system-render.mjs';
 import { git } from '../engine/activity.mjs';
+import { dirOf, loadApps } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
-const root = (process.env.MINDMODEL_TEST_APPS ?? cfg.root).replace(/^~/, os.homedir());
+const cfg = loadApps(here);
+const root = process.env.MINDMODEL_TEST_APPS ?? cfg.root;
 const snapDir = path.join(here, 'snapshots');
+const FACTS_SCHEMA = JSON.parse(fs.readFileSync(path.join(here, '../schema/facts.schema.json'), 'utf8'));
+
+// The facts contract is checked on every run, for every app and every service: a shape change that nobody documented
+// fails here, not in a writer's run.
+function checkFacts(facts, where) {
+  const errors = [];
+  checkSchema(facts, FACTS_SCHEMA, FACTS_SCHEMA.$defs ?? {}, '$', (m) => errors.push(m));
+  assert.deepStrictEqual(errors.slice(0, 5), [], `${where}: facts do not match schema/facts.schema.json`);
+}
 
 // The scan date is the only value that changes between runs of the same code.
 const stable = (x) => JSON.parse(JSON.stringify(x, (k, v) => (k === 'scannedAt' ? undefined : v)));
@@ -65,16 +76,22 @@ function moved(dir, commit) {
 const skipIf = (dir, app) => (!fs.existsSync(dir) ? `${dir} not found` : moved(dir, app.commit));
 
 for (const app of cfg.apps) {
-  const dir = path.join(root, app.name),
+  const dir = dirOf({ ...cfg, root }, app),
     skip = skipIf(dir, app);
-  test(`app ${app.name}`, (t) => {
+  test(
+    `app ${app.name}`,
+    { skip: process.env.SKIP_SLOW === '1' && app.name === 'fineract' ? 'SKIP_SLOW=1 (large app)' : false },
+    (t) => {
     if (skip) return t.skip(skip);
-    const facts = stable(scan(dir)),
+    const raw = cachedScan(app.name, dir),
+      facts = stable(raw),
       out = { facts, digest: digest(facts) };
+    // The contract is checked on the real facts: `stable` drops scannedAt, which the schema requires.
+    checkFacts(raw, `app ${app.name}`);
     const map = readMap(dir, app.map);
     if (map) {
       out.validation = validate(map, dir);
-      out.page = renderPage(map, dir, cfg.web);
+      out.page = renderPage(map, dir, cfg.web, facts);
     }
     check(t, `app-${app.name}`, out);
   });
@@ -86,6 +103,7 @@ for (const sysCfg of cfg.systems) {
   test(`system ${sysCfg.name}`, (t) => {
     if (skip) return t.skip(skip);
     const sys = systemScan(dir);
+    for (const s of sys.services) checkFacts(s.facts, `system ${sysCfg.name}/${s.name}`);
     const out = {
       system: stable({ ...sys, services: sys.services.map(({ facts, ...s }) => s) }),
       digest: systemSummary(sys),

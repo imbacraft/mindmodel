@@ -1,0 +1,17 @@
+{
+  "id": "spring-messaging",
+  "version": 1,
+  "when": {
+    "deps": ["org.springframework:spring-messaging", "org.springframework.boot:spring-boot-starter-websocket"],
+    "imports": ["org.springframework.messaging.handler.annotation.", "org.springframework.messaging.simp."]
+  },
+  "annotations": [
+    {
+      "fqn": "org.springframework.messaging.handler.annotation.MessageMapping",
+      "on": ["method"],
+      "means": "endpoint",
+      "verb": "STOMP",
+      "path": { "args": ["value"] }
+    }
+  ]
+}

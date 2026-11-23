@@ -3,10 +3,11 @@
 // Each service is scanned with the single-app scanner; this adds what crosses service boundaries and joins it.
 // Usage: node system.mjs <folder> [outDir]   (default out: <folder>/mindmodel-system/.work/)
 import fs from 'node:fs';
+import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { scan, summarize } from './scan.mjs';
-import { configKeys } from './deep.mjs';
+import { configKeys } from './extract/config.mjs';
 
 // --- per-service extraction --------------------------------------------------------
 // Placeholders like "${app.topics.orders:orders}" resolve from the service's own config, else their default.
@@ -453,7 +454,7 @@ export function systemSummary(sys) {
   L.push('## Services (size, data, interface)');
   if (sys.libraries.length) L.push(`- shared libraries (no entry point, not services): ${sys.libraries.join(', ')}`);
   for (const s of sys.services) {
-    const ents = s.facts.entities.funnel
+    const ents = s.facts.entities.model
       .slice(0, 5)
       .map((e) => e.name)
       .join(', ');
@@ -506,6 +507,7 @@ export function systemSummary(sys) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  retuneHeap();
   const folder = path.resolve(process.argv[2] ?? '.');
   const out = path.resolve(process.argv[3] ?? path.join(folder, 'mindmodel-system', '.work'));
   const sys = systemScan(folder);
@@ -518,7 +520,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         services: sys.services.map(({ facts, ...s }) => ({
           ...s,
           endpoints: facts.endpoints.length,
-          entities: facts.entities.funnel.slice(0, 10).map((e) => e.name),
+          entities: facts.entities.model.slice(0, 10).map((e) => e.name),
         })),
       },
       null,

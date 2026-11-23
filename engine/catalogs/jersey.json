@@ -1,0 +1,51 @@
+{
+  "id": "jersey",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.glassfish.jersey.core:jersey-server",
+      "org.glassfish.jersey.media:jersey-media-multipart"
+    ],
+    "imports": [
+      "org.glassfish.jersey."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.glassfish.jersey.media.multipart.FormDataParam"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.glassfish.jersey.media.multipart.FormDataContentDisposition"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.glassfish.jersey.server.Uri"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

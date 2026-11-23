@@ -1,0 +1,401 @@
+[
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 31,
+  "call": "nextTrackingId",
+  "recv": "cargoRepository",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.CargoRepository",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.CargoRepository#nextTrackingId()",
+   "org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaCargoRepository#nextTrackingId()"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 32,
+  "call": "find",
+  "recv": "locationRepository",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.location.LocationRepository",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.location.LocationRepository#find(UnLocode)",
+   "org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaLocationRepository#find(UnLocode)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 39,
+  "call": "store",
+  "recv": "cargoRepository",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.CargoRepository",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.CargoRepository#store(Cargo)",
+   "org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaCargoRepository#store(Cargo)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 48,
+  "call": "find",
+  "recv": "cargoRepository",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.CargoRepository",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.CargoRepository#find(TrackingId)",
+   "org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaCargoRepository#find(TrackingId)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 54,
+  "call": "fetchRoutesForSpecification",
+  "recv": "routingService",
+  "recvFqn": "org.eclipse.cargotracker.domain.service.RoutingService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.eclipse.cargotracker.domain.service.RoutingService#fetchRoutesForSpecification(RouteSpecification)",
+   "org.eclipse.cargotracker.infrastructure.routing.ExternalRoutingService#fetchRoutesForSpecification(RouteSpecification)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultCargoInspectionService.java",
+  "line": 33,
+  "call": "lookupHandlingHistoryOfCargo",
+  "recv": "handlingEventRepository",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.handling.HandlingEventRepository",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.handling.HandlingEventRepository#lookupHandlingHistoryOfCargo(TrackingId)",
+   "org.eclipse.cargotracker.infrastructure.persistence.jpa.JpaHandlingEventRepository#lookupHandlingHistoryOfCargo(TrackingId)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
+  "line": 318,
+  "call": "isSatisfiedBy",
+  "recv": "routeSpecification",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification",
+  "recvHow": "param",
+  "how": "ambiguous",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification#isSatisfiedBy(Itinerary)",
+   "org.eclipse.cargotracker.domain.shared.AbstractSpecification#isSatisfiedBy(T)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/interfaces/CoordinatesFactory.java",
+  "line": 36,
+  "call": "find",
+  "recv": null,
+  "recvFqn": "org.eclipse.cargotracker.interfaces.CoordinatesFactory",
+  "recvHow": "direct",
+  "how": "ambiguous",
+  "targets": [
+   "org.eclipse.cargotracker.interfaces.CoordinatesFactory#find(Location)",
+   "org.eclipse.cargotracker.interfaces.CoordinatesFactory#find(String)",
+   "org.eclipse.cargotracker.interfaces.CoordinatesFactory#find(UnLocode)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/interfaces/booking/facade/dto/CargoRoute.java",
+  "line": 37,
+  "call": "toString",
+  "recv": "DateConverter",
+  "recvFqn": "org.eclipse.cargotracker.application.util.DateConverter",
+  "recvHow": "static",
+  "how": "ambiguous",
+  "targets": [
+   "org.eclipse.cargotracker.application.util.DateConverter#toString(LocalDate)",
+   "org.eclipse.cargotracker.application.util.DateConverter#toString(LocalDateTime)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
+  "line": 238,
+  "call": "equals",
+  "recv": "call",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.TransportStatus",
+  "recvHow": "chain",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
+  "line": 328,
+  "call": "sameValueAs",
+  "recv": "HandlingEvent.Type.UNLOAD",
+  "recvFqn": null,
+  "recvHow": "unresolved",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
+  "line": 333,
+  "call": "equals",
+  "recv": "routingStatus",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RoutingStatus",
+  "recvHow": "field",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 41,
+  "call": "getIdString",
+  "recv": "call",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.TrackingId",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.TrackingId#getIdString()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 74,
+  "call": "getArrivalDeadline",
+  "recv": "call",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification#getArrivalDeadline()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 91,
+  "call": "getDestination",
+  "recv": "call",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification#getDestination()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultCargoInspectionService.java",
+  "line": 37,
+  "call": "isMisdirected",
+  "recv": "call",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.Delivery",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.Delivery#isMisdirected()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 51,
+  "call": "of",
+  "recv": "List",
+  "recvFqn": "java.util.List",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultHandlingEventService.java",
+  "line": 33,
+  "call": "now",
+  "recv": "LocalDateTime",
+  "recvFqn": "java.time.LocalDateTime",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/util/DateConverter.java",
+  "line": 22,
+  "call": "parse",
+  "recv": "LocalDate",
+  "recvFqn": "java.time.LocalDate",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultHandlingEventService.java",
+  "line": 41,
+  "call": "createHandlingEvent",
+  "recv": "handlingEventFactory",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.handling.HandlingEventFactory",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.handling.HandlingEventFactory#createHandlingEvent(LocalDateTime,LocalDateTime,TrackingId,VoyageNumber,UnLocode,HandlingEvent.Type)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/util/SampleDataGenerator.java",
+  "line": 140,
+  "call": "getUnLocode",
+  "recv": "SampleLocations.HONGKONG",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.location.Location",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.location.Location#getUnLocode()"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/util/SampleDataGenerator.java",
+  "line": 149,
+  "call": "getVoyageNumber",
+  "recv": "SampleVoyages.HONGKONG_TO_NEW_YORK",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.voyage.Voyage",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.voyage.Voyage#getVoyageNumber()"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Cargo.java",
+  "line": 135,
+  "call": "updateOnRouting",
+  "recv": "delivery",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.Delivery",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.Delivery#updateOnRouting(RouteSpecification,Itinerary)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Cargo.java",
+  "line": 183,
+  "call": "sameValueAs",
+  "recv": "trackingId",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.TrackingId",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.TrackingId#sameValueAs(TrackingId)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Itinerary.java",
+  "line": 73,
+  "call": "getLoadLocation",
+  "recv": "leg",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.Leg",
+  "recvHow": "lambda",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.Leg#getLoadLocation()"
+  ],
+  "note": "lambda"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Itinerary.java",
+  "line": 74,
+  "call": "getVoyage",
+  "recv": "leg",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.Leg",
+  "recvHow": "lambda",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.Leg#getVoyage()"
+  ],
+  "note": "lambda"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Cargo.java",
+  "line": 91,
+  "call": "getOrigin",
+  "recv": "routeSpecification",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification",
+  "recvHow": "param",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification#getOrigin()"
+  ],
+  "note": "param"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
+  "line": 114,
+  "call": "getMostRecentlyCompletedEvent",
+  "recv": "handlingHistory",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.handling.HandlingHistory",
+  "recvHow": "param",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.handling.HandlingHistory#getMostRecentlyCompletedEvent()"
+  ],
+  "note": "param"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 41,
+  "call": "getTrackingId",
+  "recv": "cargo",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.Cargo",
+  "recvHow": "local",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.Cargo#getTrackingId()"
+  ],
+  "note": "local"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
+  "line": 54,
+  "call": "getRouteSpecification",
+  "recv": "cargo",
+  "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.Cargo",
+  "recvHow": "local",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.cargo.Cargo#getRouteSpecification()"
+  ],
+  "note": "local"
+ },
+ {
+  "file": "src/main/java/org/eclipse/cargotracker/infrastructure/messaging/jms/JmsApplicationEvents.java",
+  "line": 41,
+  "call": "send",
+  "recv": "call",
+  "recvFqn": "jakarta.jms.JMSProducer",
+  "recvHow": "chain",
+  "how": "external",
+  "targets": [],
+  "note": "jms"
+ }
+]

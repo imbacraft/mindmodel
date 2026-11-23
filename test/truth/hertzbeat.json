@@ -1,0 +1,405 @@
+[
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 86,
+  "call": "streamChat",
+  "recv": "conversationService",
+  "recvFqn": "org.apache.hertzbeat.ai.service.ConversationService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.hertzbeat.ai.service.ConversationService#streamChat(String,Long)",
+   "org.apache.hertzbeat.ai.service.impl.ConversationServiceImpl#streamChat(String,Long)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 108,
+  "call": "createConversation",
+  "recv": "conversationService",
+  "recvFqn": "org.apache.hertzbeat.ai.service.ConversationService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.hertzbeat.ai.service.ConversationService#createConversation()",
+   "org.apache.hertzbeat.ai.service.impl.ConversationServiceImpl#createConversation()"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 120,
+  "call": "getAllConversations",
+  "recv": "conversationService",
+  "recvFqn": "org.apache.hertzbeat.ai.service.ConversationService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.hertzbeat.ai.service.ConversationService#getAllConversations()",
+   "org.apache.hertzbeat.ai.service.impl.ConversationServiceImpl#getAllConversations()"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 134,
+  "call": "getConversation",
+  "recv": "conversationService",
+  "recvFqn": "org.apache.hertzbeat.ai.service.ConversationService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.hertzbeat.ai.service.ConversationService#getConversation(Long)",
+   "org.apache.hertzbeat.ai.service.impl.ConversationServiceImpl#getConversation(Long)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 148,
+  "call": "deleteConversation",
+  "recv": "conversationService",
+  "recvFqn": "org.apache.hertzbeat.ai.service.ConversationService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.hertzbeat.ai.service.ConversationService#deleteConversation(Long)",
+   "org.apache.hertzbeat.ai.service.impl.ConversationServiceImpl#deleteConversation(Long)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 160,
+  "call": "saveSecurityData",
+  "recv": "conversationService",
+  "recvFqn": "org.apache.hertzbeat.ai.service.ConversationService",
+  "recvHow": "field",
+  "how": "impl",
+  "targets": [
+   "org.apache.hertzbeat.ai.service.ConversationService#saveSecurityData(SecurityData)",
+   "org.apache.hertzbeat.ai.service.impl.ConversationServiceImpl#saveSecurityData(SecurityData)"
+  ],
+  "note": "impl"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfig.java",
+  "line": 113,
+  "call": "fromJson",
+  "recv": "JsonUtil",
+  "recvFqn": "org.apache.hertzbeat.common.util.JsonUtil",
+  "recvHow": "static",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(InputStream,TypeReference<T>)",
+   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(String,Class<T>)",
+   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(String,TypeReference<T>)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 109,
+  "call": "success",
+  "recv": "Message",
+  "recvFqn": "org.apache.hertzbeat.common.entity.dto.Message",
+  "recvHow": "static",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.hertzbeat.common.entity.dto.Message#success(String)",
+   "org.apache.hertzbeat.common.entity.dto.Message#success(T)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentTraceTargetAuthorityService.java",
+  "line": 59,
+  "call": "getTraceDetail",
+  "recv": "traceQueryService",
+  "recvFqn": "org.apache.hertzbeat.observability.traces.service.EntityTraceQueryService",
+  "recvHow": "field",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.hertzbeat.observability.traces.service.EntityTraceQueryService#getTraceDetail(Long,String)",
+   "org.apache.hertzbeat.observability.traces.service.EntityTraceQueryService#getTraceDetail(String,TraceDetailQuery)",
+   "org.apache.hertzbeat.observability.traces.service.impl.EntityTraceQueryServiceImpl#getTraceDetail(String,TraceDetailQuery)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/ApprovalCommandService.java",
+  "line": 74,
+  "call": "approvalPreview",
+  "recv": "inlineCollections",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.tool.monitor.AgentInlineCollectionToolService",
+  "recvHow": "field",
+  "how": "ambiguous",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.tool.monitor.AgentInlineCollectionToolService#approvalPreview(AgentToolCall,AgentToolExecutionRequest)",
+   "org.apache.hertzbeat.ai.gateway.tool.monitor.AgentInlineCollectionToolService#approvalPreview(AgentToolCall,GatewayEnvelope)"
+  ],
+  "note": "ambiguous"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/McpContextHolder.java",
+  "line": 74,
+  "call": "get",
+  "recv": "call",
+  "recvFqn": null,
+  "recvHow": "unresolved",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
+  "line": 76,
+  "call": "builder",
+  "recv": "ChatResponseChunk",
+  "recvFqn": "org.apache.hertzbeat.ai.pojo.dto.ChatResponseChunk",
+  "recvHow": "static",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/SopController.java",
+  "line": 92,
+  "call": "build",
+  "recv": "call",
+  "recvFqn": null,
+  "recvHow": "unresolved",
+  "how": "unresolved",
+  "targets": [],
+  "note": "unresolved"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentIncidentTargetAuthorityService.java",
+  "line": 164,
+  "call": "alertIds",
+  "recv": "call",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.contract.AgentIncidentScope",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.contract.AgentIncidentScope#alertIds()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentLogTargetCanonicalizationAdapter.java",
+  "line": 54,
+  "call": "getWorkspaceId",
+  "recv": "call",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.contract.GatewayEnvelope",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.contract.GatewayEnvelope#getWorkspaceId()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentRunAdmissionTransaction.java",
+  "line": 197,
+  "call": "getActor",
+  "recv": "call",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.contract.GatewayEnvelope",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.contract.GatewayEnvelope#getActor()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentRunAdmissionTransaction.java",
+  "line": 200,
+  "call": "getChannelId",
+  "recv": "call",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.contract.GatewayEnvelope",
+  "recvHow": "chain",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.contract.GatewayEnvelope#getChannelId()"
+  ],
+  "note": "chain"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfig.java",
+  "line": 115,
+  "call": "hasText",
+  "recv": "StringUtils",
+  "recvFqn": "org.springframework.util.StringUtils",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfig.java",
+  "line": 144,
+  "call": "setupSyncClient",
+  "recv": "OpenAiSetup",
+  "recvFqn": "org.springframework.ai.openai.setup.OpenAiSetup",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfig.java",
+  "line": 154,
+  "call": "ofSeconds",
+  "recv": "Duration",
+  "recvFqn": "java.time.Duration",
+  "recvHow": "static",
+  "how": "external",
+  "targets": [],
+  "note": "static"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfig.java",
+  "line": 108,
+  "call": "findByType",
+  "recv": "generalConfigDao",
+  "recvFqn": "org.apache.hertzbeat.base.dao.GeneralConfigDao",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.base.dao.GeneralConfigDao#findByType(String)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/LlmConfigInitializer.java",
+  "line": 37,
+  "call": "registerInitialChatClient",
+  "recv": "llmConfig",
+  "recvFqn": "org.apache.hertzbeat.ai.config.LlmConfig",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.config.LlmConfig#registerInitialChatClient()"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/SopController.java",
+  "line": 69,
+  "call": "getAllSkills",
+  "recv": "skillRegistry",
+  "recvFqn": "org.apache.hertzbeat.ai.sop.registry.SkillRegistry",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.sop.registry.SkillRegistry#getAllSkills()"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/SopController.java",
+  "line": 90,
+  "call": "getSkill",
+  "recv": "skillRegistry",
+  "recvFqn": "org.apache.hertzbeat.ai.sop.registry.SkillRegistry",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.sop.registry.SkillRegistry#getSkill(String)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/service/impl/ConversationServiceImpl.java",
+  "line": 95,
+  "call": "findByConversationIdOrderByGmtCreateAsc",
+  "recv": "messageDao",
+  "recvFqn": "org.apache.hertzbeat.ai.dao.ChatMessageDao",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.dao.ChatMessageDao#findByConversationIdOrderByGmtCreateAsc(Long)"
+  ],
+  "note": "field"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/ProviderConnectionTestService.java",
+  "line": 159,
+  "call": "type",
+  "recv": "p",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.runtime.provider.AgentModelProviderOption",
+  "recvHow": "lambda",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.runtime.provider.AgentModelProviderOption#type()"
+  ],
+  "note": "lambda"
+ },
+ {
+  "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/ProviderConnectionTestService.java",
+  "line": 159,
+  "call": "code",
+  "recv": "p",
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.runtime.provider.AgentModelProviderOption",
+  "recvHow": "lambda",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.runtime.provider.AgentModelProviderOption#code()"
+  ],
+  "note": "lambda"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/sop/engine/SopEngineImpl.java",
+  "line": 210,
+  "call": "getLanguageCode",
+  "recv": "outputConfig",
+  "recvFqn": "org.apache.hertzbeat.ai.sop.model.OutputConfig",
+  "recvHow": "param",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.sop.model.OutputConfig#getLanguageCode()"
+  ],
+  "note": "param"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/sop/engine/SopEngineImpl.java",
+  "line": 266,
+  "call": "getOutputType",
+  "recv": "outputConfig",
+  "recvFqn": "org.apache.hertzbeat.ai.sop.model.OutputConfig",
+  "recvHow": "param",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.sop.model.OutputConfig#getOutputType()"
+  ],
+  "note": "param"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/SopController.java",
+  "line": 179,
+  "call": "toAiResponse",
+  "recv": "result",
+  "recvFqn": "org.apache.hertzbeat.ai.sop.model.SopResult",
+  "recvHow": "local",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.sop.model.SopResult#toAiResponse()"
+  ],
+  "note": "local"
+ },
+ {
+  "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/sop/registry/ToolRegistry.java",
+  "line": 127,
+  "call": "requiredParameters",
+  "recv": "tool",
+  "recvFqn": "org.apache.hertzbeat.ai.sop.registry.ToolRegistry.RegisteredTool",
+  "recvHow": "local",
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.sop.registry.ToolRegistry.RegisteredTool#requiredParameters()"
+  ],
+  "note": "local"
+ }
+]

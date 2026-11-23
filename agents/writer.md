@@ -27,6 +27,7 @@ The facts replace searching. Your budget goes on reading the few places that nee
 - **Give each region its `paths`** (the folders or files it is made of). Don't write `activity`: `validate.mjs --fix` computes the badges from the paths.
 - **Cite with symbols** where you can: `path:120-130#saveCustomer`. The validator checks that the symbol is in those lines, so you never need to re-open a file to double-check a citation. Use a symbol on every lifecycle step, rule and story step. Symbols must be identifiers (no spaces).
 - **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json --fix` and fix every ERROR **with small edits to the file, never by rewriting it whole**. Warnings are fine if justified.
+- **Spot-check ten claims before finishing.** `node <plugin>/engine/spotcheck.mjs <root>` writes `<root>/mindmodel/.work/spotcheck.md`: ten claims picked with a fixed seed, each with the code its citation points at. Confirm or correct every row; a claim the cited lines do not support is wrong even when it reads well. Fix the map, then run the checker again with a different `--seed` if you have turns left.
 - **Stop when the checks pass.** Don't polish beyond the critic checklist.
 
 ## Hard rules (from the rules, repeated because they matter most)
@@ -40,6 +41,12 @@ The facts replace searching. Your budget goes on reading the few places that nee
 Return exactly these sections:
 1. **Result:** the validator's last line.
 2. **The map in brief:** core sentence; concepts; regions in order; ranked rules (titles); ranked stories (titles).
-3. **For the owner only (P6):** security weaknesses and serious bugs you found, with file:line. These are not in the map.
-4. **Rule gaps:** any place the rules were ambiguous or didn't fit, and what you decided.
-5. **Fact corrections:** every place the scanner's facts were wrong, missing or misleading and what the code says instead, one line each: `section: facts said X; code says Y (file:line)`. Write the same lines to `<root>/mindmodel/.work/corrections.md` (create it; write `none` if there were none). This is how the engine improves, so report even small ones; don't spend extra reading to find more.
+3. **For the owner only (P6):** security weaknesses and serious bugs you found, with file:line. These are not in the map. Write them to `<root>/mindmodel/.work/findings.md` (create it; write `none` if there were none), one section per finding: **severity** (critical/high/medium/low), **claim**, **evidence** (`file:line`), **why it matters**, **suggested fix**. The digest's *Security warnings, computed* is the first place to look; a warning you verify becomes a finding.
+4. **Spot-check:** the seed used and how many of the ten rows held as written; the ones you corrected.
+5. **Rule gaps:** any place the rules were ambiguous or didn't fit, and what you decided.
+6. **Fact corrections:** every place the scanner's facts were wrong, missing or misleading and what the code says instead, one line each: `section: facts said X; code says Y (file:line)`. Write the same lines to `<root>/mindmodel/.work/corrections.md` (create it; write `none` if there were none). This is how the engine improves, so report even small ones; don't spend extra reading to find more.
+
+## Facts are where to start, not the answer
+
+Read the method behind every cited fact before writing the step. A fact that says "no setter found by the engine" is a
+statement about the scan, not about the code: check the code, and never turn it into "never set".

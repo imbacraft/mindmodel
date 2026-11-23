@@ -7,8 +7,14 @@
       "map": "mindmodel/mindmodel.json",
       "commit": "1c283e55909e2a11efb17b0481dd1a84f843f731"
     },
-    { "name": "fineract", "commit": "37ac25564468e88464d9c6191179d8bf50cf0b7e" },
-    { "name": "cargotracker", "commit": "4d26b8fd59a7f0bac6e42d5d19a8cd1b379353b5" }
+    {
+      "name": "fineract",
+      "commit": "37ac25564468e88464d9c6191179d8bf50cf0b7e"
+    },
+    {
+      "name": "cargotracker",
+      "commit": "4d26b8fd59a7f0bac6e42d5d19a8cd1b379353b5"
+    }
   ],
   "systems": [
     {
@@ -31,6 +37,9 @@
       "map": "mindmodel-system/system-map.json",
       "commit": "ca888d18cfb14a2792e829023fa466a2e027fda1"
     },
-    { "name": "cargotracker", "commit": "4d26b8fd59a7f0bac6e42d5d19a8cd1b379353b5" }
+    {
+      "name": "cargotracker",
+      "commit": "4d26b8fd59a7f0bac6e42d5d19a8cd1b379353b5"
+    }
   ]
 }

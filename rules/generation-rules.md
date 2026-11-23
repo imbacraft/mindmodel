@@ -29,15 +29,19 @@
 
 **P4. The code wins, silently.** Read the project's docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then verify against the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose documentation. Configuration files are code: a config setting that the code ignores or overrides can be a surprise (3.8).
 
+**P4a. The coverage line is a boundary, not a footnote.** `facts.md` opens with what the engine resolved and what it did not, and every fact carries a confidence. Treat `parsed` and `resolved` as settled: cite them without re-reading the code. Check `inferred` ones against the code before they reach the page. Anything under "What the engine did not understand" — unknown annotations, base classes no catalog explains, uncatalogued dependencies, source files the model cannot read, degraded files — or in the unresolved endpoints is a place the facts are blind: read the code there before claiming anything about it, or leave it out.
+
 **P5. Plain names first, code names second.** Use the words the users and the business use ("School"). Show the code name after it (`OrgUnit`). Once a plain name is chosen, use exactly that name everywhere on the page. Don't name a region with a word that is also a concept's name unless the region is about that concept.
 
-**P6. State behavior, never exploits.** The map describes how the code actually behaves, **including behavior that is flawed**, plainly and neutrally, because a developer can't work on a system they have been given a cleaned-up picture of (e.g. "the price is sent by the browser and charged as sent"). The map never explains how to abuse a weakness, never includes secrets, credentials or keys, and never labels anything a bug or vulnerability. **Separately**, report every security weakness and serious bug you find to the person who asked for the map.
+**P6. State behavior, never exploits.** The map describes how the code actually behaves, **including behavior that is flawed**, plainly and neutrally, because a developer can't work on a system they have been given a cleaned-up picture of (e.g. "the price is sent by the browser and charged as sent"). The map never explains how to abuse a weakness, never includes secrets, credentials or keys, and never labels anything a bug or vulnerability. **Separately**, report every security weakness and serious bug you find to the person who asked for the map: they go in `findings.md` (see the writer steps), never into the map's rules as a convention. Where a developer must know the behavior, the page says it neutrally and points at the findings — no exploit details, no "bug" label.
 
 **P7. Words first.** About 80% words. The only diagram is the request-path sequence. Draw any other diagram only if the relations it shows branch, loop or are many-to-many (a chain is a sentence).
 
 **P8. Budgets are hard limits.** Core map (everything except stories) ≤ 3,000 words. Per-section limits are given below. Cut, merge or group; never cram.
 
 **P9. Rank, don't list.** Where a section has several items of unequal weight (rules, stories), order them by importance and say in one line why each ranks where it does.
+
+**P10a. State the condition; absolutes only when the code guarantees them.** A claim is true under conditions — a tenant, a role, a configuration key, a transaction, a path prefix. Write them down: "when `sureness.excludedResource` lists it, `/api/webhooks/**` skips authentication", not "requests are authenticated". Words like *never*, *always*, *all requests*, *no one* are allowed only when the code guarantees them (a constant, an exhaustive switch, a single entry point); otherwise the rule carries a `condition` field saying when it holds, and the validator rejects an absolute without one. A probable defect does not become a rule either: rules describe how the system works, so the defect goes in the owner's findings and the map's text stays neutral (P6).
 
 **P10. Exact numbers or none.** "42 entities", "every 30 s", "14 of 40 commits": exact and cited. Never "many", "several", "frequently".
 
@@ -55,7 +59,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 | 4 | Regions (Part 3.4) | regions + region sentence |
 | 5 | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners, copies, seams |
 | 6 | How a request travels (Part 3.6) | request path |
-| 7 | What runs on its own (Part 3.7) | background table |
+| 7 | What runs on its own (Part 3.7) | background table + generated total |
 | 8 | Stories: choose, rank, trace (Part 3.9) | stories |
 | 9 | Rules & surprises (Part 3.8). Written after tracing, because most surprises show up while tracing | ranked rules |
 | 10 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
@@ -65,7 +69,14 @@ Work in this order. Later sections depend on earlier ones: everything is written
 
 ## Part 3. Section rules
 
-### 3.1 Overview
+#
+### Tenancy
+
+- The digest's **Tenancy** section is the whole story of the tenant key: the key, its counts (entities carrying it, repository reads that filter by it), which entities lack it, the reads that skip it, and code without a request. Say "inferred" where it says inferred; a key the engine did not choose is `null`, and that is a finding, not a gap to fill by guessing a field name.
+- "Scoped by X" is only true when the fact says so. If an entity is listed under "without it", every read of it is unscoped unless the code checks the tenant somewhere else — cite that check or say it is missing and put it in `findings.md`.
+- A job, listener, async method or worker listed as reaching a keyed repository with the tenant context **not set** is a probable defect: neutral warning on the page, full evidence in the findings.
+
+## 3.1 Overview
 
 **Goal:** in one breath, the reader knows who the system serves and what they get from it, plus what it will never be.
 
@@ -238,8 +249,9 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - **Table**, ≤ 10 rows, grouped by purpose (not one row per class): name · when (human terms: "every 20 s", "hourly", "nightly 03:00") · what it does, in one or two sentences · region · citations to each scheduler or worker.
 - If an item explains user-visible delay ("paid" arrives after the redirect), say it in that row.
 - If the app truly has nothing that runs on its own, say so in the intro: that is itself useful knowledge.
+- **The page also prints, from the code, how many handlers exist in total, with a collapsed list of every one.** Your table is the selection that matters, not the inventory: never pad it to match the count, and never say a handler does not exist because it is not in your table.
 
-**Checks:** Did every `@Scheduled`, `@Async`, listener and worker found in phase 1 land in some row? Is every schedule copied exactly from the code or config?
+**Checks:** Does every row describe work that really runs with no request? Is every schedule copied exactly from the code or config? When the generated total is larger than your rows, does the intro or a row tell the reader what the rest of it is?
 
 ### 3.8 Rules & surprises
 
@@ -253,8 +265,11 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - Money handling.
 - Cross-cutting "touch X, also change Y" couplings.
 - **Whatever surprised you while tracing the stories.**
+- Paths the security layer excludes (`facts.authExclusions`, read from `sureness.yml` or Spring Security): an authentication rule must say which paths skip it, not assume every request is checked.
 
-**Qualify:** non-obvious **and** consequential **and** verifiable in code. Not code smells, not style guides (unless breaking them causes real damage), not doc mismatches (P4). Flawed behavior a developer must know to work safely (e.g. "the charged price comes from the browser") qualifies, stated as behavior, never as a vulnerability or an exploit (P6).
+**Qualify:** non-obvious **and** consequential **and** verifiable in code, and stated with its condition (P10a). Not code smells, not style guides (unless breaking them causes real damage), not doc mismatches (P4). Flawed behavior a developer must know to work safely (e.g. "the charged price comes from the browser") qualifies, stated as behavior, never as a vulnerability or an exploit (P6).
+
+**A probable defect is not a rule.** The digest's *Security warnings, computed* section names prefixes that allow anonymous access and expose writes with no method-level check. The map states the condition neutrally ("`/api/shop/**` is anonymous, so `ProductController#create` needs no token") and the gap goes to `findings.md`; it never becomes a rule like "always check the tenant", because that is the missing code, not the code.
 
 **Kind:** *rule* = something you must do or never do. *Surprise* = something that behaves unexpectedly.
 
@@ -405,3 +420,21 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | Stories | 1–5, each ≤ 10 steps and about 250–500 words |
 | Diagrams | 1: the request-path sequence |
 | Words, core map (everything except stories) | ≤ 3,000 |
+
+## How security works (S4)
+
+Write a `security` section only from `facts.securityModel` and `facts.methodSecurity`. It states the model as knowledge:
+which path prefixes are public, which need a login, which need a role; where the user comes from; where the tenant
+comes from (quote `facts.tenancy`); and what a developer adding an endpoint in each prefix has to do, derived from how
+the existing endpoints in that prefix are protected.
+
+- Knowledge, not weakness: never name a vulnerability or how to exploit one; a gap goes to `findings.md`. Where the
+  developer must know, say it flatly ("endpoints under `/api/shop/**` are public: each must protect itself"), no detail.
+- Every claim cites code: the prefix's rule or a handler's annotation. A claim without a citation is not written.
+
+## Facts are where to start, not the answer
+
+- Every story step must be confirmed by reading the method it cites. The fact proves the call exists; only the code
+  proves what the call does.
+- A "not found" fact (no setter, no listener, no channel) is a fact about the engine. Check the code before stating
+  anything is absent, and write it as "no setter found by the engine", never as "never set" or "never called".

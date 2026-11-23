@@ -201,7 +201,10 @@ details.story .body { padding: 0 22px 22px; }
 .importance { font-style: italic; color: var(--muted); margin-bottom: 8px; }
 .wtc { overflow-x: auto; margin-top: 16px; }
 .wtc table { width: 100%; border-collapse: collapse; font-size: 18px; min-width: 620px; }
-.wtc th, .wtc td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); }
+.wtc th, .wtc td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--line); overflow-wrap: break-word; }
+/* Wrap rather than scroll: a long schedule or mono citation must not push the last column off the page. */
+.wtc td.when { width: 28%; }
+.wtc .cite, .wtc code { overflow-wrap: anywhere; }
 .wtc th { font: 600 13px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
 #state h3 { margin: 32px 0 10px; }
 #state .rules h3 { margin: 0 0 6px; }
@@ -257,12 +260,23 @@ html { scroll-behavior: smooth; }
   <main id="main"></main>
 </div>
 <script id="mindmodel-data" type="application/json">/*__MINDMODEL_DATA__*/</script>
+<script id="mindmodel-derived" type="application/json">/*__MINDMODEL_DERIVED__*/</script>
 <script>
 (() => {
 const ROOT = "__MINDMODEL_ROOT__".replace(/\/$/, "");
 // A published page links citations to the code on the web; the editor picker only applies to local pages.
 const WEB = /^https?:\/\//.test(ROOT);
 const M = JSON.parse(document.getElementById('mindmodel-data').textContent);
+const D = JSON.parse(document.getElementById('mindmodel-derived').textContent || 'null');
+const P = D?.provenance ?? null;
+// What the page was built from; printed in the footer, never a section of its own.
+const provText = (p) =>
+  [
+    p.endpoints != null ? `${p.endpoints} endpoints` : null,
+    p.entities != null ? `${p.entities} entities` : null,
+    p.scheduled != null ? `${p.scheduled} scheduled / listeners` : null,
+    p.scannedAt ? `scanned ${p.scannedAt}` : null,
+  ].filter(Boolean).join(' · ');
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Signalling: identifiers, enum values and API paths render as code so they read as beacons.
@@ -377,12 +391,36 @@ add('flow', 'How a request travels', `
   <figure class="figure"><div class="svgbox"><svg class="diagram seq" id="seq" role="img" aria-label="Sequence of a request"></svg></div></figure>
   <div class="flow-grid"><ol class="steps" id="flowSteps">${M.runtime.steps.map((s, i) => `<li data-step="${i}"><div><div class="head">${chip(s.region)}</div>${rich(s.text)}${cites(s.cites)}</div></li>`).join('')}</ol></div>`);
 
+// Straight from facts, so the writer's table is visibly a selection: the total, and the full list on demand.
+const bgInventory = () => {
+  const b = D?.background;
+  if (!b?.total) return '';
+  const rows = b.rows
+    .map((r) => `<tr><td><b>${esc(r.name)}</b>${cites([r.cite])}</td><td>${esc(r.kind)}</td><td>${esc(r.args)}</td></tr>`)
+    .join('');
+  return `<p class="also">From the code: ${b.total} scheduled / async / listener / socket handler${b.total === 1 ? '' : 's'}.</p>${rows ? `<details><summary>All ${b.total} handlers</summary><div class="wtc"><table><thead><tr><th>Handler</th><th>Kind</th><th>Trigger</th></tr></thead><tbody>${rows}</tbody></table>${b.more ? `<p class="also">+${b.more} more in facts.json</p>` : ''}</div></details>` : ''}`;
+};
+
+// Knowledge, not weaknesses (rule S4): gaps are in the owner's findings, never on the page.
+const S = M.security;
+if (S) add('security', 'How security works', `
+  <h2>How security works</h2>
+  <p class="lede">${rich(S.intro)}</p>${cites(S.cites)}
+  <div class="wtc"><table><thead><tr><th>Paths</th><th>Who may call</th><th>What to know</th></tr></thead><tbody>
+  ${S.prefixes.map((p) => `<tr><td>${p.prefix.split(/,\s*/).map((x) => `<code>${esc(x)}</code>`).join(' ')}</td><td>${rich(p.access)}</td><td>${rich(p.note ?? '')}${cites(p.cites)}</td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="cols2">
+    <div><h4>Who the caller is</h4><ul class="ctx-list">${S.userSources.map((u) => `<li><b>${esc(u.kind)}</b>${u.note ? `<span>${rich(u.note)}</span>` : ''}${cites(u.cites)}</li>`).join('')}
+      ${S.tenant ? `<li><b>Tenant: <code>${esc(S.tenant.key ?? '')}</code></b>${S.tenant.note ? `<span>${rich(S.tenant.note)}</span>` : ''}${cites(S.tenant.cites)}</li>` : ''}</ul></div>
+    <div><h4>When you add an endpoint</h4><ul class="ctx-list">${S.developerRule.map((d) => `<li><span>${rich(d.text)}</span>${cites(d.cites)}</li>`).join('')}</ul></div>
+  </div>`);
+
 add('background', 'What runs on its own', `
   <h2>What runs on its own</h2>
   <p class="lede">${rich(M.background.intro)}</p>${cites(M.background.cites)}
   <div class="wtc"><table><thead><tr><th>What</th><th>When</th><th>Region</th></tr></thead><tbody>
-  ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td style="white-space:nowrap">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
-  </tbody></table></div>`);
+  ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td class="when">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
+  </tbody></table></div>${bgInventory()}`);
 
 add('rules', 'Rules & surprises', `
   <h2>Rules and surprises</h2>
@@ -402,7 +440,7 @@ add('stories', 'Stories', `
       </div>
     </details>`).join('')}`);
 
-add('end', '', `<footer>Generated by mindmodel from <code>mindmodel/mindmodel.json</code>. Every citation points to the code at commit ${esc(M.project.commit)}.</footer>`);
+add('end', '', `<footer>Generated by mindmodel from <code>mindmodel/mindmodel.json</code>. Every citation points to the code at commit ${esc(M.project.commit)}.${P ? ` <span class="prov">Provenance: ${esc(provText(P))}.</span>` : ''}</footer>`);
 
 $('#main').innerHTML = sections.map((s) => `<section id="${s.id}">${s.html}</section>`).join('');
 $('#toc').innerHTML = sections.filter((s) => s.label).map((s) => `<li><a href="#${s.id}">${esc(s.label)}</a></li>`).join('');

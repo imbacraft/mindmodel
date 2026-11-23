@@ -1,0 +1,11 @@
+{
+  "id": "sureness",
+  "version": 1,
+  "when": { "imports": ["com.usthe.sureness."], "deps": ["sureness-core"] },
+  "types": [
+    { "fqn": "com.usthe.sureness.processor.support.JwtProcessor", "means": "auth-type", "authType": "JWT bearer token" },
+    { "fqn": "com.usthe.sureness.processor.support.BasicProcessor", "means": "auth-type", "authType": "basic auth" },
+    { "fqn": "com.usthe.sureness.processor.support.DigestProcessor", "means": "auth-type", "authType": "digest auth" }
+  ],
+  "annotations": []
+}

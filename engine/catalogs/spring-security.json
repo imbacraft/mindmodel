@@ -1,0 +1,86 @@
+{
+  "id": "spring-security",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.boot:spring-boot-starter-security",
+      "org.springframework.security:spring-security-config",
+      "org.springframework.security:spring-security-web"
+    ],
+    "imports": [
+      "org.springframework.security."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.security.config.annotation.web.configuration.EnableWebSecurity"
+      ],
+      "means": "security-config",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity",
+        "org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity"
+      ],
+      "means": "method-security",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.security.access.prepost.PreAuthorize"
+      ],
+      "means": "method-security",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.security.access.prepost.PostAuthorize"
+      ],
+      "means": "method-security",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.security.access.annotation.Secured"
+      ],
+      "means": "method-security",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.security.test.context.support.WithMockUser"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.security.test.context.support.WithAnonymousUser"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ]
+}

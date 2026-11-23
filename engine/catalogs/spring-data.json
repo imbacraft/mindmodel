@@ -1,0 +1,201 @@
+{
+  "id": "spring-data",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework.boot:spring-boot-starter-data-jpa",
+      "org.springframework.boot:spring-boot-starter-data-jdbc",
+      "org.springframework.boot:spring-boot-starter-data-mongodb",
+      "org.springframework.boot:spring-boot-starter-data-redis",
+      "org.springframework.data:spring-data-commons"
+    ],
+    "imports": [
+      "org.springframework.data."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.data.relational.core.mapping.Table"
+      ],
+      "means": "table",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.relational.core.mapping.Column"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.mongodb.core.mapping.Document"
+      ],
+      "means": "table",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.redis.core.RedisHash"
+      ],
+      "means": "table",
+      "on": [
+        "type"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.jpa.repository.Query"
+      ],
+      "means": "repository-query",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.Id"
+      ],
+      "means": "id",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.annotation.Version"
+      ],
+      "means": "version",
+      "on": [
+        "field",
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.jpa.repository.Modifying"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.repository.query.Param"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.jpa.repository.EntityGraph"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.jpa.repository.config.EnableJpaRepositories"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.jpa.repository.config.EnableJpaAuditing"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.data.jpa.repository.Lock"
+      ],
+      "means": "ignore",
+      "on": [
+        "method"
+      ]
+    }
+  ],
+  "types": [
+    {
+      "fqn": "org.springframework.data.repository.Repository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.repository.CrudRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.repository.ListCrudRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.repository.PagingAndSortingRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.repository.ListPagingAndSortingRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.repository.reactive.ReactiveCrudRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.repository.reactive.ReactiveSortingRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.jpa.repository.JpaRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.jpa.repository.JpaSpecificationExecutor",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.mongodb.repository.MongoRepository",
+      "means": "repository"
+    },
+    {
+      "fqn": "org.springframework.data.r2dbc.repository.R2dbcRepository",
+      "means": "repository"
+    }
+  ]
+}

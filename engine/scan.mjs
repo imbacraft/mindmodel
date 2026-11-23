@@ -3,11 +3,42 @@
 // Usage: node scan.mjs <projectRoot> [outFile]   (default out: <root>/mindmodel/.work/facts.json)
 // Never copies config values (only keys) so secrets cannot leak into facts or the map.
 import fs from 'node:fs';
+import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import assert from 'node:assert';
-import { javaFacts, bootFacts, deployables } from './deep.mjs';
-import { git, gitWindow } from './activity.mjs';
-import { index } from './java.mjs';
+import { javaFacts } from './extract/lifecycle.mjs';
+import { bootFacts, deployables } from './extract/boot.mjs';
+import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
+import { index } from './syntax/java.mjs';
+import { buildModel } from './model/model.mjs';
+import { bindCalls } from './model/calls.mjs';
+import { annotationIndex, generatedRules, loadCatalogs, meanOf, selectForModel, signatureIndex, typeIndex } from './catalogs/catalog.mjs';
+import { extractEndpoints } from './extract/endpoints.mjs';
+import { buildFlows, flowEntries } from './extract/flows.mjs';
+import { channelFacts } from './extract/channels.mjs';
+import { extractSchedules } from './extract/schedules.mjs';
+import {
+  anonymousWrites,
+  authSources,
+  methodSecurityFacts,
+  securityModel as buildSecurityModel,
+  shiroCodeRules,
+  shiroRules,
+  springChains,
+  surenessRules,
+  tenantSources,
+  webXmlRules,
+} from './extract/security.mjs';
+import { entityFacts } from './extract/entities.mjs';
+import { noRequestPaths, tenancyFacts } from './extract/tenancy.mjs';
+import { extractOutside } from './extract/outside.mjs';
+import { extractState } from './extract/state.mjs';
+import { extractTransactions } from './extract/transactions.mjs';
+import { coverage } from './checks/coverage.mjs';
+import { coordinatesOf, readBuild } from './evidence/build.mjs';
+
+// The shipped catalogs are read once per process; a project catalog is merged here when it lands.
+const CATALOGS = loadCatalogs();
 
 const IGNORE = new Set([
   '.git',
@@ -99,20 +130,6 @@ const JOB = new RegExp(
     'Observes',
   ].join('|')})$`,
 );
-const JAXRS_VERB = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)$/;
-const mappingPath = (args) => {
-  const m = /(?:value|path)?\s*=?\s*\{?\s*"([^"]*)"/.exec(args ?? '');
-  return m ? m[1] : '';
-};
-const VERBS = {
-  GetMapping: 'GET',
-  PostMapping: 'POST',
-  PutMapping: 'PUT',
-  DeleteMapping: 'DELETE',
-  PatchMapping: 'PATCH',
-  RequestMapping: 'ANY',
-  MessageMapping: 'STOMP',
-};
 
 // The event a CDI observer takes; @Initialized(ApplicationScoped.class) means it runs at startup.
 const observerType = (param) =>
@@ -133,42 +150,30 @@ export function parseJava(text, ix = index(text)) {
     extends: type?.extends,
     implements: type?.implements,
     classLine: type?.nameLine ?? null,
+    constants: type?.constants ?? [],
     annotations: TYPE_ANNOTATIONS.filter(has),
   };
   const table = /name\s*=\s*"([^"]+)"/.exec(argsOf('Table'));
   if (table) r.table = table[1];
-  r.basePath = mappingPath(argsOf('RequestMapping') || argsOf('Path'));
-  if (has('ApplicationPath')) r.appPath = mappingPath(argsOf('ApplicationPath'));
-  r.mappings = [];
   r.fields = [];
   r.scheduled = [];
   r.views = [];
 
   for (const method of ix.methods) {
-    for (const a of method.ann) {
-      const verb = VERBS[a.name];
-      if (verb) {
-        const rm = /RequestMethod\.(\w+)/.exec(a.args);
-        r.mappings.push({ verb: rm ? rm[1] : verb, path: mappingPath(a.args), line: a.line, method: method.name });
-      } else if (JAXRS_VERB.test(a.name)) {
-        // A JAX-RS method's own @Path sits in the same method's annotations, so no lookahead window is needed.
-        const p = method.ann.find((x) => x.name === 'Path');
-        r.mappings.push({ verb: a.name, path: p ? mappingPath(p.args) : '', line: a.line, method: method.name });
-      } else if (JOB.test(a.name)) {
+    for (const a of method.ann)
+      if (JOB.test(a.name))
         r.scheduled.push({
           kind: a.name,
           args: (a.args ? `(${a.args})` : '').trim().slice(0, 120),
           line: a.line,
+          method: method.name,
         });
-      }
-    }
     // CDI observers name their event on the parameter, not on the method.
     for (const p of method.params)
       for (const a of p.ann)
         if (/^(Observes|ObservesAsync)$/.test(a.name))
           r.scheduled.push({ kind: a.name, args: observerType(p).slice(0, 120), line: a.line });
   }
-  r.mappings.sort((a, b) => a.line - b.line);
   r.scheduled.sort((a, b) => a.line - b.line);
 
   // A message-driven bean listens on the destination in its activation config (or mappedName).
@@ -210,15 +215,7 @@ export function parseJava(text, ix = index(text)) {
   const r = parseJava(
     '@Path("/handling")\n@Stateless\npublic class H {\n  @POST\n  @Path("/reports")\n  @Consumes("application/json")\n  public void submit(Report r) {}\n  @GET\n  public List<X> all() {}\n  public void on(@Observes(during = TransactionPhase.AFTER_SUCCESS) CargoInspected e) {}\n  @Schedule(minute = "*/2", hour = "*")\n  public void scan() {}\n}',
   );
-  assert.deepStrictEqual([r.basePath, r.annotations], ['/handling', ['Path', 'Stateless']]);
-  assert.deepStrictEqual(r.mappings, [
-    { verb: 'POST', path: '/reports', line: 4, method: 'submit' },
-    { verb: 'GET', path: '', line: 8, method: 'all' },
-  ]);
-  const long = parseJava(
-    '@Path("/t")\npublic class T {\n  @GET\n  @Path("template")\n  @Operation(summary = "x", description = "List loans (paged)"\n      + "a"\n      + "b"\n      + "c")\n  @ApiResponse(responseCode = "200")\n  public Page<Data> template(@BeanParam P p) {}\n}',
-  );
-  assert.deepStrictEqual(long.mappings, [{ verb: 'GET', path: 'template', line: 3, method: 'template' }]);
+  assert.deepStrictEqual(r.annotations, ['Path', 'Stateless']);
   assert.deepStrictEqual(
     r.scheduled.map((s) => [s.kind, s.args]),
     [
@@ -231,24 +228,6 @@ export function parseJava(text, ix = index(text)) {
   );
   assert.deepStrictEqual(mdb.scheduled, [{ kind: 'MessageDriven', args: 'java:app/jms/CargoHandledQueue', line: 4 }]);
 }
-assert.deepStrictEqual(
-  parseJava(
-    '@RestController\n@RequestMapping("/api/x")\npublic class A {\n  @GetMapping("/{id}")\n  public Foo get(Long id) {\n    return null; }',
-  ).mappings,
-  [{ verb: 'GET', path: '/{id}', line: 4, method: 'get' }],
-);
-// A generic return type no longer hides the handler, and an annotation with braces in its arguments is just an
-// annotation.
-assert.deepStrictEqual(
-  parseJava(
-    '@RestController\npublic class G {\n  @GetMapping("/stream")\n  public Flux<ServerSentEvent<Chat>> stream() {\n    return null;\n  }\n}',
-  ).mappings,
-  [{ verb: 'GET', path: '/stream', line: 3, method: 'stream' }],
-);
-assert.deepStrictEqual(
-  parseJava('class B {\n  @Consumes({ "a", "b" })\n  @PostMapping(value = "/x")\n  public void x() {}\n}').mappings,
-  [{ verb: 'POST', path: '/x', line: 3, method: 'x' }],
-);
 // Entity fields carry their own relation annotation; no line window, no annotation from the field above.
 assert.deepStrictEqual(
   parseJava(
@@ -288,7 +267,39 @@ const linesMatching = (text, re) =>
   text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
 
 // --- main ---------------------------------------------------------------------
-export function scan(root) {
+// `import jakarta.persistence.*;` then `@Entity`: an annotation with no explicit import is resolved through the
+// catalog, not guessed. Only names a catalog knows resolve; everything else stays unknown and shows up in coverage.
+export function resolveWildcardAnnotations(model, index) {
+  const known = new Map();
+  for (const [fqn, hits] of index.byFqn) known.set(fqn, hits);
+  let fixed = 0;
+  const apply = (anns, imports) => {
+    for (const a of anns ?? []) {
+      if (a.fqn) continue;
+      for (const i of imports) {
+        if (!i.wildcard) continue;
+        const cand = `${i.name}.${a.name}`;
+        if (known.has(cand)) {
+          a.fqn = cand;
+          fixed++;
+          break;
+        }
+      }
+    }
+  };
+  for (const t of model.types.values()) {
+    const imports = model.importsOf.get(t.file)?.imports ?? [];
+    apply(t.ann, imports);
+    for (const m of t.methods ?? []) {
+      apply(m.ann, imports);
+      for (const p of m.params ?? []) apply(p.ann, imports);
+    }
+    for (const f of t.fields ?? []) apply(f.ann, imports);
+  }
+  return fixed;
+}
+
+export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
   const files = walk(root);
   const R = (p) => rel(root, p);
   const read = (p) => fs.readFileSync(p, 'utf8');
@@ -310,6 +321,9 @@ export function scan(root) {
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
   const java = javaAll.filter((j) => !app.isExcluded(j.p));
+  // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs). Read once, used for
+  // catalog selection (which frameworks are installed) and as a fact family of its own.
+  const buildFiles = readBuild(root, files.map(R));
   const entities = java.filter((j) => j.annotations.includes('Entity'));
   const entityNames = new Set(entities.map((e) => e.name));
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
@@ -326,22 +340,6 @@ export function scan(root) {
     (j) =>
       /\b(Jpa|Crud|PagingAndSorting)Repository\s*</.test(j.extends ?? '') || /Repository\s*</.test(j.extends ?? ''),
   );
-  const repoFor = (n) => repos.find((r) => new RegExp(`Repository\\s*<\\s*${n}\\b`).test(r.extends));
-  // Jakarta EE repositories hold an EntityManager: their entity is the one they name most (X.class, TypedQuery<X>, "X.query").
-  const emRepos = java
-    .filter(
-      (j) => /\bEntityManager\s+\w+\s*;/.test(j.text) && /(Repository|Dao)\b/.test(`${j.name} ${j.implements ?? ''}`),
-    )
-    .map((j) => {
-      const n = {};
-      for (const m of j.text.matchAll(/\b(\w+)\.class\b|TypedQuery<(\w+)>|createNamedQuery\(\s*"(\w+)\./g)) {
-        const e = m[1] ?? m[2] ?? m[3];
-        if (entityNames.has(e)) n[e] = (n[e] ?? 0) + 1;
-      }
-      return { j, entity: Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] };
-    })
-    .filter((x) => x.entity);
-
   // frontend: React/TS and server-rendered views
   const built = (f) =>
     /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) ||
@@ -366,67 +364,6 @@ export function scan(root) {
     )
     .map((p) => ({ p: R(p), text: read(p) }));
 
-  // entity funnel (R12): score + family flags
-  const suffix = (n) => (n.match(/[A-Z][a-z0-9]*$/) ?? [n])[0];
-  const famCount = {};
-  for (const e of entities) famCount[suffix(e.name)] = (famCount[suffix(e.name)] ?? 0) + 1;
-  const INFRA = /(Log|Event|Token|Audit|History|PageView|Pending\w*|Failed\w*|Join\w*|Joined\w*|Variant|Mapping)$/;
-  const LINE_ITEM = /(Item|Line|Detail|Details)$/;
-  // Each file's identifiers, collected once: a set lookup per entity instead of a regex over every file. Not after @
-  // or a dot, so an entity named Component doesn't count every @Component annotation or stereotype import.
-  const wordSets = new Map(),
-    words = (text) => {
-      let s = wordSets.get(text);
-      if (!s) wordSets.set(text, (s = new Set(text.match(/(?<![@.\w])[A-Za-z_]\w*/g))));
-      return s;
-    };
-  const funnel = entities
-    .map((e) => {
-      const named = (x) => words(x.text).has(e.name);
-      const relIn = entities.filter((o) => o !== e && named(o)).length;
-      const refs = nonEntity.filter(named).length;
-      const ctrl = controllers.filter(named).length;
-      const svc = nonEntity.filter((j) => /Service(Impl)?$/.test(j.name ?? '') && named(j)).length;
-      const feRefs = fe.filter(named).length;
-      const vre = new RegExp(
-        `[$#]\\{\\s*${lc(e.name)}(s|List)?[.\\s}]|var\\s*=\\s*"${lc(e.name)}"|modelAttribute\\s*=\\s*"${lc(e.name)}"`,
-      );
-      const viewRefs = views.filter((v) => vre.test(v.text)).length;
-      const status = e.fields.some(
-        (f) => /^(status|state)$/i.test(f.name) || (f.enumerated && /status|state/i.test(f.type)),
-      );
-      const family = famCount[suffix(e.name)] >= 3 ? suffix(e.name) : undefined;
-      const used = !!repoFor(e.name) || refs > 0;
-      const flags = [
-        family && `family:*${family}`,
-        INFRA.test(e.name) && 'infrastructure',
-        LINE_ITEM.test(e.name) && 'line-item?',
-        !used && 'dead?',
-      ].filter(Boolean);
-      const score =
-        Math.round(
-          (relIn * 3 + Math.log2(1 + refs) * 4 + ctrl + Math.log2(1 + feRefs + viewRefs) * 3 + (status ? 2 : 0)) * 10,
-        ) / 10;
-      return {
-        name: e.name,
-        file: e.p,
-        line: e.classLine,
-        table: e.table,
-        score,
-        relIn,
-        refs,
-        controllers: ctrl,
-        services: svc,
-        frontendFiles: feRefs,
-        viewFiles: viewRefs,
-        status,
-        flags,
-        relations: e.fields.filter((f) => f.rel).map((f) => `${f.rel} ${f.type} ${f.name}:${f.line}`),
-        keyFields: e.fields.filter((f) => !f.rel).map((f) => `${f.name}:${f.type}:${f.line}`),
-      };
-    })
-    .sort((a, b) => b.score - a.score);
-
   // status enums with values (lifecycles)
   const enums = java
     .filter((j) => j.kind === 'enum' && /(Status|State|Type|Mode|Tier|Role|Source)$/.test(j.name ?? ''))
@@ -434,30 +371,164 @@ export function scan(root) {
       name: j.name,
       file: j.p,
       line: j.classLine,
-      values: (/\{([^;}]*)/.exec(j.text.slice(j.text.indexOf('enum')))?.[1] ?? '')
-        .split(',')
-        .map((s) => s.trim().split(/[\s(]/)[0])
-        .filter((s) => /^[A-Z][A-Z0-9_]*$/.test(s)),
+      // From the enum's own body (syntax index), not from a search for the word `enum` in the file.
+      values: j.constants ?? [],
     }));
 
-  // endpoints + API join (R11)
-  const byName = new Map(java.map((j) => [j.name, j]));
-  const inherited = (c, depth = 0) => {
-    const b = byName.get((c.extends ?? '').replace(/<.*/, '').trim());
-    return b && depth < 3 ? [...b.mappings.map((m) => ({ ...m, from: b })), ...inherited(b, depth + 1)] : [];
+  // endpoints: the model and the catalogs decide them; coverage says how much of the project they understand.
+  const model = buildModel(javaAll);
+  const selected = selectForModel(model, CATALOGS, { deps: coordinatesOf(buildFiles) });
+  // Receiver types and call targets (§5.1): every family that follows a call reads this.
+  bindCalls(model, signatureIndex(selected), generatedRules(selected));
+  // The syntax index's body digests were only an input to resolution. The model keeps the calls it resolved; the
+  // locals, assignments and catches are dead weight for the rest of the scan (and the largest arrays in it).
+  for (const j of javaAll)
+    for (const m of j.ix.methods) {
+      m.locals = null;
+      m.assigns = null;
+      m.catches = null;
+    }
+  // Facts belong to the app, not the repository: the model spans every module (calls cross them), but a module the
+  // app excludes from its component scan is another deployable and its handlers are not this app's API.
+  const endpoints = extractEndpoints(model, selected, { include: (p) => !app.isExcluded(p) });
+  // The slice-2 families, all on resolved calls: outside clients, repository writes and cache state, then the
+  // transaction boundary that those together can leak through.
+  const outsideCalls = extractOutside(model, selected);
+  const stateFacts = extractState(model, selected);
+  const tx = extractTransactions(model, selected, {
+    outside: outsideCalls,
+    writes: stateFacts.filter((f) => f.family === 'state-write'),
+  });
+  const transactions = tx.facts;
+  // Recurring work that is not @Scheduled, and the paths that skip authentication: both are read from the model and
+  // from resource files (sureness.yml, Spring Security config), not inferred by the writer.
+  const recurring = extractSchedules(model, selected);
+  // Configured values by property key (application*.yml/.properties): topic and queue names come from here.
+  const channelConfig = new Map();
+  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !/\/src\/test\//.test(x))) {
+    const text = read(f);
+    if (/\.properties$/.test(f)) {
+      for (const m of text.matchAll(/^([\w.-]+)\s*[=:]\s*(.+)$/gm)) channelConfig.set(m[1].trim(), m[2].trim());
+    } else {
+      const stack = [];
+      for (const line of text.split('\n')) {
+        const m = /^(\s*)([\w.-]+):\s*(.*)$/.exec(line);
+        if (!m || /^\s*#/.test(line)) continue;
+        const indent = m[1].length;
+        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+        const key = [...stack.map((x) => x[1]), m[2]].join('.');
+        if (m[3].trim() && !/^[|>]/.test(m[3].trim())) channelConfig.set(key, m[3].trim().replace(/^["']|["']$/g, ''));
+        else stack.push([indent, m[2]]);
+      }
+    }
+  }
+  const resourceFiles = files
+    .filter((f) => /\.(?:ya?ml|properties)$/.test(f) && /sureness|application|security/i.test(f))
+    .map((f) => ({ p: R(f), text: read(f) }));
+  // Security as facts: one rule per chain prefix (Spring Security chains + sureness.yml), the anonymous writes those
+  // rules expose without a method-level check, and where the tenant comes from.
+  const msIndex = annotationIndex(selected);
+  const methodSec = methodSecurityFacts(model, (fqn, on) => meanOf(msIndex, fqn, on)?.means ?? null);
+  const methodSecurityIndex = methodSec.index;
+  // The same rule appears in several copies of a config (startup, manager, e2e); one fact per prefix and access.
+  const ruleSeen = new Set();
+  const securityRules = [
+    ...springChains(javaAll, methodSecurityIndex),
+    ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !/\/src\/test\//.test(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
+    ...files
+      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !/\/src\/test\//.test(f))
+      .flatMap((f) => shiroRules(read(f), R(f))),
+    ...shiroCodeRules(model, (rel) => read(path.join(root, rel))),
+    ...files
+      .filter((f) => /web\.xml$/.test(f) && !/\/src\/test\//.test(f))
+      .flatMap((f) => webXmlRules(read(f), R(f))),
+  ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
+  const securityWarnings = anonymousWrites(securityRules, endpoints, methodSecurityIndex);
+  const tenantFacts = tenantSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p));
+  // Entities and tenancy on the model (§5.4, slice 3): fields (inherited too), relations and their owning side,
+  // repository → entity from resolved type arguments; the tenant key decided by counts.
+  // Flow entries are needed both by tenancy (worker callers) and by the flows themselves: compute once.
+  const flowEntryList = flowEntries(model, endpoints, selected);
+  const catalogIndex = annotationIndex(selected);
+  resolveWildcardAnnotations(model, catalogIndex);
+  const entFacts = entityFacts(model, catalogIndex, typeIndex(selected));
+  // Callers that are no-request code: jobs, listeners, async methods and worker loops.
+  const entryMethods = [
+    ...flowEntryList.filter((e) => e.kind === 'worker').map((e) => `${e.t.fqn}#${e.m.name}`),
+    ...[...model.types.values()].flatMap((t) =>
+      (t.methods ?? [])
+        .filter((m) => (m.ann ?? []).some((a) => /(Scheduled|Schedule|JmsListener|KafkaListener|RabbitListener|EventListener|Async)$/.test(a.name ?? '')))
+        .map((m) => `${t.fqn}#${m.name}`),
+    ),
+  ];
+  // Webhook endpoints are request handlers, but nothing behind them has a logged-in tenant: reads they alone call are
+  // judged like jobs (cross-tenant by design), not as unscoped request reads.
+  const webhookIds = endpoints
+    .filter((e) => /webhook|callback|\bhooks?\b/i.test(e.path ?? ''))
+    .map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`);
+  const requestMethods = endpoints
+    .map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`)
+    .filter((id) => !webhookIds.includes(id));
+  entryMethods.push(...webhookIds);
+  const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
+  // Where the user comes from, from what the code configures: the security chain's own calls (httpBasic(),
+  // oauth2ResourceServer().jwt(), formLogin()/sessionManagement()) and filters that authenticate from a header by
+  // setting the security context. Structural, not text matching.
+  const lineIn = (file, needle) => {
+    const i = read(path.join(root, file)).split('\n').findIndex((l) => l.includes(needle));
+    return i >= 0 ? `${file}:${i + 1}` : null;
   };
-  const restRoot = java.find((j) => j.appPath != null)?.appPath ?? ''; // JAX-RS @ApplicationPath prefixes every resource
-  const endpoints = controllers.flatMap((c) =>
-    [...c.mappings, ...inherited(c)].map((m) => ({
-      verb: m.verb,
-      path: norm((c.annotations.includes('Path') ? restRoot + '/' : '') + (c.basePath || '') + '/' + (m.path || '')),
-      line: m.line,
-      handler: `${c.name}.${m.method}`,
-      file: m.from ? m.from.p : c.p,
-      inheritedBy: m.from ? c.p : undefined,
-      rest: c.annotations.includes('RestController') || c.annotations.includes('Path'),
-    })),
-  );
+  const userSources = [];
+  const addUser = (kind, cite, why) => {
+    if (cite && !userSources.some((u) => u.kind === kind)) userSources.push({ kind, cites: [cite], why });
+  };
+  for (const t of model.types.values())
+    for (const m of t.methods ?? [])
+      for (const c of m.calls ?? []) {
+        if (c.name === 'httpBasic') addUser('basic auth', lineIn(t.file, 'httpBasic'), `${t.name} configures httpBasic()`);
+        if (c.name === 'oauth2ResourceServer' || c.name === 'jwt')
+          addUser('JWT bearer token', lineIn(t.file, c.name === 'jwt' ? '.jwt(' : 'oauth2ResourceServer'), `${t.name} configures ${c.name}()`);
+        if (c.name === 'formLogin') addUser('HTTP session', lineIn(t.file, 'formLogin'), `${t.name} configures formLogin()`);
+        if (c.name === 'setAttribute' && (m.calls ?? []).some((x) => x.name === 'getSession'))
+          addUser('HTTP session', lineIn(t.file, 'getSession'), `${t.name}#${m.name} stores the caller in the HttpSession`);
+        if (c.name === 'sessionManagement' && !/STATELESS|NEVER/.test((c.args ?? []).join(' ') || read(path.join(root, t.file)).split('\n').slice(m.start - 1, m.end).join(' ')))
+          addUser('HTTP session', lineIn(t.file, 'sessionManagement'), `${t.name} configures a stateful sessionManagement()`);
+        if (/^(setAuthentication|setContext)$/.test(c.name ?? '') && (/Filter$/.test(t.name) || (m.calls ?? []).some((x) => ['getHeader', 'getCookies'].includes(x.name))))
+          addUser('API token', lineIn(t.file, c.name), `${t.name}#${m.name} sets the authentication from the request`);
+        // A filter that reads the Authorization header and stores the caller (attribute, ThreadLocal, SecurityContext).
+        if (
+          /Filter$/.test(t.name) &&
+          (m.calls ?? []).some((x) => x.name === 'getHeader') &&
+          (m.calls ?? []).some((x) => ['setAttribute', 'set', 'setAuthentication'].includes(x.name)) &&
+          /Authorization|Bearer|token/i.test(read(path.join(root, t.file)))
+        )
+          addUser('API token', lineIn(t.file, 'getHeader'), `${t.name}#${m.name} reads the token header and stores the caller`);
+      }
+
+  // Sureness declares its authentication types as processors; the catalog names them.
+  for (const { catalog } of selected)
+    for (const t of catalog.types ?? [])
+      if (t.means === 'auth-type' && [...model.types.values()].some((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn)) {
+        const holder = [...model.types.values()].find((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn);
+        addUser(t.authType, lineIn(holder.file, holder.name), `${holder.name} is a Sureness ${t.authType} processor`);
+      }
+  for (const a of authSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p)))
+    if (!userSources.some((u) => u.kind === a.kind)) userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
+  const baseControllers = new Set([...model.implsOf.keys()].filter((fqn) => model.types.get(fqn)?.methods?.length && /Controller$/.test(model.types.get(fqn)?.name ?? '')));
+  const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources, baseControllers });
+  // §5.4's 30% vs the 10% this build uses: report all three and let the owner decide.
+  const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
+    share,
+    key: tenancyFacts(entFacts, { tenantSources: tenantFacts, model, minShare: share }).key,
+  }));
+  const withoutRequest = noRequestPaths({
+    model,
+    tenancy,
+    repos: entFacts.repos,
+    // Worker entries only matter when there is a key to reach; skipping the build keeps large keyless apps fast.
+    extra: tenancy.key ? flowEntryList.filter((e) => e.kind === 'worker').map((e) => ({ kind: 'worker', t: e.t, m: e.m })) : [],
+  });
+  const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
   const feCalls = fe.flatMap((f) =>
     f.text.split('\n').flatMap((l, i) => {
       const m = /["'`](\/api\/[^"'`\s]*)["'`]/.exec(l);
@@ -503,24 +574,6 @@ export function scan(root) {
 
   // runtime machinery
   const pick = (re, list = java) => list.flatMap((j) => linesMatching(j.text, re).map((m) => ({ file: j.p, ...m })));
-  const security = pick(
-    /securityMatcher|requestMatchers|antMatchers|mvcMatchers|authorizeHttpRequests|authorizeRequests|permitAll|authenticated\(\)|hasRole|hasAnyRole|hasAuthority|csrf|formLogin|httpBasic|oauth2ResourceServer|sessionCreationPolicy|logout\(|@Order\(/,
-    java.filter((j) => /HttpSecurity|SecurityFilterChain|WebSecurityConfigurerAdapter/.test(j.text)),
-  );
-  // Jakarta EE: URL security declared in web.xml.
-  for (const f of files.filter((f) => /WEB-INF\/web\.xml$/.test(f))) {
-    const t = read(f);
-    if (/<security-constraint>/.test(t))
-      security.push(
-        ...linesMatching(
-          t,
-          /<(security-constraint|url-pattern|http-method|role-name|auth-method|transport-guarantee)>/,
-        ).map((m) => ({ file: R(f), ...m })),
-      );
-  }
-  const methodSecurity = java
-    .map((j) => ({ file: j.p, n: (j.text.match(/@(PreAuthorize|Secured|RolesAllowed)\b/g) ?? []).length }))
-    .filter((x) => x.n);
   // Registrations and filter classes only: imports, `x = new FilterRegistrationBean<>()` lines and record accessors like item.order() are noise.
   const interceptors = pick(
     /ContainerRequestFilter|ContainerResponseFilter|@WebFilter|@AroundInvoke|@Interceptor\b|addInterceptor|addPathPatterns|excludePathPatterns|(?:public|protected)\s+FilterRegistrationBean|FilterRegistrationBean(?:<[^>]*>)?\s+\w+\s*\(|instanceof FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/,
@@ -532,10 +585,9 @@ export function scan(root) {
     .filter((j) => /@ExceptionHandler|implements\s+ExceptionMapper/.test(j.text))
     .map((j) => j.p);
   const background = java.flatMap((j) => j.scheduled.map((s) => ({ ...s, file: j.p, cls: j.name })));
-  const sockets = java
-    .flatMap((j) =>
-      j.mappings.filter((m) => m.verb === 'STOMP').map((m) => ({ file: j.p, line: m.line, path: m.path })),
-    )
+  const sockets = endpoints
+    .filter((e) => e.verb === 'STOMP')
+    .map((e) => ({ file: e.file, line: e.line, path: e.path }))
     .concat(pick(/SessionDisconnectEvent|SessionConnectedEvent|registerStompEndpoints|enableSimpleBroker/));
   const runners = java
     .filter(
@@ -632,66 +684,12 @@ export function scan(root) {
     const db = /jdbc:(\w+)/.exec(t);
     return { file: R(f), db: db?.[1], keys };
   });
-  // The project's own modules (named after their folders) and build plugins are not dependencies.
-  const own = new Set([
-    path.basename(root),
-    ...files.filter((f) => /(^|\/)pom\.xml$/.test(f)).map((f) => path.basename(path.dirname(f))),
-  ]);
-  const buildFiles = files
-    .filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|package\.json)$/.test(R(f)) && R(f).split('/').length <= 3)
-    .map((f) => ({
-      file: R(f),
-      deps: (
-        read(f).match(
-          /(org\.springframework\.boot:spring-boot-starter-[\w-]+|spring-boot-starter-[\w-]+|com\.stripe[:\w.-]*|"(react|react-dom|react-router-dom|@tanstack\/react-query|axios|vite|next|@angular\/core|@angular\/router|vue|vue-router|svelte|@sveltejs\/kit)"|<artifactId>[\w.-]+<\/artifactId>)/g,
-        ) ?? []
-      )
-        .map((s) => s.replace(/<\/?artifactId>|"/g, ''))
-        .filter((s, i, a) => a.indexOf(s) === i && !own.has(s) && !/^maven-.*-plugin$|-maven-plugin$/.test(s))
-        .slice(0, 60),
-    }));
-
   // state: who writes each entity (repository mutations per caller), copies of state
-  const repoEntity = new Map([
-    ...repos.map((r) => [r.name, /Repository\s*<\s*(\w+)/.exec(r.extends)?.[1]]),
-    ...emRepos.flatMap(({ j, entity }) =>
-      [
-        j.name,
-        ...(j.implements ?? '')
-          .split(/\s*,\s*/)
-          .map((s) => s.replace(/<.*/, ''))
-          .filter((n) => /(Repository|Dao)$/.test(n)),
-      ].map((n) => [n, entity]),
-    ),
-  ]);
-  const writes = {};
-  for (const j of nonEntity) {
-    if (repoEntity.has(j.name)) continue;
-    const vars = new Map(
-      [...j.text.matchAll(/\b(\w+(?:Repository|Repo|Dao))\s+(\w+)\s*[;,)=]/g)]
-        .filter((m) => repoEntity.has(m[1]))
-        .map((m) => [m[2], repoEntity.get(m[1])]),
-    );
-    for (const [v, ent] of vars)
-      for (const m of linesMatching(
-        j.text,
-        new RegExp(`\\b${v}\\.((?:save|delete|update|insert|store|persist|merge|remove)\\w*)\\(`),
-      ))
-        ((writes[ent] ??= {})[j.p] ??= []).push(m.line);
-  }
+  // The repository → entity map comes from the model's resolved type arguments (entities.mjs); no name patterns.
+  const repoEntity = new Map([...entFacts.repos].map(([fqn, e]) => [fqn.split('.').pop(), e.split('.').pop()]));
   const modifying = repos.flatMap((r) =>
     linesMatching(r.text, /@Modifying/).map((m) => ({ file: r.p, line: m.line, entity: repoEntity.get(r.name) })),
   );
-  const caches = pick(/@Cacheable|@CacheEvict|@CachePut|@EnableCaching|expireAfter|\.ttl\(|entryTtl/)
-    .concat(
-      fe.flatMap((f) =>
-        linesMatching(
-          f.text,
-          /localStorage\.|sessionStorage\.|staleTime|invalidateQueries|configureStore|\bcreate\(\s*\(set|persist\(/,
-        ).map((m) => ({ file: f.p, ...m })),
-      ),
-    )
-    .slice(0, 80);
   const sdkFiles = new Set(
     java
       .filter((j) =>
@@ -699,20 +697,13 @@ export function scan(root) {
       )
       .map((j) => j.p),
   );
-  const seams = pick(
-    /@Transactional\b|@TransactionalEventListener|publishEvent\(|TransactionSynchronization|kafkaTemplate\.send|rabbitTemplate\.convertAndSend/,
-    java.filter(
-      (j) => sdkFiles.has(j.p) || /publishEvent\(|@TransactionalEventListener|TransactionSynchronization/.test(j.text),
-    ),
-  ).slice(0, 60);
-
   const deep = javaFacts({
     java,
     repoEntity,
     EXT,
     enums,
     entities,
-    shortlist: new Set(funnel.slice(0, 15).map((e) => e.name)),
+    shortlist: new Set([...entFacts.entities].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15).map((e) => e.name)),
     endpoints,
   });
   const bootComputed = bootFacts({ root, files, rel: R, git, app });
@@ -794,8 +785,39 @@ export function scan(root) {
     return { head, dirty, headDate, totalCommits: total, window: gitWindow(root, headDate, total) };
   })();
 
-  return {
-    version: 1,
+  // Flow ranking reads activity: how many commits in the window touched the entry's file. One git log, counted per
+  // file on demand (validate.mjs computes the same numbers for the map's regions).
+  const activityOf = (() => {
+    const win = gitInfo?.window;
+    if (!win) return () => 0;
+    // Path-limited history, in chunks: one git call per 25 entry files keeps the largest name-status page small, and
+    // the shared log is dropped between chunks.
+    const paths = [...new Set(flowEntryList.map((e) => e.t.file))];
+    const counts = new Map();
+    for (let i = 0; i < paths.length; i += 25) {
+      for (const [p, n] of activityByFile(root, win.since, paths.slice(i, i + 25)))
+        counts.set(p, (counts.get(p) ?? 0) + n);
+      forgetActivity();
+    }
+    return (file) => counts.get(file) ?? 0;
+  })();
+
+  const flows = buildFlows(model, {
+    entries: flowEntryList,
+    stateWrites: stateFacts.filter((x) => x.family === 'state-write'),
+    outsideCalls,
+    transactions,
+    entities: entFacts.entities,
+    activityOf,
+    selected,
+    securityRules,
+    frontendPaths: joined.filter((j) => j.path).map((j) => ({ path: j.path, file: j.file })),
+  });
+  // The flow rank needs git activity for entry files only; the history text is not needed after it.
+  forgetActivity();
+
+  const factsOut = {
+    version: 2,
     root,
     scannedAt: new Date().toISOString().slice(0, 10),
     inventory: { byExt, topDirs: [...new Set(files.map((f) => R(f).split('/').slice(0, 2).join('/')))].slice(0, 60) },
@@ -812,12 +834,53 @@ export function scan(root) {
       .map(([dir, n]) => ({ dir, javaFiles: n }))
       .sort((a, b) => a.dir.localeCompare(b.dir)),
     entities: {
-      count: entities.length,
-      funnel,
+      count: entFacts.entities.length,
+      model: entFacts.entities.map((e) => ({
+        name: e.name,
+        file: e.file,
+        line: e.line,
+        table: e.table,
+        relations: e.relations,
+        keys: e.keyFields.slice(0, 12),
+        unique: e.uniqueFields,
+        // Own fields only, for the invariant that a field's line sits inside its type (inherited lines live elsewhere).
+        ownKeys: e.fields.filter((f) => f.owner === e.name && !f.relation).map((f) => `${f.name}:${f.type}:${f.line}`),
+        ownRelations: e.fields.filter((f) => f.owner === e.name && f.relation).map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
+      })),
       enums,
       repositories: repos.map((r) => ({ file: r.p, extends: r.extends })),
+      model: entFacts.entities.map((e) => ({
+        name: e.name,
+        file: e.file,
+        line: e.line,
+        table: e.table,
+        relations: e.relations,
+        keys: e.keyFields.slice(0, 12),
+        unique: e.uniqueFields,
+        // Own fields only, for the invariant that a field's line sits inside its type (inherited lines live elsewhere).
+        ownKeys: e.fields.filter((f) => f.owner === e.name && !f.relation).map((f) => `${f.name}:${f.type}:${f.line}`),
+        ownRelations: e.fields.filter((f) => f.owner === e.name && f.relation).map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
+      })),
     },
+    tenancy: {
+      key: tenancy.key,
+      confidence: tenancy.confidence,
+      counts: tenancy.counts,
+      candidates: tenancy.candidates.slice(0, 6),
+      coverage: tenancy.coverage,
+      unscoped: tenancy.unscoped,
+      unscopedWrites: tenancy.unscopedWrites,
+      globalLookups: tenancy.globalLookups,
+      crossTenant: tenancy.crossTenant,
+      unscopedByRepo: tenancy.unscopedByRepo,
+      bridged: tenancy.bridged,
+      bases: tenancy.bases,
+      thresholds: tenancyThresholds,
+      sources: tenancy.sources,
+    },
+    noRequestPaths: withoutRequest,
     endpoints,
+    coverage: cov,
     frontend: {
       files: fe.length,
       routes,
@@ -828,29 +891,34 @@ export function scan(root) {
         .map((j) => `${j.verb ?? ''} ${j.path} ${j.file}:${j.line} -> ${j.handler}`),
     },
     views: { count: views.length, returnedBy: viewUse, deadViews },
-    runtime: { security, methodSecurity, interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
+    runtime: { interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
+    methodSecurity: methodSec.facts,
+    securityModel: securityModelFact,
+    channels: channelFacts(model, { config: channelConfig, extraConstants }),
     background: { scheduledAsyncListeners: [...background, ...batchJobs], sockets, runners },
-    state: {
-      writes: Object.fromEntries(
-        Object.entries(writes).map(([e, byFile]) => [
-          e,
-          Object.entries(byFile).map(([file, lines]) => `${file}:${lines.join(',')}`),
-        ]),
-      ),
-      modifying,
-      caches,
-      seams,
-    },
+    state: { modifying },
     boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
-    seams: deep.seams,
+    transactions,
+    transactionCounts: tx.counts,
+    outsideCalls,
+    stateWrites: stateFacts.filter((f) => f.family === 'state-write'),
+    stateCaches: stateFacts.filter((f) => f.family === 'state-cache'),
     lifecycle: deep.lifecycle,
     schedules: deep.schedules,
-    flows: deep.flows,
+    recurring,
+    securityRules,
+    securityWarnings,
+    tenantSources: tenantFacts,
+    ...(tenantFacts.length ? {} : { tenantSourcesNote: 'no tenant source found within depth 2 (no ThreadLocal/request-attribute store reached from doFilter/preHandle)' }),
+    flows,
     externals: {
       sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])),
       config: configKeys,
     },
   };
+  // Tests that check resolution against hand-verified calls need the model; facts alone cannot show a receiver type.
+  if (withModel) Object.defineProperty(factsOut, 'model', { value: model, enumerable: false });
+  return factsOut;
 }
 
 // Compact digest the writer reads first; facts.json keeps the details for targeted lookup.
@@ -860,6 +928,24 @@ export function summarize(f) {
   // Every list is capped so the digest stays the same size on a 300k-line app; the rest stays in facts.json.
   const cap = (list, n, where) =>
     list.length > n ? [...list.slice(0, n), `- +${list.length - n} more in facts.json (${where})`] : list;
+  // A digest line is read, not parsed: long flow and seam lines are cut with a marker and the rest stays in facts.json,
+  // so the digest keeps its size on a 5,000-file app.
+  // Transaction lines are lists of steps: cut only between steps, never inside one.
+  const ellSteps = (list, n = 300) =>
+    list.map((l) => {
+      if (l.length <= n) return l;
+      const cut = l.slice(0, n - 1);
+      const at = cut.lastIndexOf('; ');
+      return at > n * 0.5 ? `${cut.slice(0, at + 1)}…` : l;
+    });
+  const ell = (list, n = 220) =>
+    list.map((l) => {
+      if (l.length <= n) return l;
+      // Cut at a boundary: a line that ends inside `RestTemplate.postForEntity(` reads like a different call.
+      const cut = l.slice(0, n - 1);
+      const at = Math.max(cut.lastIndexOf('; '), cut.lastIndexOf(' '));
+      return `${cut.slice(0, at > n * 0.6 ? at : cut.length)}…`;
+    });
   const push = (lines) => L.push(...lines);
   const prefix = (list) => {
     if (!list.length) return '';
@@ -903,6 +989,39 @@ export function summarize(f) {
     `# facts for ${path.basename(f.root)} (scanned ${f.scannedAt})`,
     "Paths are relative to the project root. Details: facts.json (search it, don't read it whole).",
   );
+  if (f.coverage?.line) L.push(`**Coverage:** ${f.coverage.line}`);
+  // The blind spots by name: a writer checks the code behind anything listed here before claiming it (rule P4a).
+  if (f.coverage) {
+    const c = f.coverage;
+    const blind = [];
+    if (c.unknownAnnotations?.length) {
+      const top = c.unknownAnnotations.slice(0, 6).map((u) => `${u.name}×${u.count} (${ab(u.samples[0])})`);
+      blind.push(
+        `- unknown annotations: ${top.join('; ')}${c.unknownAnnotations.length > 6 ? `; +${c.unknownAnnotations.length - 6} more in facts.json` : ''}`,
+      );
+    }
+    if (c.unknownBaseClasses?.length) {
+      blind.push(
+        `- base classes no catalog explains: ${c.unknownBaseClasses.slice(0, 8).map((b) => `${b.name}×${b.count}`).join(', ')}${c.unknownBaseClasses.length > 8 ? `, +${c.unknownBaseClasses.length - 8}` : ''}`,
+      );
+    }
+    if (c.uncataloguedDependencies?.length) {
+      blind.push(
+        `- uncatalogued dependencies (by files importing them): ${c.uncataloguedDependencies.slice(0, 10).map((d) => `${d.coordinate} ${d.files}`).join(', ')}${c.uncataloguedDependenciesTotal > Math.min(10, c.uncataloguedDependencies.length) ? `, +${c.uncataloguedDependenciesTotal - Math.min(10, c.uncataloguedDependencies.length)} more in facts.json` : ''}`,
+      );
+    }
+    const langs = Object.entries(c.unparsedLanguages ?? {}).filter(([, n]) => n > 0);
+    if (langs.length) blind.push(`- source files the model cannot read: ${langs.map(([k, n]) => `${k} ${n}`).join(', ')}`);
+    if (c.generatedSources?.length)
+      blind.push(
+        `- generated code (not hand-written): ${c.generatedSources.map((g) => `${g.file}: ${g.plugin}${g.packages.length ? ` -> ${g.packages.slice(0, 2).join(', ')}` : ''}`).join('; ')}`,
+      );
+    if (c.degradedFiles?.length) blind.push(`- files that failed to parse: ${c.degradedFiles.length}`);
+    if (blind.length) {
+      sec('What the engine did not understand');
+      push(blind);
+    }
+  }
   if (J.length > 8) L.push('**J/ = @@J@@**');
   if (I) L.push('**~/ = @@I@@** (inside each module: "mod/~/x" means "mod/@@I@@x")');
   if (F.length > 8) L.push('**F/ = @@F@@**');
@@ -917,7 +1036,13 @@ export function summarize(f) {
   push(
     cap(
       f.build.map(
-        (b) => `- ${b.file}: ${b.deps.slice(0, 20).join(', ')}${b.deps.length > 20 ? `, +${b.deps.length - 20}` : ''}`,
+        (b) =>
+          `- ${b.file}: ${(b.deps ?? [])
+            .slice(0, 20)
+            .map((d) => `${d.group}:${d.artifact}`)
+            .join(', ')}${(b.deps ?? []).length > 20 ? `, +${b.deps.length - 20}` : ''}${
+            b.plugins?.length ? ` (plugins: ${b.plugins.map((p) => p.id).join(', ')})` : ''
+          }`,
       ),
       8,
       'build',
@@ -954,23 +1079,13 @@ export function summarize(f) {
       'packages',
     ),
   );
-  sec(
-    `Entity funnel (${f.entities.count} entities; score = relIn·3 + log refs·4 + controllers + log frontend/views·3 + status·2)`,
-  );
-  f.entities.funnel
-    .slice(0, 20)
-    .forEach((e, i) =>
-      L.push(
-        `${i + 1}. ${e.name} ${e.score} · ${e.file}:${e.line}${e.table ? ' table ' + e.table : ''} · relIn ${e.relIn}, refs ${e.refs}, ctrl ${e.controllers}, svc ${e.services}, fe ${e.frontendFiles}, views ${e.viewFiles}${e.status ? ', status' : ''}${e.flags.length ? ' · ' + e.flags.join(' ') : ''}${e.relations.length ? '\n   rel: ' + e.relations.slice(0, 8).join('; ') + (e.relations.length > 8 ? `; +${e.relations.length - 8} more in facts.json` : '') : ''}`,
-      ),
-    );
-  if (f.entities.funnel.length > 20)
+  sec(`Entities (${f.entities.model.length}; from the model: table, relations, keys)`);
+  for (const e of [...f.entities.model].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15))
     L.push(
-      `rest: ${f.entities.funnel
-        .slice(20)
-        .map((e) => `${e.name}(${e.score}${e.flags.length ? ' ' + e.flags.join(' ') : ''})`)
-        .join(', ')}`,
+      `- ${e.name} table ${e.table} · ${e.relations.length} relation(s)${e.relations.length ? ': ' + e.relations.slice(0, 6).join('; ') : ''} · keys ${e.keys.slice(0, 8).join(', ')}${e.unique?.length ? ` · unique ${e.unique.join(', ')}` : ''}`,
     );
+  if (f.entities.model.length > 15) L.push(`- +${f.entities.model.length - 15} more in facts.json`);
+
   sec('Enums');
   push(
     cap(
@@ -1023,15 +1138,44 @@ export function summarize(f) {
     );
   }
   sec('Request machinery');
+
   push(
     cap(
-      f.runtime.security.map((s) => `- security ${s.file}:${s.line} ${s.text}`),
-      40,
-      'runtime.security',
+      f.securityRules.map(
+        (r) => `- ${r.pattern}: ${r.access === 'anonymous' ? 'anonymous allowed' : r.access} (${r.source} ${r.chain} ${r.evidence[0]})`,
+      ),
+      20,
+      'securityRules',
+    ),
+  );
+  if (f.securityWarnings.length) {
+    sec('Security warnings, computed (a prefix allows anonymous access and exposes writes with no method-level check)');
+    const byRule = new Map();
+    for (const w of f.securityWarnings) {
+      if (!byRule.has(w.rule)) byRule.set(w.rule, []);
+      byRule.get(w.rule).push(w);
+    }
+    push(
+      cap(
+        [...byRule.entries()].map(([rule, list]) => {
+          const example = list[0];
+          return `- ${rule.split(' is ')[0]} allows anonymous writes: ${list.length} endpoint(s), e.g. ${example.verb} ${example.path} (${example.handler}) — no @PreAuthorize/@Secured/@RolesAllowed`;
+        }),
+        12,
+        'securityWarnings',
+      ),
+    );
+  }
+  push(
+    cap(
+      f.tenantSources.length
+        ? f.tenantSources.map((t) => `- tenant from ${t.kind} ${t.name} (${t.method} ${t.evidence[0]})`)
+        : [`- ${f.tenantSourcesNote}`],
+      8,
+      'tenantSources',
     ),
   );
   L.push(
-    `- method security annotations: ${f.runtime.methodSecurity.map((m) => `${m.file} ×${m.n}`).join(', ') || 'none'}`,
   );
   push(
     cap(
@@ -1051,6 +1195,56 @@ export function summarize(f) {
     L.push(`- @ExceptionHandler in ${f.runtime.exceptionHandlers.length} files (list in facts.json)`);
   for (const b of f.runtime.baseClasses) L.push(`- base class ${b.base}: ${b.subclasses} subclasses`);
   for (const s of f.runtime.sessionState.slice(0, 20)) L.push(`- session ${s.file}:${s.line} ${s.text}`);
+  // Tenancy (§5.4): the key decided by counts, its coverage, the reads that skip it, and code without a request.
+  sec('Tenancy (the key is inferred from counts, never from the name)');
+  if (f.tenancy.key) {
+    const t = f.tenancy;
+    L.push(
+      `- key ${t.key}: ${t.counts.entities} of ${t.counts.of} entities (${t.counts.percent}%), ` +
+        `${t.counts.filteredMethods} of ${t.counts.repoMethods} repository reads filter by it (${t.counts.filteredPercent}%) — inferred`,
+    );
+    const src = t.sources.slice(0, 3).map((s) => `${s.kind} ${s.name} (${s.method})`);
+    if (src.length) L.push(`- the request carries it: ${src.join(', ')}`);
+    L.push(`- with the key: ${t.coverage.withKey.slice(0, 10).join(', ')}${t.coverage.withKey.length > 10 ? ` +${t.coverage.withKey.length - 10}` : ''}`);
+    const no = t.coverage.withoutKey.filter((n) => /Monitor|Alert|Group|Dashboard|Metric|Collect|Job|Task|Agent/.test(n));
+    if (no.length)
+      L.push(
+        `- without it: ${no.slice(0, 10).join(', ')}${no.length > 10 ? ` +${no.length - 10}` : ''} — reads of these are not scoped by ${t.key}`,
+      );
+    if (t.globalLookups?.length)
+      L.push(
+        `- global lookups by unique key (not unscoped): ${t.globalLookups.length}, e.g. ${t.globalLookups
+          .slice(0, 4)
+          .map((g) => `${g.repo}#${g.method} (${g.uniqueField})`)
+          .join('; ')}`,
+      );
+    if (t.unscopedByRepo.length)
+      L.push(
+        `- unscoped reads, by repository: ${t.unscopedByRepo
+          .slice(0, 8)
+          .map((r) => {
+            const first = t.unscoped.find((u) => u.repo === r.repo);
+            return `${r.repo} ×${r.n} (e.g. ${first.query})`;
+          })
+          .join('; ')}${t.unscopedByRepo.length > 8 ? `; +${t.unscopedByRepo.length - 8} repositories in facts.json` : ''}`,
+      );
+  } else {
+    const near = f.tenancy.candidates.slice(0, 3).map((c) => `${c.key} ${c.counts.entities}/${c.counts.of}`);
+    L.push(`- no tenant key: no identifier field reaches 3 entities and 10% with a request source (closest: ${near.join(', ') || 'none'})`);
+  }
+  for (const p of f.noRequestPaths.slice(0, 8))
+    L.push(`- ${p.kind} ${p.method} reaches ${p.reaches}; tenant context ${p.setsContext ? 'set' : 'NOT set'}`);
+  if (f.noRequestPaths.length > 8) L.push(`- +${f.noRequestPaths.length - 8} more no-request paths in facts.json`);
+
+  sec('Security model (prefixes, user sources, tenant; copy into "How security works")');
+  for (const p of (f.securityModel?.prefixes ?? []).slice(0, 14))
+    L.push(`- ${p.prefix}: ${p.access} — ${p.endpoints} endpoint(s)${p.checked ? `, ${p.checked} use ${p.checks[0]}` : ''} (e.g. ${p.example})`);
+  if ((f.securityModel?.prefixes ?? []).length > 14) L.push(`- +${f.securityModel.prefixes.length - 14} more prefixes in facts.json`);
+  if (f.securityModel?.userSources.length)
+    L.push(`- the user comes from: ${f.securityModel.userSources.map((u) => `${u.kind} (${u.cites[0]})`).join('; ')}`);
+  if (f.securityModel?.tenant) L.push(`- the tenant is ${f.securityModel.tenant.key} (linked in the Tenancy section)`);
+  for (const d of (f.securityModel?.developerRule ?? []).slice(0, 6)) L.push(`- ${d.text}`);
+
   sec('Boot, computed (copy into the map; open files only if a line looks wrong)');
   for (const l of f.boot.computed) L.push(`- ${l}`);
   sec('Boot details (entry points, profile switches)');
@@ -1073,18 +1267,24 @@ export function summarize(f) {
           .map(([k, v]) => `${k}=${v}`)
           .join('; ')}`,
       );
-  // Shortlisted entities only, files without line lists: the full write sites stay in facts.json (state.writes).
-  sec('State (which files write each shortlisted entity; copies)');
-  const top = new Set(f.entities.funnel.slice(0, 15).map((e) => e.name));
-  for (const [e, byFile] of Object.entries(f.state.writes)
-    .filter(([e]) => top.has(e))
-    .sort((a, b) => b[1].length - a[1].length)) {
-    const files = byFile.map((x) => {
-      const [p, l] = x.split(/:(?=[\d,]+$)/);
-      return `${p}:${l.split(',')[0]}${l.includes(',') ? ` (+${l.split(',').length - 1})` : ''}`;
-    });
+  // Shortlisted entities only: the full write sites stay in facts.json (stateWrites).
+  sec('State (which methods write each shortlisted entity; caches)');
+  const top = new Set(
+    [...f.entities.model].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15).map((e) => e.name),
+  );
+  const byEntity = new Map();
+  for (const w of f.stateWrites) {
+    const short = (w.entity ?? 'no entity').split('.').pop();
+    if (!top.has(short)) continue;
+    const cite = (w.evidence?.[0] ?? '').replace(/#.*$/, '');
+    if (!byEntity.has(short)) byEntity.set(short, new Map());
+    const files = byEntity.get(short);
+    files.set(cite, (files.get(cite) ?? 0) + 1);
+  }
+  for (const [e, sites] of [...byEntity.entries()].sort((a, b) => b[1].size - a[1].size)) {
+    const files = [...sites.entries()].map(([f, n]) => `${f}${n > 1 ? ` (+${n - 1})` : ''}`);
     L.push(
-      `- ${e} written from ${byFile.length} file(s): ${files.slice(0, 8).join(' ; ')}${files.length > 8 ? ` ; +${files.length - 8} more in facts.json` : ''}`,
+      `- ${e} written from ${sites.size} site(s): ${files.slice(0, 8).join(' ; ')}${files.length > 8 ? ` ; +${files.length - 8} more in facts.json` : ''}`,
     );
   }
   const mod = {};
@@ -1093,30 +1293,78 @@ export function summarize(f) {
     L.push(
       `- ${e}: ${ls.length} @Modifying quer${ls.length > 1 ? 'ies' : 'y'} in ${f.state.modifying.find((m) => m.entity === e).file}:${ls.join(',')}`,
     );
-  for (const c of f.state.caches.slice(0, 25)) L.push(`- copy/cache ${c.file}:${c.line} ${c.text}`);
-  sec('Seams, computed (each must be listed in the map or dismissed on purpose)');
-  // Ranked: half-done outside effects on money first, then other outside effects, then the rest.
-  const seamRank = (x) =>
-    (/NO TRANSACTION/.test(x) ? 4 : /^OUTSIDE CALL IN/.test(x) ? 3 : /^JOB DELETES|^AFTER COMMIT/.test(x) ? 2 : 1) +
-    (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(x) ? 2 : 0);
-  push(
-    cap(
-      [...f.seams].sort((a, b) => seamRank(b) - seamRank(a)).map((x) => `- ${x}`),
-      30,
-      'seams',
-    ),
+  if (f.stateCaches.length)
+    L.push(
+      `- caches: ${f.stateCaches.length} cache annotation(s), e.g. ${f.stateCaches.slice(0, 5).map((c) => `${c.action} ${c.method}`).join(', ')}`,
+    );
+  sec('Transaction boundaries, computed (each must be listed in the map or dismissed on purpose)');
+  // Ranked: half-done outside effects first, then the rest; money-related methods float up.
+  const seamRank = (t) =>
+    (t.kind === 'outside-then-save' ? 4 : t.kind === 'outside-in-transaction' ? 3 : 2) +
+    (/Stripe|[Cc]harge|[Rr]efund|[Pp]ayment|[Ii]nvoice|[Oo]rder/.test(t.method) ? 2 : 0) -
+    // A read that runs in a transaction with an outside call is a smaller seam than a write: rank it below.
+    (/^[a-z0-9]+#(?:get|list|find|read|count|exists|search)/i.test(t.method ?? '') ? 2 : 0);
+  const seamText = (t) => {
+    const at = t.evidence?.[0]?.replace(/#.*$/, '') ?? t.method;
+    const short = (t.method ?? '').split('.').pop();
+    // Lead with the nouns that matter and keep the sentence short: this line is cut at 300 characters, and the
+    // project service that made the call is the first thing a reader needs.
+    if (t.kind === 'outside-in-transaction')
+      return `OUTSIDE CALL IN TRANSACTION ${short} (${at}): ${(t.outside ?? []).join('; ')}. A rollback does not undo the outside side.`;
+    if (t.kind === 'outside-then-save')
+      return `OUTSIDE CALL THEN SAVE, NO TRANSACTION ${short} (${at}): ${(t.outside ?? []).join('; ')}; then ${(t.saves ?? []).join('; ')}.`;
+    if (t.kind === 'requires-new') return `NEW TRANSACTION ${short} (${at}): commits on its own, even if the caller rolls back.`;
+    if (t.kind === 'after-commit')
+      return `AFTER COMMIT ${short} (${at}): ${t.mechanism === 'synchronization' ? (t.runs ?? []).join(', ') || 'code' : t.mechanism} runs once the transaction commits; a failure is not rolled back.`;
+    return null;
+  };
+  const seams = f.transactions.filter((t) => t.kind !== 'transactional').sort((a, b) => seamRank(b) - seamRank(a));
+  // Group by class: a service with seven boundary methods is one line naming the class, the count, the kinds, and the
+  // strongest method as the example. Every method stays in facts.json.
+  const seamGroups = new Map();
+  for (const t of seams) {
+    const cls = (t.method ?? '').split('#')[0].split('.').pop();
+    if (!seamGroups.has(cls)) seamGroups.set(cls, []);
+    seamGroups.get(cls).push(t);
+  }
+  const seamLines = [...seamGroups.entries()].map(([cls, list]) => {
+    const kinds = [...new Set(list.map((t) => t.kind))];
+    const best = list[0];
+    return `- ${cls} ×${list.length}${kinds.length > 1 ? ` (${kinds.join(', ')})` : ''}: ${seamText(best)}`;
+  });
+  push(cap(ellSteps(seamLines, 300), 12, 'transactions'));
+  const txTotal = f.transactionCounts.reduce((n, x) => n + x.count, 0);
+  L.push(
+    `- ${txTotal} transactional method(s) in ${f.transactionCounts.length} class(es); ${f.outsideCalls.length} outside call(s) across ${new Set(f.outsideCalls.map((c) => c.method)).size} method(s)`,
   );
-  if (!f.seams.length) L.push('- none found');
+  if (f.transactionCounts.length)
+    L.push(
+      `- most transactional classes: ${f.transactionCounts
+        .slice(0, 5)
+        .map((x) => `${x.type.split('.').pop()} ${x.count}`)
+        .join(', ')}${f.transactionCounts.length > 5 ? `, +${f.transactionCounts.length - 5} more in facts.json` : ''}`,
+    );
+  if (!seams.length) L.push('- no transaction seam found');
   sec(
-    'Flow skeletons, computed (entry point → what happens, in order; start stories here and open only the methods you need)',
+    'Flows, computed and ranked (entry point → every effect it reaches; the bracket is the rank, the parentheses are its parts)',
   );
-  push(
-    cap(
-      f.flows.map((x) => `- ${x}`),
-      12,
-      'flows',
-    ),
-  );
+  // Flows grouped by entry class, like the seams: the class, its count, the best flow in full. The effects (and so any
+  // outside call's name) come before the steps, because the line is cut and a trimmed tail must not hide them.
+  const flowGroups = new Map();
+  for (const x of f.flows) {
+    const cls = (x.entry.cite.split('/').pop() ?? '').split(':')[0];
+    if (!flowGroups.has(cls)) flowGroups.set(cls, []);
+    flowGroups.get(cls).push(x);
+  }
+  const flowLines = [...flowGroups.entries()].map(([cls, list]) => {
+    const x = list[0];
+    const head = x.entry.verb ? `${x.entry.verb} ${x.entry.path}` : x.entry.kind;
+    const parts = x.why.map((w) => w.replace(/\s*\([^)]*\)/, '')).join(', ');
+    const effects = [...new Set(x.effects.map((e) => e.label))].join(', ');
+    // Effects before the parts: the line is cut, and an outside call's name must survive the cut.
+    return `- ${cls} ×${list.length}${list.length > 1 ? ` (best ${x.score})` : ''}: [${x.score}] ${head} ${x.entry.cite} effects: ${effects || 'none'} (${parts}) | ${x.steps.join('; ')}`;
+  });
+  push(cap(ell(flowLines, 340), 12, 'flows'));
   sec('Lifecycles, computed (every place each status is set; cite these instead of searching)');
   push(
     cap(
@@ -1131,6 +1379,14 @@ export function summarize(f) {
       f.schedules.map((x) => `- ${x}`),
       30,
       'schedules',
+    ),
+  );
+  sec('Recurring work that is not @Scheduled (fixed rate/delay submissions, wheel timers, project schedulers)');
+  push(
+    cap(
+      f.recurring.map((r) => `- ${r.mechanism} in ${r.method} (${r.evidence[0]})${r.confidence === 'inferred' ? ' [shape]' : ''}`),
+      12,
+      'recurring',
     ),
   );
   sec('Runs on its own (async, listeners, sockets; scheduled jobs are listed above)');
@@ -1159,6 +1415,7 @@ export function summarize(f) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  retuneHeap();
   const root = path.resolve(process.argv[2] ?? '.');
   const out = path.resolve(process.argv[3] ?? path.join(root, 'mindmodel', '.work', 'facts.json'));
   const facts = scan(root);
@@ -1167,6 +1424,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   fs.writeFileSync(out.replace(/\.json$/, '.md'), summarize(facts));
   const f = facts;
   console.log(
-    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.runtime.security.length} security lines, ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
+    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.securityRules.length} security rules, ${f.recurring.length} recurring job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
   );
 }

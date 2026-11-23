@@ -1,0 +1,94 @@
+{
+  "id": "spring-tx",
+  "version": 1,
+  "when": {
+    "deps": [
+      "org.springframework:spring-tx",
+      "org.springframework.boot:spring-boot-starter-data-jpa"
+    ],
+    "imports": [
+      "org.springframework.transaction.annotation.",
+      "org.springframework.transaction.event."
+    ]
+  },
+  "annotations": [
+    {
+      "fqns": [
+        "org.springframework.transaction.annotation.Transactional"
+      ],
+      "means": "transactional",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.transaction.annotation.Propagation"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.transaction.annotation.Isolation"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.transaction.annotation.EnableTransactionManagement"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.transaction.event.TransactionalEventListener"
+      ],
+      "means": "after-commit",
+      "on": [
+        "method"
+      ]
+    },
+    {
+      "fqns": [
+        "org.springframework.transaction.event.TransactionPhase"
+      ],
+      "means": "ignore",
+      "on": [
+        "type",
+        "method",
+        "field",
+        "parameter"
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "type": "org.springframework.transaction.support.TransactionSynchronizationManager",
+      "methods": [
+        "registerSynchronization"
+      ],
+      "means": "after-commit"
+    }
+  ]
+}

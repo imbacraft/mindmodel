@@ -1,0 +1,1057 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "mindmodel facts",
+ "description": "The scanner's output. Version 2: endpoints carry the provenance envelope. Families not yet ported (entities, state, runtime, background, boot, seams, lifecycle, schedules, flows, externals, frontend, views, docs, packages, build, git, inventory) are permissive here on purpose; each is ported by the slice named in its description and becomes strict then.",
+ "type": "object",
+ "required": [
+  "version",
+  "root",
+  "scannedAt",
+  "entities",
+  "endpoints",
+  "coverage"
+ ],
+ "additionalProperties": true,
+ "properties": {
+  "version": {
+   "const": 2
+  },
+  "root": {
+   "type": "string"
+  },
+  "scannedAt": {
+   "type": "string"
+  },
+  "endpoints": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/endpoint"
+   }
+  },
+  "coverage": {
+   "$ref": "#/$defs/coverage"
+  },
+  "entities": {
+   "type": "object",
+   "description": "Ported in slice 3: the annotation count, the funnel, the enums, and the model's entities with table, relations and inherited fields.",
+   "additionalProperties": true
+  },
+  "state": {
+   "type": "object",
+   "description": "Ported in slice 2 (resolution, transactions, outside calls, state)."
+  },
+  "runtime": {
+   "type": "object",
+   "description": "Ported in slice 2 (interceptors) and slice 4 (security)."
+  },
+  "background": {
+   "type": "object",
+   "description": "Ported in slice 6 (background, lifecycles, boot, flows)."
+  },
+  "boot": {
+   "type": "object",
+   "description": "Ported in slice 6."
+  },
+  "seams": {
+   "type": "array",
+   "description": "Ported in slice 2 (outside calls)."
+  },
+  "lifecycle": {
+   "type": "array",
+   "description": "Ported in slice 6."
+  },
+  "schedules": {
+   "type": "array",
+   "description": "Ported in slice 6."
+  },
+  "flows": {
+   "type": "array",
+   "description": "Slice 2 (revised): ranked flows. An entry point, the hops that lead to at least one effect, every effect, and the score with its parts.",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "entry",
+     "steps",
+     "effects",
+     "score",
+     "why",
+     "evidence"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "kind",
+       "method",
+       "cite"
+      ],
+      "properties": {
+       "kind": {
+        "type": "string",
+        "enum": [
+         "endpoint",
+         "job",
+         "listener",
+         "ui-action",
+         "worker"
+        ]
+       },
+       "verb": {},
+       "path": {},
+       "method": {
+        "type": "string"
+       },
+       "cite": {
+        "type": "string"
+       }
+      }
+     },
+     "steps": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "effects": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/flowEffect"
+      }
+     },
+     "score": {
+      "type": "number"
+     },
+     "why": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "confidence": {
+      "type": "string",
+      "enum": [
+       "parsed",
+       "resolved",
+       "inferred",
+       "unresolved"
+      ]
+     },
+     "evidence": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "file": {
+      "type": "string"
+     },
+     "path": {}
+    }
+   }
+  },
+  "externals": {
+   "type": "object",
+   "description": "Ported in slice 1 (the build reader) and slice 2."
+  },
+  "frontend": {
+   "type": "object",
+   "description": "Ported in slice 10 (frontend grammar); regexes until then."
+  },
+  "views": {
+   "type": "object",
+   "description": "Ported in slice 6."
+  },
+  "tenancy": {
+   "type": "object",
+   "description": "\u00a75.4: the key (inferred from counts, never from the name), its coverage, repository reads that skip it, and the request sources.",
+   "additionalProperties": true
+  },
+  "inventory": {
+   "type": "object",
+   "description": "Stays in the scanner: file counts and sizes."
+  },
+  "docs": {
+   "type": "array",
+   "description": "Stays in the scanner."
+  },
+  "packages": {
+   "type": "array",
+   "description": "Stays in the scanner."
+  },
+  "build": {
+   "type": "array",
+   "description": "Replaced by evidence/build.mjs in slice 1."
+  },
+  "git": {
+   "type": "object",
+   "description": "Stays in the scanner (activity.mjs)."
+  },
+  "transactions": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/transaction"
+   },
+   "description": "Slice 2: the transaction boundaries that leak (requires-new, after-commit, outside-in-transaction, outside-then-save). Plain transactional methods are a count per class (transactionCounts), not facts."
+  },
+  "outsideCalls": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/outsideCall"
+   },
+   "description": "Slice 2: calls to outside clients (HTTP, mail, messaging)."
+  },
+  "stateWrites": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/stateWrite"
+   },
+   "description": "Slice 2: repository mutations, with the entity they touch."
+  },
+  "stateCaches": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/stateCache"
+   },
+   "description": "Slice 2: cache annotations on methods."
+  },
+  "transactionCounts": {
+   "type": "array",
+   "description": "Slice 2: transactional method count per class (the plain kind is not a fact).",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "type",
+     "count"
+    ],
+    "properties": {
+     "type": {
+      "type": "string"
+     },
+     "count": {
+      "type": "integer",
+      "minimum": 1
+     }
+    }
+   }
+  },
+  "recurring": {
+   "type": "array",
+   "description": "Slice 5 (revised): recurring work that is not @Scheduled (fixed rate/delay, wheel timers).",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "kind",
+     "mechanism",
+     "method",
+     "line",
+     "evidence"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "family": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "recurring"
+      ]
+     },
+     "mechanism": {
+      "type": "string"
+     },
+     "recv": {},
+     "method": {
+      "type": "string"
+     },
+     "line": {
+      "type": "integer"
+     },
+     "evidence": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "why": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  "securityRules": {
+   "type": "array",
+   "description": "Security as facts: one rule per path prefix, with what it allows (anonymous, authenticated, role).",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "pattern",
+     "access",
+     "source",
+     "evidence"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "family": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string",
+      "enum": [
+       "spring-security",
+       "sureness"
+      ]
+     },
+     "scope": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "pattern": {
+      "type": "string"
+     },
+     "access": {
+      "type": "string"
+     },
+     "chain": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "why": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "verbs": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "HTTP methods the matcher names; ['*'] when the rule applies to every method"
+     },
+     "condition": {
+      "type": "string",
+      "description": "@ConditionalOnProperty/@Profile the chain is gated by"
+     }
+    }
+   }
+  },
+  "securityWarnings": {
+   "type": "array",
+   "description": "Computed: an anonymous prefix exposes write endpoints with no method-level check.",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "kind",
+     "path",
+     "verb",
+     "rule",
+     "evidence"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "family": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "anonymous-write"
+      ]
+     },
+     "path": {
+      "type": "string"
+     },
+     "verb": {
+      "type": "string"
+     },
+     "handler": {},
+     "rule": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "why": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  },
+  "tenantSources": {
+   "type": "array",
+   "description": "Where the tenant comes from: a request header or a token claim.",
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "kind",
+     "name",
+     "method",
+     "evidence"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "family": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "header",
+       "token"
+      ]
+     },
+     "name": {
+      "type": "string"
+     },
+     "method": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "why": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "storedBy": {
+      "type": "string",
+      "enum": [
+       "thread-local",
+       "request-attribute",
+       "request-context",
+       "request-scope-bean",
+       "store"
+      ],
+      "description": "what kind of holder the tenant value is stored into"
+     }
+    }
+   }
+  },
+  "noRequestPaths": {
+   "type": "array",
+   "description": "Jobs, listeners, async methods and webhooks that reach a repository of a keyed entity, and whether the path sets the tenant context first.",
+   "items": {
+    "type": "object",
+    "additionalProperties": true
+   }
+  }
+ },
+ "$defs": {
+  "endpoint": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "family",
+    "confidence",
+    "evidence",
+    "why",
+    "verb",
+    "path",
+    "handler",
+    "handlerFqn",
+    "file",
+    "line",
+    "rest"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "pattern": "^endpoint:"
+    },
+    "family": {
+     "const": "endpoint"
+    },
+    "confidence": {
+     "enum": [
+      "resolved",
+      "inferred",
+      "unresolved"
+     ]
+    },
+    "evidence": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "type": "string"
+     }
+    },
+    "why": {
+     "type": "array",
+     "minItems": 1,
+     "items": {
+      "type": "string"
+     }
+    },
+    "verb": {
+     "enum": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "HEAD",
+      "OPTIONS",
+      "ANY",
+      "STOMP"
+     ]
+    },
+    "path": {
+     "type": "string",
+     "pattern": "^/"
+    },
+    "handler": {
+     "type": "string"
+    },
+    "handlerFqn": {
+     "type": "string"
+    },
+    "file": {
+     "type": "string"
+    },
+    "line": {
+     "type": "integer"
+    },
+    "rest": {
+     "type": "boolean"
+    }
+   }
+  },
+  "coverage": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "rates",
+    "unknownAnnotations",
+    "unknownBaseClasses",
+    "uncataloguedDependencies",
+    "uncataloguedDependenciesTotal",
+    "unparsedLanguages",
+    "generatedSources",
+    "degradedFiles",
+    "line"
+   ],
+   "properties": {
+    "rates": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/rate"
+     }
+    },
+    "unknownAnnotations": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/unknownAnnotation"
+     }
+    },
+    "degradedFiles": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "line": {
+     "type": "string"
+    },
+    "unknownBaseClasses": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/unknownBaseClass"
+     }
+    },
+    "uncataloguedDependencies": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/uncataloguedDependency"
+     }
+    },
+    "uncataloguedDependenciesTotal": {
+     "type": "integer"
+    },
+    "unparsedLanguages": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "kotlin",
+      "groovy",
+      "scala"
+     ],
+     "properties": {
+      "kotlin": {
+       "type": "integer"
+      },
+      "groovy": {
+       "type": "integer"
+      },
+      "scala": {
+       "type": "integer"
+      }
+     }
+    },
+    "generatedSources": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/generatedSource"
+     }
+    }
+   }
+  },
+  "rate": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "numerator",
+    "denominator",
+    "percent"
+   ],
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "numerator": {
+     "type": "integer"
+    },
+    "denominator": {
+     "type": "integer"
+    },
+    "percent": {
+     "type": "integer"
+    }
+   }
+  },
+  "unknownAnnotation": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "name",
+    "count",
+    "types",
+    "samples"
+   ],
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "count": {
+     "type": "integer"
+    },
+    "samples": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "types": {
+     "type": "integer"
+    }
+   }
+  },
+  "unknownBaseClass": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "name",
+    "count",
+    "samples"
+   ],
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "count": {
+     "type": "integer"
+    },
+    "samples": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "uncataloguedDependency": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "coordinate",
+    "files"
+   ],
+   "properties": {
+    "coordinate": {
+     "type": "string"
+    },
+    "files": {
+     "type": "integer"
+    },
+    "scope": {
+     "type": "string"
+    }
+   }
+  },
+  "generatedSource": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "file",
+    "plugin",
+    "packages"
+   ],
+   "properties": {
+    "file": {
+     "type": "string"
+    },
+    "plugin": {
+     "type": "string"
+    },
+    "packages": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "transaction": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "family",
+    "confidence",
+    "evidence",
+    "why",
+    "kind",
+    "method"
+   ],
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "family": {
+     "const": "transaction"
+    },
+    "confidence": {
+     "enum": [
+      "parsed",
+      "resolved",
+      "inferred",
+      "unresolved"
+     ]
+    },
+    "evidence": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "why": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "kind": {
+     "enum": [
+      "transactional",
+      "requires-new",
+      "after-commit",
+      "outside-in-transaction",
+      "outside-then-save"
+     ]
+    },
+    "mechanism": {
+     "enum": [
+      "annotation",
+      "observer",
+      "synchronization"
+     ]
+    },
+    "method": {
+     "type": "string"
+    },
+    "outside": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "saves": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "runs": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "outsideCall": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "family",
+    "confidence",
+    "evidence",
+    "why",
+    "kind",
+    "client",
+    "method",
+    "target"
+   ],
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "family": {
+     "const": "outside-call"
+    },
+    "confidence": {
+     "enum": [
+      "parsed",
+      "resolved",
+      "inferred",
+      "unresolved"
+     ]
+    },
+    "evidence": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "why": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "kind": {
+     "enum": [
+      "HTTP",
+      "mail",
+      "Kafka",
+      "RabbitMQ",
+      "JMS",
+      "SQS",
+      "Stripe",
+      "outside"
+     ]
+    },
+    "client": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "target": {
+     "type": "string"
+    },
+    "line": {
+     "type": "integer"
+    }
+   }
+  },
+  "stateWrite": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "family",
+    "confidence",
+    "evidence",
+    "why",
+    "repository",
+    "operation",
+    "method"
+   ],
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "family": {
+     "const": "state-write"
+    },
+    "confidence": {
+     "enum": [
+      "parsed",
+      "resolved",
+      "inferred",
+      "unresolved"
+     ]
+    },
+    "evidence": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "why": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "entity": {
+     "type": "string"
+    },
+    "repository": {
+     "type": "string"
+    },
+    "operation": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "line": {
+     "type": "integer"
+    }
+   }
+  },
+  "stateCache": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "family",
+    "confidence",
+    "evidence",
+    "why",
+    "action",
+    "method"
+   ],
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "family": {
+     "const": "state-cache"
+    },
+    "confidence": {
+     "enum": [
+      "parsed",
+      "resolved",
+      "inferred",
+      "unresolved"
+     ]
+    },
+    "evidence": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "why": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "action": {
+     "enum": [
+      "read",
+      "write",
+      "evict"
+     ]
+    },
+    "method": {
+     "type": "string"
+    }
+   }
+  },
+  "flowEffect": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "kind",
+    "label",
+    "site"
+   ],
+   "properties": {
+    "kind": {
+     "type": "string",
+     "enum": [
+      "entity",
+      "outside",
+      "message"
+     ]
+    },
+    "label": {
+     "type": "string"
+    },
+    "key": {
+     "type": "string"
+    },
+    "entity": {
+     "type": "string"
+    },
+    "site": {
+     "type": "string"
+    },
+    "cite": {}
+   }
+  }
+ }
+}
