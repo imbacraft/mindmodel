@@ -90,12 +90,11 @@
   "recv": "routeSpecification",
   "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification",
   "recvHow": "param",
-  "how": "ambiguous",
+  "how": "direct",
   "targets": [
-   "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification#isSatisfiedBy(Itinerary)",
-   "org.eclipse.cargotracker.domain.shared.AbstractSpecification#isSatisfiedBy(T)"
+   "org.eclipse.cargotracker.domain.model.cargo.RouteSpecification#isSatisfiedBy(Itinerary)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/interfaces/CoordinatesFactory.java",
@@ -103,14 +102,12 @@
   "call": "find",
   "recv": null,
   "recvFqn": "org.eclipse.cargotracker.interfaces.CoordinatesFactory",
-  "recvHow": "direct",
-  "how": "ambiguous",
+  "recvHow": "static",
+  "how": "direct",
   "targets": [
-   "org.eclipse.cargotracker.interfaces.CoordinatesFactory#find(Location)",
-   "org.eclipse.cargotracker.interfaces.CoordinatesFactory#find(String)",
    "org.eclipse.cargotracker.interfaces.CoordinatesFactory#find(UnLocode)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/interfaces/booking/facade/dto/CargoRoute.java",
@@ -119,12 +116,11 @@
   "recv": "DateConverter",
   "recvFqn": "org.eclipse.cargotracker.application.util.DateConverter",
   "recvHow": "static",
-  "how": "ambiguous",
+  "how": "direct",
   "targets": [
-   "org.eclipse.cargotracker.application.util.DateConverter#toString(LocalDate)",
-   "org.eclipse.cargotracker.application.util.DateConverter#toString(LocalDateTime)"
+   "org.eclipse.cargotracker.application.util.DateConverter#toString(LocalDate)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
@@ -135,18 +131,20 @@
   "recvHow": "chain",
   "how": "unresolved",
   "targets": [],
-  "note": "unresolved"
+  "note": "the receiver is an enum-typed value; the call resolves to a JDK method, which a no-classpath engine cannot name"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
   "line": 328,
   "call": "sameValueAs",
   "recv": "HandlingEvent.Type.UNLOAD",
-  "recvFqn": null,
-  "recvHow": "unresolved",
-  "how": "unresolved",
-  "targets": [],
-  "note": "unresolved"
+  "recvFqn": "org.eclipse.cargotracker.domain.model.handling.HandlingEvent.Type",
+  "recvHow": "field",
+  "how": "direct",
+  "targets": [
+   "org.eclipse.cargotracker.domain.model.handling.HandlingEvent.Type#sameValueAs(Type)"
+  ],
+  "note": "the receiver is an enum constant, a static field read; the declaration resolves (checked against source)"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
@@ -157,7 +155,7 @@
   "recvHow": "field",
   "how": "unresolved",
   "targets": [],
-  "note": "unresolved"
+  "note": "the receiver is an enum-typed value; the call resolves to a JDK method, which a no-classpath engine cannot name"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",

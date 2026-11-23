@@ -90,13 +90,11 @@
   "recv": "JsonUtil",
   "recvFqn": "org.apache.hertzbeat.common.util.JsonUtil",
   "recvHow": "static",
-  "how": "ambiguous",
+  "how": "direct",
   "targets": [
-   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(InputStream,TypeReference<T>)",
-   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(String,Class<T>)",
-   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(String,TypeReference<T>)"
+   "org.apache.hertzbeat.common.util.JsonUtil#fromJson(String,Class<T>)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/ChatController.java",
@@ -105,12 +103,11 @@
   "recv": "Message",
   "recvFqn": "org.apache.hertzbeat.common.entity.dto.Message",
   "recvHow": "static",
-  "how": "ambiguous",
+  "how": "direct",
   "targets": [
-   "org.apache.hertzbeat.common.entity.dto.Message#success(String)",
    "org.apache.hertzbeat.common.entity.dto.Message#success(T)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentTraceTargetAuthorityService.java",
@@ -119,13 +116,12 @@
   "recv": "traceQueryService",
   "recvFqn": "org.apache.hertzbeat.observability.traces.service.EntityTraceQueryService",
   "recvHow": "field",
-  "how": "ambiguous",
+  "how": "impl",
   "targets": [
-   "org.apache.hertzbeat.observability.traces.service.EntityTraceQueryService#getTraceDetail(Long,String)",
    "org.apache.hertzbeat.observability.traces.service.EntityTraceQueryService#getTraceDetail(String,TraceDetailQuery)",
    "org.apache.hertzbeat.observability.traces.service.impl.EntityTraceQueryServiceImpl#getTraceDetail(String,TraceDetailQuery)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/ApprovalCommandService.java",
@@ -134,12 +130,11 @@
   "recv": "inlineCollections",
   "recvFqn": "org.apache.hertzbeat.ai.gateway.tool.monitor.AgentInlineCollectionToolService",
   "recvHow": "field",
-  "how": "ambiguous",
+  "how": "direct",
   "targets": [
-   "org.apache.hertzbeat.ai.gateway.tool.monitor.AgentInlineCollectionToolService#approvalPreview(AgentToolCall,AgentToolExecutionRequest)",
    "org.apache.hertzbeat.ai.gateway.tool.monitor.AgentInlineCollectionToolService#approvalPreview(AgentToolCall,GatewayEnvelope)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/config/McpContextHolder.java",
@@ -147,7 +142,7 @@
   "call": "get",
   "recv": "call",
   "recvFqn": null,
-  "recvHow": "unresolved",
+  "recvHow": "chain",
   "how": "unresolved",
   "targets": [],
   "note": "unresolved"
@@ -159,9 +154,11 @@
   "recv": "ChatResponseChunk",
   "recvFqn": "org.apache.hertzbeat.ai.pojo.dto.ChatResponseChunk",
   "recvHow": "static",
-  "how": "unresolved",
-  "targets": [],
-  "note": "unresolved"
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.pojo.dto.ChatResponseChunk#builder()"
+  ],
+  "note": "@Builder generates builder(); the dump synthesises it and the call resolves"
  },
  {
   "file": "hertzbeat-ai/src/main/java/org/apache/hertzbeat/ai/controller/SopController.java",
@@ -169,7 +166,7 @@
   "call": "build",
   "recv": "call",
   "recvFqn": null,
-  "recvHow": "unresolved",
+  "recvHow": "chain",
   "how": "unresolved",
   "targets": [],
   "note": "unresolved"
@@ -179,13 +176,11 @@
   "line": 164,
   "call": "alertIds",
   "recv": "call",
-  "recvFqn": "org.apache.hertzbeat.ai.gateway.contract.AgentIncidentScope",
+  "recvFqn": null,
   "recvHow": "chain",
-  "how": "direct",
-  "targets": [
-   "org.apache.hertzbeat.ai.gateway.contract.AgentIncidentScope#alertIds()"
-  ],
-  "note": "chain"
+  "how": "unresolved",
+  "targets": [],
+  "note": "target.getIncident() is a library call: without a classpath the chain has no receiver, so the site stays unresolved (documented gap)"
  },
  {
   "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentLogTargetCanonicalizationAdapter.java",

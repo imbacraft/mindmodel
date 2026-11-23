@@ -30,3 +30,6 @@ test/snapshots/
 # Private corpus apps live in *.local.json and local/ folders; the loaders merge them in.
 *.local.json
 test/**/local/
+
+# --- Java engine build output -------------------------------------------------------
+engine-java/target/

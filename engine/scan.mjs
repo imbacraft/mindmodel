@@ -9,10 +9,12 @@ import assert from 'node:assert';
 import { javaFacts } from './extract/lifecycle.mjs';
 import { bootFacts, deployables } from './extract/boot.mjs';
 import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
-import { index } from './syntax/java.mjs';
-import { buildModel } from './model/model.mjs';
-import { bindCalls } from './model/calls.mjs';
-import { annotationIndex, generatedRules, loadCatalogs, meanOf, selectForModel, signatureIndex, typeIndex } from './catalogs/catalog.mjs';
+import { sourceFacts } from './syntax/imports.mjs';
+import { bindingRates } from './model/calls.mjs';
+import { buildModelFromDump } from './model/from-dump-model.mjs';
+import { dumpFor } from './run.mjs';
+import { open as openDump } from './dump.mjs';
+import { annotationFqns, annotationIndex, loadCatalogs, meanOf, selectCatalogs, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
 import { channelFacts } from './extract/channels.mjs';
@@ -137,108 +139,6 @@ const observerType = (param) =>
     ? 'application start'
     : param.type;
 
-// What a declaration says, read from the syntax tree; no line windows, no guessing which method an annotation means.
-export function parseJava(text, ix = index(text)) {
-  const lines = text.split('\n');
-  const type = ix.types[0] ?? null;
-  const ann = type?.ann ?? [];
-  const has = (name) => ann.some((a) => a.name === name);
-  const argsOf = (name) => ann.find((a) => a.name === name)?.args ?? '';
-  const r = {
-    name: type?.name,
-    kind: type?.kind,
-    extends: type?.extends,
-    implements: type?.implements,
-    classLine: type?.nameLine ?? null,
-    constants: type?.constants ?? [],
-    annotations: TYPE_ANNOTATIONS.filter(has),
-  };
-  const table = /name\s*=\s*"([^"]+)"/.exec(argsOf('Table'));
-  if (table) r.table = table[1];
-  r.fields = [];
-  r.scheduled = [];
-  r.views = [];
-
-  for (const method of ix.methods) {
-    for (const a of method.ann)
-      if (JOB.test(a.name))
-        r.scheduled.push({
-          kind: a.name,
-          args: (a.args ? `(${a.args})` : '').trim().slice(0, 120),
-          line: a.line,
-          method: method.name,
-        });
-    // CDI observers name their event on the parameter, not on the method.
-    for (const p of method.params)
-      for (const a of p.ann)
-        if (/^(Observes|ObservesAsync)$/.test(a.name))
-          r.scheduled.push({ kind: a.name, args: observerType(p).slice(0, 120), line: a.line });
-  }
-  r.scheduled.sort((a, b) => a.line - b.line);
-
-  // A message-driven bean listens on the destination in its activation config (or mappedName).
-  if (has('MessageDriven')) {
-    const dest =
-      /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(argsOf('MessageDriven')) ??
-      /mappedName\s*=\s*"([^"]+)"/.exec(argsOf('MessageDriven'));
-    const on = ix.methods.find((m) => m.name === 'onMessage');
-    r.scheduled.push({ kind: 'MessageDriven', args: dest?.[1] ?? '', line: on?.nameLine ?? r.classLine });
-  }
-
-  // Entity fields, each with the annotations and the declared type the parser bound to it.
-  if (has('Entity') || has('Embeddable') || has('MappedSuperclass')) {
-    for (const f of ix.fields) {
-      if (f.owner !== type.name || !/\b(public|private|protected)\b/.test(f.mods ?? '')) continue;
-      const names = f.ann.map((a) => a.name);
-      const rel = names.find((n) => /^(ManyToOne|OneToMany|OneToOne|ManyToMany)$/.test(n));
-      const enumerated = names.includes('Enumerated');
-      if (
-        !rel &&
-        !enumerated &&
-        !/^(status|state)$/i.test(f.name) &&
-        !/(subscription|tenant|customer|owner)_?id$/i.test(f.name)
-      )
-        continue;
-      const fieldType = f.type.replace(/^(List|Set|Collection)<(.+)>$/, '$2').trim();
-      r.fields.push({ name: f.name, type: fieldType, rel, enumerated: enumerated || undefined, line: f.line });
-    }
-  }
-
-  // Views: a controller method returning a view name (a string return is still a line pattern).
-  lines.forEach((ln, i) => {
-    const rv = /return\s+"((?:redirect:|forward:)?[\w\-/{}.]+)"/.exec(ln);
-    if (rv) r.views.push({ view: rv[1], line: i + 1 });
-  });
-  return r;
-}
-{
-  const r = parseJava(
-    '@Path("/handling")\n@Stateless\npublic class H {\n  @POST\n  @Path("/reports")\n  @Consumes("application/json")\n  public void submit(Report r) {}\n  @GET\n  public List<X> all() {}\n  public void on(@Observes(during = TransactionPhase.AFTER_SUCCESS) CargoInspected e) {}\n  @Schedule(minute = "*/2", hour = "*")\n  public void scan() {}\n}',
-  );
-  assert.deepStrictEqual(r.annotations, ['Path', 'Stateless']);
-  assert.deepStrictEqual(
-    r.scheduled.map((s) => [s.kind, s.args]),
-    [
-      ['Observes', 'CargoInspected'],
-      ['Schedule', '(minute = "*/2", hour = "*")'],
-    ],
-  );
-  const mdb = parseJava(
-    '@MessageDriven(activationConfig = {\n  @ActivationConfigProperty(propertyName = "destinationLookup", propertyValue = "java:app/jms/CargoHandledQueue")})\npublic class C implements MessageListener {\n  public void onMessage(Message m) {}\n}',
-  );
-  assert.deepStrictEqual(mdb.scheduled, [{ kind: 'MessageDriven', args: 'java:app/jms/CargoHandledQueue', line: 4 }]);
-}
-// Entity fields carry their own relation annotation; no line window, no annotation from the field above.
-assert.deepStrictEqual(
-  parseJava(
-    '@Entity\npublic class E {\n  @ManyToOne\n  private Client client;\n  private String name;\n  @JoinColumn(name = "owner_id")\n  private Long ownerId;\n}',
-  ).fields,
-  [
-    { name: 'client', type: 'Client', rel: 'ManyToOne', enumerated: undefined, line: 4 },
-    { name: 'ownerId', type: 'Long', rel: undefined, enumerated: undefined, line: 7 },
-  ],
-);
-
 // --- frontend routes ----------------------------------------------------------
 // Angular route arrays use paths without a leading slash, so they're only trusted in files that declare routes.
 const isAngularRoutes = (text) =>
@@ -299,6 +199,24 @@ export function resolveWildcardAnnotations(model, index) {
   return fixed;
 }
 
+/** What the dump answered, counted over the model the facts are built from. No joins: the model *is* the dump. */
+function callStatsOf(model, dump) {
+  let sites = 0,
+    targets = 0,
+    ambiguous = 0,
+    unanswered = 0;
+  for (const t of model.types.values())
+    for (const m of t.methods)
+      for (const call of m.calls ?? []) {
+        sites++;
+        targets += call.targets?.length ?? 0;
+        if (call.how === 'ambiguous') ambiguous++;
+        if (call.how === 'unresolved') unanswered++;
+      }
+  const answered = dump.calls.reduce((n, row) => n + (row.origin === 'error' ? 0 : 1), 0);
+  return { sites, answered, targets, ambiguous, unanswered, droppedTargets: 0 };
+}
+
 export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
   const files = walk(root);
   const R = (p) => rel(root, p);
@@ -315,8 +233,8 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     .map((p) => {
       const text = read(p);
       // One parse per file: the scanner, the facts and the validator all read this index.
-      const ix = index(text);
-      return { p: R(p), text, ix, ...parseJava(text, ix) };
+      const ix = sourceFacts(text);
+      return { p: R(p), text, ix };
     });
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
@@ -324,22 +242,126 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs). Read once, used for
   // catalog selection (which frameworks are installed) and as a fact family of its own.
   const buildFiles = readBuild(root, files.map(R));
-  const entities = java.filter((j) => j.annotations.includes('Entity'));
+  // The model comes first: one base (the dump) answers identity, members and calls. Everything below is a query over
+  // it — the app's own files, annotations, supertypes and enum values — never a second parse.
+  const dumpRun = dumpFor(root, javaAll.map((j) => j.p));
+  const dump = dumpRun.ok ? openDump(dumpRun.dir) : null;
+  const sources = new Map(
+    javaAll.map((j) => [j.p, { pkg: j.ix.pkg, imports: j.ix.imports, degraded: !!j.ix.degraded }]),
+  );
+  // Which frameworks are installed decides how a wildcard import of a name the project does not declare resolves
+  // (`jakarta.persistence.*` with `@Entity`), so the catalogs are selected before the model is built.
+  const imports = [...sources.values()].flatMap((s) => s.imports.map((x) => x.name));
+  const selected = selectCatalogs(CATALOGS, { deps: coordinatesOf(buildFiles), imports });
+  const model = buildModelFromDump(
+    dump ?? { types: new Map(), calls: [], membersOf: () => [] },
+    sources,
+    annotationFqns(selected),
+  );
+  if (!dump && javaAll.length)
+    throw new Error(`mindmodel: no engine dump for ${javaAll.length} Java file(s) (${dumpRun.reason})`);
+  const callStats = dump ? callStatsOf(model, dump) : { answered: 0, targets: 0, ambiguous: 0, unanswered: 0, sites: 0 };
+  bindingRates(model);
+  // One file -> its methods, for the passes that walk a file's lines and need the method a line belongs to.
+  const methodsByFile = new Map();
+  for (const t of model.types.values()) {
+    if (!methodsByFile.has(t.file)) methodsByFile.set(t.file, []);
+    methodsByFile.get(t.file).push(...(t.methods ?? []));
+  }
+
+  // This deployable's types: the app excludes other modules, and a test fixture is not part of its schema.
+  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !/\/src\/test\//.test(t.file));
+  const hasAnn = (t, simple) =>
+    (t.ann ?? []).some((a) => a.name === simple || String(a.fqn ?? '').endsWith(`.${simple}`));
+  // A model type in the shape the later passes already read. Identity (name, kind, annotations, supertypes, enum
+  // values) is the model's; `views` and `scheduled` are what a controller's body *says*, which is text, not types.
+  const texts = new Map(javaAll.map((j) => [j.p, j]));
+  const asEntry = (t) => {
+    const src = texts.get(t.file) ?? {};
+    return {
+      p: t.file,
+      name: t.name,
+      kind: t.kind,
+      classLine: t.start,
+      annotations: (t.ann ?? []).map((a) => a.name),
+      extends: (t.supers ?? []).filter((s) => s.kind !== 'interface').map((s) => s.text).join(','),
+      implements: (t.supers ?? []).filter((s) => s.kind === 'interface').map((s) => s.text).join(','),
+      constants: t.enumValues ?? [],
+      scheduled: scheduledOf(t),
+      views: viewsOf(src.text ?? ''),
+      table: tableOf(t),
+      // The model's own members, in the shape the later passes read; `ix` stays only for the lines they slice.
+      fields: (t.fields ?? []).map((f) => ({ name: f.name, type: f.type, typeFqn: f.typeFqn, ann: f.ann, line: f.line })),
+      methods: t.methods ?? [],
+      ix: src.ix ?? {},
+      views: src.views ?? [],
+      scheduled: src.scheduled ?? [],
+      text: src.text ?? '',
+      type: t,
+    };
+  };
+
+// A job, an observer or a message listener: the annotation is on the method (or its parameter), the model has both.
+function scheduledOf(t) {
+  const jobs = [];
+  for (const m of t.methods ?? []) {
+    for (const a of m.ann ?? [])
+      if (JOB.test(a.name) && a.name !== 'MessageDriven')
+        jobs.push({
+          kind: a.name,
+          args: (a.args ? `(${a.args})` : '').trim().slice(0, 120),
+          line: a.line ?? m.nameLine,
+          method: m.name,
+        });
+    // A CDI observer names its event on the parameter, and an MDB names its destination on the class.
+    for (const p of m.params ?? [])
+      for (const a of p.ann ?? [])
+        if (/^Observes(Async)?$/.test(a.name))
+          jobs.push({ kind: a.name, args: String(p.type ?? '').slice(0, 120), line: a.line ?? m.nameLine });
+  }
+  const mdb = (t.ann ?? []).find((a) => a.name === 'MessageDriven');
+  if (mdb) {
+    const dest =
+      /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(mdb.args ?? '') ??
+      /mappedName\s*=\s*"([^"]+)"/.exec(mdb.args ?? '');
+    const on = (t.methods ?? []).find((m) => m.name === 'onMessage');
+    jobs.push({ kind: 'MessageDriven', args: dest?.[1] ?? '', line: on?.nameLine ?? t.start });
+  }
+  return jobs.sort((a, b) => a.line - b.line);
+}
+
+/** A controller method returning a view name: a string return is a line pattern, not a type. */
+const viewsOf = (text) =>
+  text
+    .split('\n')
+    .flatMap((line, i) => {
+      const rv = /return\s+"((?:redirect:|forward:)?[\w\-/{}.]+)"/.exec(line);
+      return rv ? [{ view: rv[1], line: i + 1 }] : [];
+    });
+
+const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
+
+  const entities = appTypes.filter((t) => hasAnn(t, 'Entity')).map(asEntry);
   const entityNames = new Set(entities.map((e) => e.name));
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
-  const controllers = java.filter(
-    (j) =>
-      j.annotations.includes('RestController') ||
-      j.annotations.includes('Controller') ||
-      j.annotations.includes('Path') ||
-      (j.annotations.includes('Named') &&
-        ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'].some((s) => j.annotations.includes(s))),
-  );
-  const nonEntity = java.filter((j) => !j.annotations.includes('Entity'));
-  const repos = java.filter(
-    (j) =>
-      /\b(Jpa|Crud|PagingAndSorting)Repository\s*</.test(j.extends ?? '') || /Repository\s*</.test(j.extends ?? ''),
-  );
+  const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
+  const controllers = appTypes
+    .filter(
+      (t) =>
+        hasAnn(t, 'RestController') ||
+        hasAnn(t, 'Controller') ||
+        hasAnn(t, 'Path') ||
+        (hasAnn(t, 'Named') && UI_SCOPES.some((s) => hasAnn(t, s))),
+    )
+    .map(asEntry);
+  const nonEntity = appTypes.filter((t) => !hasAnn(t, 'Entity')).map(asEntry);
+  const repos = appTypes
+    .filter((t) => (t.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')))
+    .map(asEntry);
+
+  // depth-5 walks need answers that are exact across the app, not partly filled by a fallback.
+  const exactTargets =
+    !!callStats.answered && callStats.ambiguous === 0 && callStats.unanswered < callStats.sites * 0.02;
   // frontend: React/TS and server-rendered views
   const built = (f) =>
     /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) ||
@@ -364,30 +386,11 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     )
     .map((p) => ({ p: R(p), text: read(p) }));
 
-  // status enums with values (lifecycles)
-  const enums = java
-    .filter((j) => j.kind === 'enum' && /(Status|State|Type|Mode|Tier|Role|Source)$/.test(j.name ?? ''))
-    .map((j) => ({
-      name: j.name,
-      file: j.p,
-      line: j.classLine,
-      // From the enum's own body (syntax index), not from a search for the word `enum` in the file.
-      values: j.constants ?? [],
-    }));
+  // status enums with values (lifecycles): the model's kinds and the enum constants the dump lists.
+  const enums = appTypes
+    .filter((t) => t.kind === 'enum' && /(Status|State|Type|Mode|Tier|Role|Source)$/.test(t.name ?? ''))
+    .map((t) => ({ name: t.name, file: t.file, line: t.start, values: t.enumValues ?? [] }));
 
-  // endpoints: the model and the catalogs decide them; coverage says how much of the project they understand.
-  const model = buildModel(javaAll);
-  const selected = selectForModel(model, CATALOGS, { deps: coordinatesOf(buildFiles) });
-  // Receiver types and call targets (§5.1): every family that follows a call reads this.
-  bindCalls(model, signatureIndex(selected), generatedRules(selected));
-  // The syntax index's body digests were only an input to resolution. The model keeps the calls it resolved; the
-  // locals, assignments and catches are dead weight for the rest of the scan (and the largest arrays in it).
-  for (const j of javaAll)
-    for (const m of j.ix.methods) {
-      m.locals = null;
-      m.assigns = null;
-      m.catches = null;
-    }
   // Facts belong to the app, not the repository: the model spans every module (calls cross them), but a module the
   // app excludes from its component scan is another deployable and its handlers are not this app's API.
   const endpoints = extractEndpoints(model, selected, { include: (p) => !app.isExcluded(p) });
@@ -433,7 +436,7 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   // The same rule appears in several copies of a config (startup, manager, e2e); one fact per prefix and access.
   const ruleSeen = new Set();
   const securityRules = [
-    ...springChains(javaAll, methodSecurityIndex),
+    ...springChains(javaAll, methodsByFile),
     ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !/\/src\/test\//.test(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
     ...files
       .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !/\/src\/test\//.test(f))
@@ -463,12 +466,12 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   ];
   // Webhook endpoints are request handlers, but nothing behind them has a logged-in tenant: reads they alone call are
   // judged like jobs (cross-tenant by design), not as unscoped request reads.
+  // The id names the method that runs, which for an inherited endpoint is the declaring class's method.
+  const methodIdOf = (e) => `${e.declaredIn ?? e.handlerFqn}#${String(e.handler).split('.').pop()}`;
   const webhookIds = endpoints
     .filter((e) => /webhook|callback|\bhooks?\b/i.test(e.path ?? ''))
-    .map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`);
-  const requestMethods = endpoints
-    .map((e) => `${e.handlerFqn}#${String(e.handler).split('.').pop()}`)
-    .filter((id) => !webhookIds.includes(id));
+    .map(methodIdOf);
+  const requestMethods = endpoints.map(methodIdOf).filter((id) => !webhookIds.includes(id));
   entryMethods.push(...webhookIds);
   const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
   // Where the user comes from, from what the code configures: the security chain's own calls (httpBasic(),
@@ -584,16 +587,17 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   const exceptionHandlers = java
     .filter((j) => /@ExceptionHandler|implements\s+ExceptionMapper/.test(j.text))
     .map((j) => j.p);
-  const background = java.flatMap((j) => j.scheduled.map((s) => ({ ...s, file: j.p, cls: j.name })));
+  const background = appTypes.flatMap((t) => scheduledOf(t).map((s) => ({ ...s, file: t.file, cls: t.name })));
   const sockets = endpoints
     .filter((e) => e.verb === 'STOMP')
     .map((e) => ({ file: e.file, line: e.line, path: e.path }))
     .concat(pick(/SessionDisconnectEvent|SessionConnectedEvent|registerStompEndpoints|enableSimpleBroker/));
-  const runners = java
+  const runners = appTypes
     .filter(
-      (j) => /(CommandLineRunner|ApplicationRunner)/.test(j.implements ?? '') || j.annotations.includes('Startup'),
+      (t) =>
+        (t.supers ?? []).some((s) => /(CommandLineRunner|ApplicationRunner)/.test(s.text ?? '')) || hasAnn(t, 'Startup'),
     )
-    .map((j) => ({ file: j.p, line: j.classLine }));
+    .map((t) => ({ file: t.file, line: t.start }));
   // Jakarta Batch: jobs are XML files under META-INF/batch-jobs; JobOperator.start("name") starts them.
   const batchJobs = files
     .filter((f) => /META-INF\/batch-jobs\/[\w.-]+\.xml$/.test(f))
@@ -618,8 +622,8 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     )
     .slice(0, 80);
   const baseClasses = Object.entries(
-    java.reduce((acc, j) => {
-      const b = (j.extends ?? '').replace(/<.*/, '');
+    appTypes.reduce((acc, t) => {
+      const b = String((t.supers ?? []).find((s) => s.kind !== 'interface')?.text ?? '').replace(/<.*/, '');
       if (b && !/Repository$|Exception$|^Object$/.test(b)) acc[b] = (acc[b] ?? 0) + 1;
       return acc;
     }, {}),
@@ -698,7 +702,7 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
       .map((j) => j.p),
   );
   const deep = javaFacts({
-    java,
+    java: appTypes.map(asEntry),
     repoEntity,
     EXT,
     enums,
@@ -792,7 +796,8 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     if (!win) return () => 0;
     // Path-limited history, in chunks: one git call per 25 entry files keeps the largest name-status page small, and
     // the shared log is dropped between chunks.
-    const paths = [...new Set(flowEntryList.map((e) => e.t.file))];
+    // An inherited entry runs the declaring class's code, so that is the file whose churn matters.
+    const paths = [...new Set(flowEntryList.map((e) => (e.owner ?? e.t).file))];
     const counts = new Map();
     for (let i = 0; i < paths.length; i += 25) {
       for (const [p, n] of activityByFile(root, win.since, paths.slice(i, i + 25)))
@@ -804,6 +809,7 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
 
   const flows = buildFlows(model, {
     entries: flowEntryList,
+    exactTargets,
     stateWrites: stateFacts.filter((x) => x.family === 'state-write'),
     outsideCalls,
     transactions,
@@ -891,7 +897,25 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
         .map((j) => `${j.verb ?? ''} ${j.path} ${j.file}:${j.line} -> ${j.handler}`),
     },
     views: { count: views.length, returnedBy: viewUse, deadViews },
-    runtime: { interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState },
+    runtime: {
+      // Whether Spoon answered this run, and how much of it: a scan without a dump is a scan without types.
+      engine: dump
+        ? {
+            spoon: true,
+            answered: callStats.answered,
+            targets: callStats.targets,
+            droppedTargets: callStats.droppedTargets,
+            unanswered: callStats.unanswered,
+            droppedSamples: callStats.droppedSamples?.slice(0, 8),
+            dump: dumpRun.dir,
+          }
+        : { spoon: false, reason: dumpRun.reason },
+      interceptors,
+      contextScopes,
+      exceptionHandlers,
+      baseClasses,
+      sessionState,
+    },
     methodSecurity: methodSec.facts,
     securityModel: securityModelFact,
     channels: channelFacts(model, { config: channelConfig, extraConstants }),

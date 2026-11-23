@@ -3,7 +3,7 @@
 // Usage: node preflight.mjs <projectRoot>   Prints JSON: { ok, node, git, warnings[] }. ok=false means: ask the user before continuing.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import assert from 'node:assert';
 
 const git = (root, args) => {
@@ -34,11 +34,30 @@ assert.deepStrictEqual(parseBranchLine('## main...origin/main [ahead 1, behind 3
 });
 assert.deepStrictEqual(parseBranchLine('## feature/x'), { branch: 'feature/x', upstream: null, ahead: 0, behind: 0 });
 
+// The Java runtime the Spoon engine runs on, from `java -version` (which prints to stderr). macOS's /usr/bin/java is a
+// stub that follows JAVA_HOME, so the answer can differ per environment and both are tried.
+export function javaMajor(env = process.env) {
+  const r = spawnSync('java', ['-version'], { encoding: 'utf8', env });
+  const m = /version "(?:1\.)?(\d+)/.exec(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+  return m ? +m[1] : null;
+}
+assert.equal(javaMajor({ PATH: '' }), null);
+
 export function preflight(root) {
   const warnings = [];
   const major = +process.versions.node.split('.')[0];
   if (major < 18)
     warnings.push({ level: 'block', text: `Node ${process.versions.node} is too old; mindmodel needs Node 18+.` });
+
+  // The Java engine needs a JDK 17+; without one every call stays a guess, so the run is blocked rather than degraded.
+  const withHome = javaMajor();
+  const bare = javaMajor(Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'JAVA_HOME')));
+  const java = Math.max(withHome ?? 0, bare ?? 0) || null;
+  if (!java || java < 17)
+    warnings.push({
+      level: 'block',
+      text: `Java 17+ not found on PATH (${java ? `found ${java}` : 'no java'}); the Spoon engine cannot run. Install a JDK 17+.`,
+    });
 
   const isRepo = git(root, ['rev-parse', '--is-inside-work-tree']) === 'true';
   if (!isRepo) {
@@ -111,6 +130,7 @@ export function preflight(root) {
   return {
     ok: !warnings.some((w) => w.level !== 'info'),
     node: process.versions.node,
+    java,
     git: {
       head,
       branch: b.branch,

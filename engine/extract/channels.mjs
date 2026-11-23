@@ -108,6 +108,14 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
           continue;
         }
         if (/^(stream|to)$/.test(nm)) {
+          // `.stream(...)` is a channel only when the receiver is one, or when the name is written at the call:
+          // an AI client's `stream(config.getMaxTokens())` is not a topic, and a getter inside an expression is
+          // not a name. Both conditions are facts from the model, not a name list of frameworks.
+          const recv = (c.recvFqn ?? '').split('.').pop() ?? '';
+          const messaging = /(MessageChannel|StreamBridge|MessageProducer|SubscribableChannel|DirectChannel|Source|Sink)$/.test(recv);
+          const argText = String((c.args ?? [])[0] ?? '').trim();
+          const written = /^"[^"]*"$/.test(argText) || /^[A-Za-z_$][\w$.]*$/.test(argText);
+          if (!messaging && !written) continue;
           const channel = nameOf(t.file, t.fqn, (c.args ?? [])[0] ?? '') ?? 'unknown';
           if (channel === 'unknown') continue;
           facts.push({ id: `channel:${nm === 'to' ? 'out' : 'in'}:kafka:${channel}@${m.name}`, family: 'channel', confidence: 'resolved', direction: nm === 'to' ? 'out' : 'in', kind: 'kafka', channel, method: `${t.name}#${m.name}`, via: 'stream', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${t.name}#${m.name}.${nm}(${channel})`] });

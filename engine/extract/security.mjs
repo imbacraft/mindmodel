@@ -46,7 +46,11 @@ export function springChains(java, fileMethods) {
   for (const j of java) {
     if (!/SecurityFilterChain/.test(j.text ?? '')) continue;
     const lines = j.text.split('\n');
-    const methodAt = (line) => j.ix.methods.filter((m) => m.start <= line && line <= m.end).sort((a, b) => a.end - a.start - (b.end - b.start))[0];
+    // The file's methods come from the model (`fileMethods`), not from a second parse of the source.
+    const methodAt = (line) =>
+      (fileMethods?.get(j.p) ?? [])
+        .filter((m) => m.start <= line && line <= m.end)
+        .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
     for (let i = 0; i < lines.length; i++) {
       if (!/\.securityMatcher\s*\(/.test(lines[i])) continue;
       const m = methodAt(i + 1);
@@ -205,7 +209,13 @@ export function anonymousWrites(rules, endpoints, methodSecurity) {
     if (!WRITE.has(e.verb)) continue;
     const rule = anon.find((r) => appliesTo(r, e.path ?? '', e.verb));
     if (!rule) continue;
-    const checked = (methodSecurity.get(e.handlerFqn) ?? false) || (methodSecurity.get(`${e.handlerFqn}#${String(e.handler ?? '').split('.').pop()}`) ?? false);
+    // An inherited handler runs on the mapped controller: a class-level guard there governs it too, so both the
+    // class that declares the body and the class the mapping is written on are checked.
+    const name = String(e.handler ?? '').split('.').pop();
+    const owners = new Set([e.declaredIn, e.handlerFqn].filter(Boolean));
+    const checked = [...owners].some(
+      (owner) => (methodSecurity.get(owner) ?? false) || (methodSecurity.get(`${owner}#${name}`) ?? false),
+    );
     if (checked) continue;
     warnings.push({
       id: `security-warning:anonymous-write@${e.verb} ${e.path}`,
@@ -214,7 +224,7 @@ export function anonymousWrites(rules, endpoints, methodSecurity) {
       kind: 'anonymous-write',
       path: e.path,
       verb: e.verb,
-      handler: e.handlerFqn ? `${e.handlerFqn}#${String(e.handler ?? '').split('.').pop()}` : null,
+      handler: e.declaredIn || e.handlerFqn ? `${e.declaredIn ?? e.handlerFqn}#${name}` : (e.handler ?? null),
       rule: `${rule.pattern} is ${rule.access}`,
       evidence: [e.evidence?.[1] ?? e.evidence?.[0], rule.evidence[0]].filter(Boolean),
       why: [`${rule.pattern} allows anonymous access (${rule.source} ${rule.evidence[0]}) and this write endpoint has no @PreAuthorize/@Secured/@RolesAllowed`],
@@ -510,10 +520,13 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
     byPrefix.get(prefix).push(e);
   }
-  const checkedFor = (e) =>
-    methodSecurity.filter(
-      (f) => f.type === e.handlerFqn || f.method === `${e.handlerFqn}#${String(e.handler ?? '').split('.').pop()}`,
+  // The check sits on the type that runs the handler; an inherited endpoint is checked on its declaring type.
+  const checkedFor = (e) => {
+    const owner = e.declaredIn ?? e.handlerFqn;
+    return methodSecurity.filter(
+      (f) => f.type === owner || f.method === `${owner}#${String(e.handler ?? '').split('.').pop()}`,
     );
+  };
   const checksCount = (p) => methodSecurity.filter((f) => p.checks.some((c) => c === `${f.annotation}${f.args || ''}`)).length;
   const prefixes = [];
   for (const [prefix, eps] of [...byPrefix.entries()].sort((a, b) => b[1].length - a[1].length)) {

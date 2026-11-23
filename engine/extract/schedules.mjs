@@ -99,14 +99,14 @@ export function scheduleFacts({ files, cite }) {
   const schedules = [];
   // Schedules and retries in plain words, with the time windows each job uses.
   for (const f of files)
-    for (const m of f.ix.methods) {
+    for (const m of f.methods ?? []) {
+      // The annotation is on the declaration, which the source lines already show: no annotation list to carry.
       const header = f.lines.slice(m.start - 1, m.nameLine),
-        sch = m.annotations.find((a) => JOB.test(a)),
-        raw = sch && header.find((l) => /@Schedul(e|ed)\b/.test(l));
+        sch = header.find((l) => /@Schedul(e|ed)\b/.test(l));
       if (sch) {
         const w = windowsIn(f.lines, m);
         schedules.push(
-          `${f.name}.${m.name} ${cite(f, m)}: ${humanSchedule(raw ?? sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
+          `${f.name}.${m.name} ${cite(f, m)}: ${humanSchedule(sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
         );
       }
       const retry = header.join(' ').match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);

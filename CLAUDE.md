@@ -4,6 +4,8 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 (`/mindmodel-system`). Deterministic engine (scan → digest → validate → render) plus one writer subagent per run.
 
 ## Layout
+- `engine-java/`: the Java engine (Maven, Java 17+, Spoon 11.2.1), shaded into `engine-java/target/mindmodel-engine.jar`.
+  It answers which project method each call reaches; `engine/jvm.mjs` runs it and joins its answers onto the Node model.
 - `engine/`: Node scripts, no dependencies. `syntax/` (tree-sitter adapter: declarations, calls, package, imports),
   `model/` (the symbol model: full names, resolved annotations and supertypes), `catalogs/` (framework meaning as
   JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/`; `scan.mjs` and `system.mjs`
@@ -15,9 +17,13 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 - `test/`: `node --test` suites.
 
 ## Ground rules
-- **No installed dependencies; Node 18+.** No newer-than-18 APIs (e.g. iterator helpers like `matchAll(...).map`).
-  The only third-party code is the pinned, vendored tree-sitter WASM in `engine/vendor/tree-sitter/` (hashes in its
+- **No installed Node dependencies; Node 18+.** No newer-than-18 APIs (e.g. iterator helpers like `matchAll(...).map`).
+  The only vendored third-party code is the pinned tree-sitter WASM in `engine/vendor/tree-sitter/` (hashes in its
   README); no `npm install`, no `node_modules`, no native build.
+- **The Java engine needs JDK 17+ and Maven to build** (`mvn -f engine-java/pom.xml package`). It replaces the Node
+  resolver's guesses with Spoon's answers wherever it can; a scan without the jar still runs on the guesses, so
+  preflight blocks only when no JDK 17+ is on PATH. Nothing downloads the analyzed project's dependencies or runs its
+  build.
 - **Stacks:** Java on Spring or Jakarta EE (JAX-RS, EJB, CDI, JMS, Jakarta Batch); Spring and EE spellings of the
   same idea must both work.
 - **Rules, schema, validator and templates must agree.** Changing a budget or a field means changing all four.
@@ -28,6 +34,8 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 
 ## Testing
 - `node --test` runs every module's self-checks and the snapshot tests. Run it after every engine change.
+- `mvn -f engine-java/pom.xml package` builds the jar and runs the JUnit tests. `engine/jvm.mjs` self-checks only run
+  when the jar exists; without it a scan silently keeps the Node guesses, so check `runtime.engine` in facts.json.
 - Snapshot tests scan the public test apps cloned under `~/Projects/test-apps` (list in `test/apps.json`) and compare
   facts, digests, validation results and rendered pages with `test/snapshots/` (local, gitignored).
 - `node test/compare.mjs [--all] [app|system ...]` runs the committed engine (a throwaway worktree of `HEAD`) and the

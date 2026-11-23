@@ -3,7 +3,7 @@
 // fact says what changed, not just that something was called.
 import assert from 'node:assert';
 import { annotationIndex, meanHit, typeIndex } from '../catalogs/catalog.mjs';
-import { typeArgsOf } from '../model/calls.mjs';
+import { typeArgsOf } from '../model/type-args.mjs';
 import { citeOf, factOf, withUniqueIds } from './facts.mjs';
 
 const WRITE = /^(save|saveAll|saveAndFlush|delete|deleteAll|deleteById|deleteBy|remove|removeIf|update|insert|persist|merge|flush)/;

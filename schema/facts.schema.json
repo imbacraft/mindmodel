@@ -562,6 +562,10 @@
     "handlerFqn": {
      "type": "string"
     },
+    "declaredIn": {
+     "description": "The project type that holds the running method when it is not the controller (an inherited endpoint).",
+     "type": "string"
+    },
     "file": {
      "type": "string"
     },

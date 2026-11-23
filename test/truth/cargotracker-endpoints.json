@@ -1,0 +1,20 @@
+[
+  {
+    "verb": "GET",
+    "path": "/rest/cargo",
+    "handlerContains": "RealtimeCargoTrackingService.tracking",
+    "evidenceContains": "RealtimeCargoTrackingService.java:40"
+  },
+  {
+    "verb": "POST",
+    "path": "/rest/handling/reports",
+    "handlerContains": "HandlingReportService.submitReport",
+    "evidenceContains": "HandlingReportService.java:30"
+  },
+  {
+    "verb": "GET",
+    "path": "/rest/graph-traversal/shortest-path",
+    "handlerContains": "GraphTraversalService.findShortestPath",
+    "evidenceContains": "GraphTraversalService.java:33"
+  }
+]

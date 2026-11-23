@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
-import { index, methodAt } from './syntax/java.mjs';
+import { open as openDump } from './dump.mjs';
 import { fileURLToPath } from 'node:url';
 import { gitWindow, activityFor } from './activity.mjs';
 
@@ -87,21 +87,19 @@ const BUDGET = {
 // Fill in or repair line ranges from symbols, in place: "path#method" gets the method's exact range, and a
 // range that misses its #symbol is moved to the method of that name nearest to it. Writers cite methods by
 // name and never need to look up line numbers. Returns how many citations changed.
-export function resolveCites(map, root) {
+export function resolveCites(map, root, declared = null) {
   const cache = new Map(),
     load = (abs) => {
-      if (!cache.has(abs)) {
-        const t = fs.readFileSync(abs, 'utf8');
-        cache.set(abs, { lines: t.split('\n'), ix: abs.endsWith('.java') ? index(t) : null });
-      }
+      if (!cache.has(abs)) cache.set(abs, { lines: fs.readFileSync(abs, 'utf8').split('\n') });
       return cache.get(abs);
-    };
+    },
+    at = (file) => declared?.get(file) ?? { methods: [], types: [] };
   const fix = (c) => {
     const pc = parseCite(c);
     if (!pc?.symbol) return c;
     const abs = path.join(root, pc.file);
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return c;
-    const { lines, ix } = load(abs);
+    const { lines } = load(abs);
     if (
       pc.start != null &&
       pc.end <= lines.length &&
@@ -111,7 +109,7 @@ export function resolveCites(map, root) {
         .includes(pc.symbol)
     )
       return c;
-    const named = ix ? [...ix.methods, ...ix.types].filter((m) => m.name === pc.symbol) : [];
+    const named = [...at(pc.file).methods, ...at(pc.file).types].filter((m) => m.name === pc.symbol);
     if (named.length) {
       const near =
         pc.start == null
@@ -124,7 +122,7 @@ export function resolveCites(map, root) {
     if (pc.start == null) {
       const i = lines.findIndex((l) => l.includes(pc.symbol));
       if (i >= 0) {
-        const m = ix && methodAt(ix, i + 1);
+        const m = at(pc.file).methods.find((mm) => mm.start <= i + 1 && i + 1 <= mm.end);
         return m ? `${pc.file}:${m.start}-${m.end}#${pc.symbol}` : `${pc.file}:${i + 1}#${pc.symbol}`;
       }
     }
@@ -168,8 +166,121 @@ export function fillActivity(map, root) {
   }
 }
 
-export function validate(map, root) {
-  resolveCites(map, root);
+// P6: the map states behaviour, never weakness and never a secret. Ids, paths and citations are code, not prose, so
+// they are not scanned; a placeholder such as `${X}` is not a credential.
+const P6_CODE_KEYS = new Set([
+  'id', 'ids', 'path', 'paths', 'cite', 'cites', 'citation', 'citations', 'evidence', 'file', 'files',
+  'handler', 'handlerFqn', 'declaredIn', 'method', 'target', 'symbol',
+]);
+const P6_SECRETS = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'a private key block'],
+  [/\bAKIA[0-9A-Z]{16}\b/, 'an AWS access key id'],
+  [/\b(?:ghp|gho|ghs|ghu|github_pat)_[A-Za-z0-9_]{20,}\b/, 'a GitHub token'],
+  [/\bsk-[A-Za-z0-9]{20,}\b/, 'an API key'],
+  [/password\s*[=:]\s*(?!\$\{|\$\(|%|<|\[|x{3,}|\*{3,}|\b(?:none|null|empty|changeit)\b)[^\s"'&,;]{6,}/i, 'a password value'],
+];
+const P6_WEAKNESS = [
+  [/\bvulnerab(?:le|ility|ilities)\b/i, 'vulnerability'],
+  [/\bexploits?\b/i, 'exploit'],
+  [/\battackers?\b/i, 'attacker'],
+  [/\bsecurity holes?\b/i, 'security hole'],
+  [/\bCVE-\d{4}-\d{4,}\b/, 'a CVE id'],
+];
+const P6_BUG = /\bbugs?\b/i;
+
+// Every prose string with its location in the map, skipping the fields that hold code.
+export function proseOf(map) {
+  const out = [];
+  const walk = (v, where, code) => {
+    if (typeof v === 'string') {
+      if (!code) out.push([where, v]);
+      return;
+    }
+    if (Array.isArray(v)) return v.forEach((x, i) => walk(x, `${where}[${i}]`, code));
+    if (v && typeof v === 'object')
+      for (const [k, x] of Object.entries(v)) walk(x, where ? `${where}.${k}` : k, code || P6_CODE_KEYS.has(k));
+  };
+  walk(map, '', false);
+  return out;
+}
+
+export function p6Issues(map) {
+  const errors = [], warnings = [];
+  for (const [where, text] of proseOf(map)) {
+    for (const [re, what] of P6_SECRETS) if (re.test(text)) errors.push(`${where}: looks like ${what}`);
+    for (const [re, what] of P6_WEAKNESS) if (re.test(text)) errors.push(`${where}: names a ${what} (P6: state behaviour neutrally)`);
+    if (P6_BUG.test(text)) warnings.push(`${where}: says "bug"; some domains use the word (P6)`);
+  }
+  return { errors, warnings };
+}
+
+{
+  const ok = p6Issues({
+    purpose: 'Orders are charged as the browser sends them.',
+    rules: [{ id: 'r1', text: 'The tenant comes from `${TENANT}`.', cite: 'a/C.java:1' }],
+  });
+  assert.deepStrictEqual(ok.errors, []);
+  assert.deepStrictEqual(ok.warnings, []);
+  const bad = p6Issues({
+    purpose: 'This controller is vulnerable to an exploit by an attacker.',
+    context: { actors: [{ id: 'a', what: 'DB password=Sup3rS3cret!' }] },
+    concepts: [{ id: 'c', text: 'This is a bug.' }],
+  });
+  assert.equal(bad.errors.length, 4); // vulnerability, exploit, attacker, the password value
+  assert.equal(bad.warnings.length, 1);
+  assert.ok(bad.errors.every((e) => !e.includes('Sup3rS3cret')), 'the message never repeats the secret');
+}
+
+/** `file -> {methods, types}` from the model: what citation repair reads instead of re-parsing Java. */
+export function declaredFromModel(model) {
+  const byFile = new Map();
+  const slot = (file) => {
+    if (!byFile.has(file)) byFile.set(file, { methods: [], types: [] });
+    return byFile.get(file);
+  };
+  for (const t of model.types.values()) {
+    slot(t.file).types.push({ name: t.name, start: t.start, end: t.end, nameLine: t.nameLine });
+    for (const m of t.methods ?? [])
+      slot(t.file).methods.push({ name: m.name, start: m.start, end: m.end, nameLine: m.nameLine });
+  }
+  return byFile;
+}
+
+/** The dump beside the map, when there is one: the CLI's own way to the same answers. */
+function declaredFromDump(root) {
+  const dir = path.join(root, 'mindmodel', '.work', 'dump');
+  if (!fs.existsSync(path.join(dir, 'meta.json'))) return null;
+  try {
+    const dump = openDump(dir);
+    const byFile = new Map();
+    const slot = (file) => {
+      if (!byFile.has(file)) byFile.set(file, { methods: [], types: [] });
+      return byFile.get(file);
+    };
+    for (const row of dump.types.values())
+      if (row.pos?.file)
+        slot(row.pos.file).types.push({
+          name: String(row.fqn).split('.').pop(),
+          start: row.pos.line,
+          end: row.pos.endLine ?? row.pos.line,
+          nameLine: row.pos.line,
+        });
+    for (const m of dump.members.values())
+      if (m.kind === 'method' && m.pos?.file)
+        slot(m.pos.file).methods.push({
+          name: m.name,
+          start: m.pos.line,
+          end: m.pos.endLine ?? m.pos.line,
+          nameLine: m.pos.line,
+        });
+    return byFile;
+  } catch {
+    return null;
+  }
+}
+
+export function validate(map, root, declared = declaredFromDump(root)) {
+  resolveCites(map, root, declared);
   fillActivity(map, root);
   const errors = [],
     warnings = [];
@@ -412,6 +523,13 @@ export function validate(map, root) {
   const core = { ...map, stories: undefined };
   const coreWords = words(core);
   if (coreWords > BUDGET.coreWords) warn(`core map ~${coreWords} words > budget ${BUDGET.coreWords}`);
+
+  // P6 wording and secrets, then the owner-only findings the map may not carry.
+  const p6 = p6Issues(map);
+  errors.push(...p6.errors);
+  warnings.push(...p6.warnings);
+  if (!fs.existsSync(path.join(root, 'mindmodel/.work/findings.md')))
+    warn('no mindmodel/.work/findings.md: write the owner-only findings (or "none")');
 
   return { errors, warnings, stats: { citations: cites.length, coreWords, storyWords: words(map.stories) } };
 }

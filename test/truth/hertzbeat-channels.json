@@ -1,20 +1,15 @@
 [
  {
   "kind": "kafka",
-  "inbound": 10,
+  "inbound": 5,
   "queues": [
    "async-metrics-data",
    "metrics-data-to-storage-topic",
    "service-discovery-data",
    "async-log-entry-data",
-   "log-entry-data-to-storage-topic",
-   "tool-callbacks-topic",
-   "bean-definition-names-topic",
-   "stack-trace-topic",
-   "buildInfo",
-   "raw-query-topic"
+   "log-entry-data-to-storage-topic"
   ],
   "condition": true,
-  "note": "five queue modes in KafkaCommonDataQueue plus the AI/warehouse consumers; configured values where the key matched, the property key otherwise; sends still unnamed"
+  "note": "the five queue modes of KafkaCommonDataQueue, named by their configured value where the property key matched and by the property key otherwise. Removed: `buildInfo`, `tool-callbacks-topic`, `bean-definition-names-topic` and `stack-trace-topic`, which came from `Arrays.stream(...)`/AI-client `.stream(...)` calls read as message channels — a Java Stream is not a subscription, and the engine now requires a messaging receiver or a written channel name. Sends are still unnamed."
  }
 ]

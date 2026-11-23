@@ -5,11 +5,11 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Parser, Language } from '../vendor/tree-sitter/web-tree-sitter.mjs';
+import { Parser, Language } from '../../engine/vendor/tree-sitter/web-tree-sitter.mjs';
 
 // The vendored tree-sitter files load once, at import, so every caller stays synchronous afterwards. A missing file
 // names the path instead of failing inside the WASM loader.
-const VENDOR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../vendor/tree-sitter');
+const VENDOR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../engine/vendor/tree-sitter');
 for (const f of ['web-tree-sitter.mjs', 'web-tree-sitter.wasm', 'tree-sitter-java.wasm'])
   if (!fs.existsSync(path.join(VENDOR, f)))
     throw new Error(
@@ -70,6 +70,8 @@ const implementsOf = (node) =>
 
 // A method's parameters, with the type each one has: receiver typing needs them, and a CDI observer names its event
 // on one of them. Annotations stay on the parameter for extractors that care (@RequestBody, @PathParam).
+const TYPE_NODES = new Set(['type_identifier', 'generic_type', 'scoped_type_identifier', 'array_type', 'integral_type', 'floating_point_type', 'boolean_type', 'void_type']);
+
 const paramsOf = (node) => {
   const out = [];
   for (const p of node.childForFieldName('parameters')?.namedChildren ?? []) {
@@ -79,9 +81,13 @@ const paramsOf = (node) => {
       p.childForFieldName('name')?.text ??
       p.namedChildren.find((c) => c.type === 'variable_declarator')?.childForFieldName('name')?.text ??
       '';
+    // A spread parameter (`String... args`) carries its type in a child node, and its id spelling is an array:
+    // `String[]`, which is what the dump and every other layer use.
+    const written = p.childForFieldName('type')?.text ?? p.namedChildren.find((c) => TYPE_NODES.has(c.type))?.text ?? '';
+    const type = p.type === 'spread_parameter' && written ? `${written}[]` : written;
     out.push({
       name,
-      type: p.childForFieldName('type')?.text ?? '',
+      type,
       varargs: p.type === 'spread_parameter',
       ann,
       annotations: annotationStrings(ann),

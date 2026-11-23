@@ -19,7 +19,9 @@ function meaning(model, type, ann, on, index) {
 
 // Every method a call can lead to, one or two hops out, staying inside the project. The id index is built once per
 // scan and passed in: rebuilding it per method was quadratic on fineract.
-function reachable(byId, start, depth = 2) {
+// `deferred` holds the methods that register after-commit work: what they hand over runs after the commit, so the
+// walk does not continue through them.
+function reachable(byId, start, depth = 2, deferred = new Set()) {
   const seen = new Set([start.id]);
   const out = [{ type: start.type, method: start.method }];
   let frontier = [start];
@@ -28,7 +30,7 @@ function reachable(byId, start, depth = 2) {
     for (const { method } of frontier)
       for (const call of method.calls ?? [])
         for (const id of call.targets ?? []) {
-          if (seen.has(id) || !byId.has(id)) continue;
+          if (seen.has(id) || !byId.has(id) || deferred.has(id)) continue;
           seen.add(id);
           const hit = byId.get(id);
           out.push(hit);
@@ -43,6 +45,19 @@ export function extractTransactions(model, selected, { outside = [], writes = []
   const index = annotationIndex(selected);
   const byId = new Map();
   for (const t of model.types.values()) for (const m of t.methods) if (m.id) byId.set(m.id, { type: t, method: m });
+  // A method that registers after-commit work (a catalog `means: after-commit` call) defers whatever it hands over.
+  const afterCommitCalls = [];
+  for (const { catalog } of selected)
+    for (const c of catalog.calls ?? []) if (c.means === 'after-commit') afterCommitCalls.push(c);
+  const deferred = new Set();
+  for (const t of model.types.values())
+    for (const m of t.methods)
+      if (
+        (m.calls ?? []).some((c) =>
+          afterCommitCalls.some((e) => (e.types ?? [e.type]).includes(c.recvFqn) && (!e.methods || e.methods.includes(c.name))),
+        )
+      )
+        deferred.add(m.id);
   const facts = [];
   // A plain `@Transactional` method is not a fact: there are thousands of them and no page can use them. The count
   // per class is what a reader needs; the boundary kinds below stay because each is a hazard with a citation.
@@ -144,7 +159,7 @@ export function extractTransactions(model, selected, { outside = [], writes = []
       }
       // The seam: an outside call inside a transaction, directly or through a project target.
       if (transactional) {
-        const reached = reachable(byId, { type: t, method: m });
+        const reached = reachable(byId, { type: t, method: m }, 2, deferred);
         const outs = reached.flatMap(({ type, method }) =>
           (outsideByMethod.get(method.id) ?? []).map((f) => ({ ...f, via: method === m || method.name === m.name ? null : `${type.name}.${method.name}` })),
         );
@@ -248,6 +263,16 @@ const lineOf = (f) => Number(/:(\d+)/.exec((f.evidence ?? [])[0] ?? '')?.[1] ?? 
                 },
               ],
             },
+            {
+              // Transactional, and it hands its work to the after-commit registration: not a seam.
+              id: 'a.Svc#run()',
+              name: 'run',
+              start: 55,
+              end: 60,
+              isPublic: true,
+              ann: [{ name: 'Transactional', fqn: 'org.springframework.transaction.annotation.Transactional', args: '', line: 54 }],
+              calls: [{ kind: 'call', name: 'later', targets: ['a.Svc#later()'], line: 56 }],
+            },
             { id: 'a.Svc#afterCommit()', name: 'afterCommit', start: 44, end: 46, ann: [], calls: [{ kind: 'call', name: 'persist', targets: ['a.Svc#persist()'] }] },
             { id: 'a.Svc#persist()', name: 'persist', start: 48, end: 50, ann: [], calls: [] },
           ],
@@ -273,13 +298,17 @@ const lineOf = (f) => Number(/:(\d+)/.exec((f.evidence ?? [])[0] ?? '')?.[1] ?? 
   const outside = [
     { id: 'o1', family: 'outside-call', kind: 'HTTP', client: 'RestTemplate', target: 'RestTemplate.exchange', method: 'a.Svc#pay()', evidence: ['a/Svc.java#pay'], confidence: 'resolved' },
     { id: 'o2', family: 'outside-call', kind: 'Kafka', client: 'KafkaTemplate', target: 'KafkaTemplate.send', method: 'a.Svc#store(Order)', evidence: ['a/Svc.java:24#store'], confidence: 'resolved' },
+    // The work handed to the after-commit registration: it runs after the commit, so it is not inside the transaction.
+    { id: 'o3', family: 'outside-call', kind: 'HTTP', client: 'RestTemplate', target: 'RestTemplate.exchange', method: 'a.Svc#afterCommit()', evidence: ['a/Svc.java:45#afterCommit'], confidence: 'resolved' },
   ];
   const writes = [{ id: 'w1', family: 'state-write', entity: 'a.Order', repository: 'a.OrderRepository', operation: 'save', method: 'a.Svc#store(Order)', evidence: ['a/Svc.java:26#store'], confidence: 'resolved' }];
   const { facts, counts } = extractTransactions(model, selected, { outside, writes });
   const kinds = facts.map((f) => f.kind).sort();
   assert.deepStrictEqual(kinds, ['after-commit', 'outside-in-transaction', 'outside-then-save']);
   // The plain transactional methods are a count per class, not facts.
-  assert.deepStrictEqual(counts, [{ type: 'a.Svc', count: 1 }]);
+  assert.deepStrictEqual(counts, [{ type: 'a.Svc', count: 2 }]);
+  // `run` reaches the outside call only through the registration: deferred work, never a seam.
+  assert.ok(!facts.some((f) => f.method === 'a.Svc#run()'), 'the walk stops at an after-commit registration');
   const sync = facts.find((f) => f.mechanism === 'synchronization');
   assert.deepStrictEqual(sync.runs, ['a.Svc#persist()']);
   assert.deepStrictEqual(facts.find((f) => f.kind === 'outside-then-save').saves, ['save a.Order at :26']);

@@ -1,5 +1,5 @@
-// Hand-checked samples: call resolution (test/truth/<app>.json), flow shape (-flows), fact shape (-facts) and security
-// facts (-security). A person read the source and wrote down the answer; the engine disagreeing is a regression the
+// Hand-checked samples: call resolution (test/truth/<app>.json), flow shape (-flows), fact shape (-facts), security
+// facts (-security) and the endpoint list (-endpoints, including inherited handlers and handlers that must be absent). A person read the source and wrote down the answer; the engine disagreeing is a regression the
 // rates alone would hide.
 //
 // The files are discovered, not listed: everything in test/truth/ and in test/truth/local/ (gitignored, for a private
@@ -23,7 +23,7 @@ function truthFiles() {
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.json')) continue;
-      const m = /^([\w.-]+?)(-(?:flows|facts|security|tenancy|channels))?\.json$/.exec(f);
+      const m = /^([\w.-]+?)(-(?:flows|facts|security|tenancy|channels|endpoints))?\.json$/.exec(f);
       if (!m) continue;
       out.push({ app: m[1], kind: m[2]?.slice(1) ?? 'calls', file: path.join(dir, f) });
     }
@@ -85,6 +85,32 @@ const checks = {
       for (const hop of want.reaches ?? [])
         if (!got.steps.some((s) => s.startsWith(hop)))
           misses.push(`${want.entry}: does not reach ${hop} (steps: ${got.steps.join('; ')})`);
+    }
+  },
+
+  endpoints(app, truth, res, misses) {
+    const eps = res.endpoints ?? [];
+    for (const want of truth) {
+      // A handler that must not be listed: an abstract base controller, a Feign client method.
+      if (want.absentHandlerMatches) {
+        const re = new RegExp(want.absentHandlerMatches);
+        const hit = eps.find((e) => re.test(e.handler ?? '') || re.test(e.handlerFqn ?? ''));
+        if (hit) misses.push(`${want.absentHandlerMatches}: no endpoint should match, found ${hit.handler}`);
+        continue;
+      }
+      // Each listed exactly once: verb, path, and the handler when the truth names it.
+      const got = eps.filter(
+        (e) =>
+          e.verb === want.verb &&
+          e.path === want.path &&
+          (!want.handlerContains || (e.handler ?? '').includes(want.handlerContains)),
+      );
+      if (got.length !== 1) {
+        misses.push(`${want.verb} ${want.path}: ${got.length} endpoint(s), expected exactly 1`);
+        continue;
+      }
+      if (want.evidenceContains && !(got[0].evidence ?? []).some((e) => e.includes(want.evidenceContains)))
+        misses.push(`${want.verb} ${want.path}: evidence does not cite ${want.evidenceContains}`);
     }
   },
 

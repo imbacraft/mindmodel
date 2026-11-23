@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "types": {
+    "jakarta.jms.ConnectionFactory": {
+      "createContext": "jakarta.jms.JMSContext"
+    },
+    "jakarta.jms.JMSContext": {
+      "createConsumer": "jakarta.jms.JMSConsumer",
+      "createContext": "jakarta.jms.JMSContext",
+      "createDurableConsumer": "jakarta.jms.JMSConsumer",
+      "createProducer": "jakarta.jms.JMSProducer"
+    },
+    "jakarta.jms.JMSProducer": {
+      "send": "jakarta.jms.JMSProducer",
+      "sendAsync": "jakarta.jms.JMSProducer",
+      "setCorrelationID": "jakarta.jms.JMSProducer",
+      "setDeliveryDelay": "jakarta.jms.JMSProducer",
+      "setDeliveryMode": "jakarta.jms.JMSProducer",
+      "setDisableMessageID": "jakarta.jms.JMSProducer",
+      "setDisableMessageTimestamp": "jakarta.jms.JMSProducer",
+      "setJMSCorrelationID": "jakarta.jms.JMSProducer",
+      "setPriority": "jakarta.jms.JMSProducer",
+      "setProperty": "jakarta.jms.JMSProducer",
+      "setTimeToLive": "jakarta.jms.JMSProducer"
+    },
+    "java.lang.Iterable": {
+      "iterator": "java.util.Iterator"
+    },
+    "java.lang.Object": {
+      "getClass": "java.lang.Class",
+      "toString": "java.lang.String"
+    },
+    "java.lang.String": {
+      "chars": "java.util.stream.IntStream",
+      "concat": "java.lang.String",
+      "format": "java.lang.String",
+      "formatted": "java.lang.String",
+      "indent": "java.lang.String",
+      "intern": "java.lang.String",
+      "join": "java.lang.String",
+      "lines": "java.util.stream.Stream",
+      "repeat": "java.lang.String",
+      "replace": "java.lang.String",
+      "replaceAll": "java.lang.String",
+      "replaceFirst": "java.lang.String",
+      "split": "java.lang.String",
+      "strip": "java.lang.String",
+      "substring": "java.lang.String",
+      "toLowerCase": "java.lang.String",
+      "toUpperCase": "java.lang.String",
+      "translateEscapes": "java.lang.String",
+      "trim": "java.lang.String",
+      "valueOf": "java.lang.String"
+    },
+    "java.lang.StringBuilder": {
+      "append": "java.lang.StringBuilder",
+      "delete": "java.lang.StringBuilder",
+      "deleteCharAt": "java.lang.StringBuilder",
+      "insert": "java.lang.StringBuilder",
+      "replace": "java.lang.StringBuilder",
+      "reverse": "java.lang.StringBuilder",
+      "toString": "java.lang.String"
+    },
+    "java.time.Duration": {
+      "between": "java.time.Duration",
+      "minus": "java.time.Duration",
+      "negated": "java.time.Duration",
+      "ofDays": "java.time.Duration",
+      "ofHours": "java.time.Duration",
+      "ofMillis": "java.time.Duration",
+      "ofMinutes": "java.time.Duration",
+      "ofSeconds": "java.time.Duration",
+      "plus": "java.time.Duration"
+    },
+    "java.time.Instant": {
+      "atZone": "java.time.ZonedDateTime",
+      "minusSeconds": "java.time.Instant",
+      "now": "java.time.Instant",
+      "ofEpochMilli": "java.time.Instant",
+      "ofEpochSecond": "java.time.Instant",
+      "parse": "java.time.Instant",
+      "plusMillis": "java.time.Instant",
+      "plusSeconds": "java.time.Instant",
+      "toString": "java.lang.String"
+    },
+    "java.time.LocalDate": {
+      "atStartOfDay": "java.time.LocalDateTime",
+      "atTime": "java.time.LocalDateTime",
+      "format": "java.lang.String",
+      "getDayOfWeek": "java.time.DayOfWeek",
+      "minusDays": "java.time.LocalDate",
+      "minusMonths": "java.time.LocalDate",
+      "now": "java.time.LocalDate",
+      "of": "java.time.LocalDate",
+      "parse": "java.time.LocalDate",
+      "plusDays": "java.time.LocalDate",
+      "plusMonths": "java.time.LocalDate",
+      "plusWeeks": "java.time.LocalDate",
+      "plusYears": "java.time.LocalDate",
+      "toString": "java.lang.String",
+      "withDayOfMonth": "java.time.LocalDate"
+    },
+    "java.time.LocalDateTime": {
+      "atZone": "java.time.ZonedDateTime",
+      "format": "java.lang.String",
+      "minusDays": "java.time.LocalDateTime",
+      "minusHours": "java.time.LocalDateTime",
+      "minusMinutes": "java.time.LocalDateTime",
+      "now": "java.time.LocalDateTime",
+      "of": "java.time.LocalDateTime",
+      "parse": "java.time.LocalDateTime",
+      "plusDays": "java.time.LocalDateTime",
+      "plusHours": "java.time.LocalDateTime",
+      "plusMinutes": "java.time.LocalDateTime",
+      "plusMonths": "java.time.LocalDateTime",
+      "plusSeconds": "java.time.LocalDateTime",
+      "toInstant": "java.time.Instant",
+      "toLocalDate": "java.time.LocalDate",
+      "toLocalTime": "java.time.LocalTime",
+      "toString": "java.lang.String",
+      "truncatedTo": "java.time.LocalDateTime",
+      "withNano": "java.time.LocalDateTime"
+    },
+    "java.time.ZonedDateTime": {
+      "format": "java.lang.String",
+      "now": "java.time.ZonedDateTime",
+      "plusDays": "java.time.ZonedDateTime",
+      "toInstant": "java.time.Instant",
+      "toLocalDate": "java.time.LocalDate",
+      "toLocalDateTime": "java.time.LocalDateTime",
+      "toString": "java.lang.String"
+    },
+    "java.time.format.DateTimeFormatter": {
+      "ISO_DATE": "java.time.format.DateTimeFormatter",
+      "ofPattern": "java.time.format.DateTimeFormatter",
+      "withZone": "java.time.format.DateTimeFormatter"
+    },
+    "java.util.Collection": {
+      "iterator": "java.util.Iterator",
+      "parallelStream": "java.util.stream.Stream",
+      "stream": "java.util.stream.Stream",
+      "toArray": "java.lang.Object"
+    },
+    "java.util.List": {
+      "copyOf": "java.util.List",
+      "listIterator": "java.util.ListIterator",
+      "of": "java.util.List",
+      "subList": "java.util.List"
+    },
+    "java.util.Map": {
+      "entry": "java.util.Map.Entry",
+      "entrySet": "java.util.Set",
+      "keySet": "java.util.Set",
+      "of": "java.util.Map",
+      "values": "java.util.Collection"
+    },
+    "java.util.Optional": {
+      "empty": "java.util.Optional",
+      "filter": "java.util.Optional",
+      "flatMap": "java.util.Optional",
+      "map": "java.util.Optional",
+      "of": "java.util.Optional",
+      "ofNullable": "java.util.Optional",
+      "or": "java.util.Optional",
+      "stream": "java.util.stream.Stream"
+    },
+    "java.util.Set": {
+      "copyOf": "java.util.Set",
+      "of": "java.util.Set"
+    },
+    "java.util.stream.Collectors": {
+      "averagingInt": "java.lang.Double",
+      "counting": "java.lang.Long",
+      "groupingBy": "java.util.Map",
+      "joining": "java.lang.String",
+      "summingInt": "java.lang.Integer",
+      "summingLong": "java.lang.Long",
+      "toList": "java.util.List",
+      "toMap": "java.util.Map",
+      "toSet": "java.util.Set"
+    },
+    "java.util.stream.Stream": {
+      "distinct": "java.util.stream.Stream",
+      "filter": "java.util.stream.Stream",
+      "findAny": "java.util.Optional",
+      "findFirst": "java.util.Optional",
+      "flatMap": "java.util.stream.Stream",
+      "iterator": "java.util.Iterator",
+      "limit": "java.util.stream.Stream",
+      "map": "java.util.stream.Stream",
+      "max": "java.util.Optional",
+      "min": "java.util.Optional",
+      "peek": "java.util.stream.Stream",
+      "reduce": "java.util.Optional",
+      "skip": "java.util.stream.Stream",
+      "sorted": "java.util.stream.Stream",
+      "toList": "java.util.List"
+    }
+  }
+}

@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
 import { cachedScan } from '../test-support/scan-cache.mjs';
-import { index } from '../engine/syntax/java.mjs';
+import { index } from './fixtures/syntax-java.mjs';
 import { parseCite } from '../engine/validate.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));

@@ -2,29 +2,29 @@
  "hertzbeat": {
   "rates": {
    "supertypes resolved": [
-    1081,
-    1083,
+    2157,
+    2157,
     100
    ],
    "fields with a resolved type": [
-    6539,
-    6546,
+    10996,
+    10996,
     100
    ],
    "receiver typing": [
-    96840,
-    110822,
-    87
+    104779,
+    111512,
+    94
    ],
    "project targets": [
-    49048,
-    52572,
-    93
+    51427,
+    53714,
+    96
    ],
    "ambiguous targets": [
-    937,
-    52572,
-    2
+    0,
+    53714,
+    0
    ],
    "endpoints with a fully resolved path": [
     320,
@@ -32,41 +32,41 @@
     100
    ],
    "annotations understood": [
-    8991,
-    9322,
+    9066,
+    9413,
     96
    ]
   },
-  "unknownAnnotations": 3,
+  "unknownAnnotations": 5,
   "unknownBaseClasses": 54,
   "uncataloguedDependencies": 96
  },
  "fineract": {
   "rates": {
    "supertypes resolved": [
-    3987,
-    3987,
+    4343,
+    4343,
     100
    ],
    "fields with a resolved type": [
-    23309,
-    23318,
+    27327,
+    27327,
     100
    ],
    "receiver typing": [
-    136520,
-    154481,
-    88
+    143360,
+    154466,
+    93
    ],
    "project targets": [
-    88179,
-    99602,
-    89
+    97190,
+    103182,
+    94
    ],
    "ambiguous targets": [
-    6548,
-    99602,
-    7
+    0,
+    103182,
+    0
    ],
    "endpoints with a fully resolved path": [
     974,
@@ -74,8 +74,8 @@
     100
    ],
    "annotations understood": [
-    32716,
-    33661,
+    32721,
+    33668,
     97
    ]
   },
@@ -86,29 +86,29 @@
  "cargotracker": {
   "rates": {
    "supertypes resolved": [
-    71,
-    71,
+    74,
+    74,
     100
    ],
    "fields with a resolved type": [
-    277,
-    277,
+    283,
+    283,
     100
    ],
    "receiver typing": [
-    1302,
-    1383,
-    94
+    1327,
+    1374,
+    97
    ],
    "project targets": [
-    581,
-    622,
-    93
+    612,
+    630,
+    97
    ],
    "ambiguous targets": [
-    18,
-    622,
-    3
+    0,
+    630,
+    0
    ],
    "endpoints with a fully resolved path": [
     3,

@@ -1,7 +1,7 @@
 // L3: the symbol model. Every declaration in the project, with full names and the imports needed to resolve them.
 // Bodies stay in the syntax index; this layer only adds identity and the links a fact can be built on.
 import assert from 'node:assert';
-import { evalString } from './strings.mjs';
+import { evalString } from '../../engine/model/strings.mjs';
 
 const simpleOf = (name) => name.split('.').pop();
 
@@ -129,8 +129,11 @@ export function buildModel(files) {
       const t = innermost(m.nameLine);
       if (!t) continue;
       // Parameter annotations carry meaning too (@PathParam, @RequestBody, @NotNull): resolve them with the method.
+      // The id is identity, not resolution: every layer keys a method by the same string.
+      const params = (m.params ?? []).map((p) => String(p.type ?? '').replace(/\s+/g, '')).join(',');
       t.methods.push({
         ...m,
+        id: `${t.fqn}#${m.name}(${params})`,
         ann: m.ann.map((a) => ({ ...a, fqn: resolve(a.name) })),
         params: (m.params ?? []).map((p) => ({
           ...p,

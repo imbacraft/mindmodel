@@ -5,10 +5,11 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { index } from '../engine/syntax/java.mjs';
-import { buildModel } from '../engine/model/model.mjs';
-import { bindCalls } from '../engine/model/calls.mjs';
-import { generatedRules, loadCatalogs, selectCatalogs, signatureIndex } from '../engine/catalogs/catalog.mjs';
+import { index } from './fixtures/syntax-java.mjs';
+import { buildModelFromDump } from '../engine/model/from-dump-model.mjs';
+import { bindingRates } from '../engine/model/calls.mjs';
+import { open } from '../engine/dump.mjs';
+import { loadCatalogs, selectCatalogs } from '../engine/catalogs/catalog.mjs';
 import { extractEndpoints } from '../engine/extract/endpoints.mjs';
 import { extractOutside } from '../engine/extract/outside.mjs';
 import { extractState } from '../engine/extract/state.mjs';
@@ -29,15 +30,20 @@ function javaFiles(dir, out = []) {
 
 const root = path.join(os.homedir(), 'Projects/test-apps/cargotracker');
 
+const hasDump = () => fs.existsSync(path.join(root, 'mindmodel/.work/dump'));
+
 function pipeline() {
   const files = javaFiles(root).map((p) => ({
     p: path.relative(root, p).split(path.sep).join('/'),
     ix: index(fs.readFileSync(p, 'utf8')),
   }));
-  const model = buildModel(files);
+  // The engine's answers, the same door production uses: no model without a dump.
+  const dumpDir = path.join(root, 'mindmodel/.work/dump');
+  const sources = new Map(files.map((f) => [f.p, { pkg: f.ix.pkg, imports: f.ix.imports }]));
+  const model = buildModelFromDump(open(dumpDir), sources);
+  bindingRates(model);
   const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
   const selected = selectCatalogs(loadCatalogs(), { imports });
-  bindCalls(model, signatureIndex(selected), generatedRules(selected));
   const endpoints = extractEndpoints(model, selected);
   const outside = extractOutside(model, selected);
   const state = extractState(model, selected);
@@ -52,7 +58,7 @@ const envelope = (f) => {
   for (const e of f.evidence ?? []) assert.ok(parseCite(e), `evidence resolves: ${e}`);
 };
 
-test('skeleton: endpoints walk the whole pipeline on cargotracker', { skip: !fs.existsSync(root) && 'app not found' }, () => {
+test('skeleton: endpoints walk the whole pipeline on cargotracker', { skip: (!fs.existsSync(root) || !hasDump()) && 'app or dump not found' }, () => {
   const { endpoints: facts } = pipeline();
   assert.ok(facts.length > 0, 'the app has endpoints');
   assert.ok(facts.every((f) => f.handler && f.path), 'every fact names a handler and a path');
@@ -63,7 +69,7 @@ test('skeleton: endpoints walk the whole pipeline on cargotracker', { skip: !fs.
   }
 });
 
-test('skeleton: calls resolve to methods that exist, and the rates are measured', { skip: !fs.existsSync(root) && 'app not found' }, () => {
+test('skeleton: calls resolve to methods that exist, and the rates are measured', { skip: (!fs.existsSync(root) || !hasDump()) && 'app or dump not found' }, () => {
   const { model } = pipeline();
   const ids = new Set();
   for (const t of model.types.values()) for (const m of t.methods) if (m.id) ids.add(m.id);
@@ -87,7 +93,7 @@ test('skeleton: calls resolve to methods that exist, and the rates are measured'
   assert.ok(model.bindings.targeted <= model.bindings.project, 'project targets is a rate');
 });
 
-test('skeleton: the slice-2 families keep their envelope and ids', { skip: !fs.existsSync(root) && 'app not found' }, () => {
+test('skeleton: the slice-2 families keep their envelope and ids', { skip: (!fs.existsSync(root) || !hasDump()) && 'app or dump not found' }, () => {
   const { endpoints, outside, state, transactions, transactionCounts } = pipeline();
   for (const f of [...outside, ...state, ...transactions]) envelope(f);
   for (const list of [outside, state, transactions]) {

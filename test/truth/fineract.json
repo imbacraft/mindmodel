@@ -89,13 +89,12 @@
   "call": "savingsToSavingsTransfer",
   "recv": null,
   "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
-  "recvHow": "direct",
-  "how": "ambiguous",
+  "recvHow": "static",
+  "how": "direct",
   "targets": [
-   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToSavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,SavingsAccountTransaction,LocalDate,Money,String,PaymentDetail)",
-   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToSavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,SavingsAccountTransaction,LocalDate,OffsetTime,Money,String)"
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToSavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,SavingsAccountTransaction,LocalDate,Money,String,PaymentDetail)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/domain/AccountTransferTransaction.java",
@@ -103,13 +102,12 @@
   "call": "savingsToLoanTransfer",
   "recv": null,
   "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
-  "recvHow": "direct",
-  "how": "ambiguous",
+  "recvHow": "static",
+  "how": "direct",
   "targets": [
-   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToLoanTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,Money,String,PaymentDetail)",
-   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToLoanTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,OffsetTime,Money,String)"
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#savingsToLoanTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,Money,String,PaymentDetail)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/domain/AccountTransferTransaction.java",
@@ -117,13 +115,12 @@
   "call": "loanTosavingsTransfer",
   "recv": null,
   "recvFqn": "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction",
-  "recvHow": "direct",
-  "how": "ambiguous",
+  "recvHow": "static",
+  "how": "direct",
   "targets": [
-   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#loanTosavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,Money,String,PaymentDetail)",
-   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#loanTosavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,OffsetTime,Money,String)"
+   "org.apache.fineract.portfolio.account.domain.AccountTransferTransaction#loanTosavingsTransfer(AccountTransferDetails,SavingsAccountTransaction,LoanTransaction,LocalDate,Money,String,PaymentDetail)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/jobs/executestandinginstructions/StandingInstructionItemProcessor.java",
@@ -132,24 +129,22 @@
   "recv": "DateUtils",
   "recvFqn": "org.apache.fineract.infrastructure.core.service.DateUtils",
   "recvHow": "static",
-  "how": "ambiguous",
+  "how": "direct",
   "targets": [
-   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(LocalDate,LocalDate)",
-   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(LocalDateTime,LocalDateTime)",
-   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(OffsetDateTime,OffsetDateTime)"
+   "org.apache.fineract.infrastructure.core.service.DateUtils#isBefore(LocalDate,LocalDate)"
   ],
-  "note": "ambiguous"
+  "note": "was ambiguous; resolved by Spoon from the argument types (checked against the source)"
  },
  {
   "file": "custom/acme/loan/cob/src/main/java/com/acme/fineract/loan/cob/AcmeNoopBusinessStep.java",
   "line": 43,
   "call": "getCanonicalName",
   "recv": "call",
-  "recvFqn": null,
-  "recvHow": "unresolved",
-  "how": "unresolved",
+  "recvFqn": "java.lang.Class",
+  "recvHow": "chain",
+  "how": "external",
   "targets": [],
-  "note": "unresolved"
+  "note": "the receiver is the Class returned by getClass()"
  },
  {
   "file": "custom/acme/loan/cob/src/main/java/com/acme/fineract/loan/cob/AcmeNoopBusinessStep.java",
@@ -157,21 +152,21 @@
   "call": "getClass",
   "recv": null,
   "recvFqn": "com.acme.fineract.loan.cob.AcmeNoopBusinessStep",
-  "recvHow": "direct",
+  "recvHow": "this",
   "how": "unresolved",
   "targets": [],
-  "note": "unresolved"
+  "note": "implicit this.getClass(); the receiver is the enclosing instance"
  },
  {
   "file": "custom/acme/loan/job/src/main/java/com/acme/fineract/loan/job/AcmeJobNameConfig.java",
   "line": 33,
   "call": "name",
   "recv": "AcmeJobName.ACME_NOOP_JOB",
-  "recvFqn": null,
-  "recvHow": "unresolved",
+  "recvFqn": "com.acme.fineract.loan.job.AcmeJobName",
+  "recvHow": "field",
   "how": "unresolved",
   "targets": [],
-  "note": "unresolved"
+  "note": "an enum constant is a static field read"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
@@ -356,11 +351,9 @@
   "recv": "fromDateParam",
   "recvFqn": "org.apache.fineract.infrastructure.core.api.DateParam",
   "recvHow": "param",
-  "how": "direct",
-  "targets": [
-   "org.apache.fineract.infrastructure.core.api.DateParam#getDate(String,DateFormat,String)"
-  ],
-  "note": "param"
+  "how": "external",
+  "targets": [],
+  "note": "DateParam.java yields no type inside the full fineract model (parses alone), so this site stays unresolved; documented gap"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",

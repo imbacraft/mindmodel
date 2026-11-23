@@ -33,20 +33,6 @@ export function loadCatalogs(dir = HERE) {
 // An entry may name one FQN or the Spring/Jakarta spellings of the same idea.
 export const fqnsOf = (entry) => entry.fqns ?? (entry.fqn ? [entry.fqn] : []);
 
-// Members a framework writes without a declaration, as catalog data: @Slf4j's `log` field and @Data's accessors. The
-// resolver reads this instead of carrying a list of Lombok annotation names of its own.
-export function generatedRules(selected) {
-  const rules = { loggers: [], getters: new Set(), setters: new Set() };
-  for (const { catalog: cat } of selected) {
-    const g = cat?.generates;
-    if (!g) continue;
-    for (const l of g.loggers ?? []) rules.loggers.push(l);
-    for (const a of g.getters ?? []) rules.getters.add(a);
-    for (const a of g.setters ?? []) rules.setters.add(a);
-  }
-  return rules;
-}
-
 // A catalog applies when the build declares one of its deps, when a source import matches one of its prefixes, or —
 // for a catalog with no `when` rule at all — always (the `ignore` catalog: annotations known to carry no fact, whose
 // absence of meaning is not a blind spot). `why` is what a fact's trace quotes.
@@ -73,6 +59,15 @@ export function selectCatalogs(catalogs, { deps = [], imports = [] } = {}) {
 export function selectForModel(model, catalogs, { deps = [] } = {}) {
   const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
   return selectCatalogs(catalogs, { deps, imports });
+}
+
+/** Every FQN the selected catalogs name (annotations and explained types): what a framework package contains. */
+export function annotationFqns(selected) {
+  const out = new Set();
+  for (const { catalog } of selected)
+    for (const group of [catalog.annotations ?? [], catalog.types ?? []])
+      for (const entry of group) for (const fqn of fqnsOf(entry)) out.add(fqn);
+  return out;
 }
 
 // fqn -> [{ entry, catalog }] across the selected catalogs. One FQN can carry several meanings by placement:
@@ -112,15 +107,6 @@ export function typeIndex(selected) {
   return byFqn;
 }
 
-// JDK signatures: return types (and their type variables) for the APIs a call chain goes through. One entry per type;
-// a later catalog never overrides the JDK's own knowledge.
-export function signatureIndex(selected) {
-  const byType = new Map();
-  for (const { catalog } of selected)
-    for (const sig of catalog.signatures ?? []) if (!byType.has(sig.type)) byType.set(sig.type, sig);
-  return byType;
-}
-
 // Simple-name matches, used only when the FQN could not be resolved (that fact is then `inferred`).
 export const simpleMeans = (index, name, on) =>
   (index.bySimple.get(name) ?? []).filter((h) => !h.entry.on || h.entry.on.includes(on));
@@ -146,11 +132,6 @@ export const simpleMeans = (index, name, on) =>
   const none = selectCatalogs(catalogs, { imports: ['com.example.internal'] });
   assert.deepStrictEqual(none.map((s) => s.catalog.id), ['ignore', 'jdk'], 'only the always-on catalogs apply');
   assert.ok(none.every((s) => s.why === 'selected always'));
-
-  // The JDK signature catalog is data: a chain through List.get knows what it returns.
-  const sigs = signatureIndex(none);
-  assert.equal(sigs.get('java.util.List')?.methods.get, 'E');
-  assert.deepStrictEqual(sigs.get('java.util.stream.Stream')?.byArg.collect[0].returns, 'java.util.List<E>');
 
   // Base classes a catalog explains are not blind spots; the index answers by resolved FQN.
   const types = typeIndex(selectCatalogs(catalogs, { deps: ['org.springframework.boot:spring-boot-starter-data-jpa'] }));

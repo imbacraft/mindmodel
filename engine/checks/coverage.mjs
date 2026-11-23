@@ -297,7 +297,7 @@ export function coverageLine(cov) {
       },
     },
   ];
-  const { buildModel } = await import('../model/model.mjs');
+  const { buildModel } = await import('../../test/fixtures/model-from-source.mjs');
   const model = buildModel(files);
   model.degraded = new Set();
   const selected = [

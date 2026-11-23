@@ -16,6 +16,8 @@ const LISTENER = /(?:^|\.)(JmsListener|RabbitListener|KafkaListener|MessageDrive
 const BOUNDARY = new Set(['requires-new', 'after-commit', 'outside-in-transaction', 'outside-then-save']);
 // A consumer loop is walked further than a request: its effect is often four or five hops away.
 const WORKER_DEPTH = 18;
+// A request reaches the save behind a base service at five hops once the targets are exact.
+const FLOW_DEPTH = 5;
 // A worker is summarized by reachability, not by every trail: the alert pipeline alone has hundreds of call chains,
 // and what a reader needs is the ordered first sighting of each method plus every effect it can reach.
 const WORKER_METHODS = 1500;
@@ -129,9 +131,11 @@ export function flowEntries(model, endpoints = [], selected = []) {
   for (const e of endpoints) {
     if (!ENTRY_VERB.has(e.verb) && e.verb !== 'GET') continue;
     const t = model.types.get(e.handlerFqn);
+    // An inherited mapping runs the declaring class's method, for this controller: the context is the controller.
+    const owner = model.types.get(e.declaredIn ?? e.handlerFqn) ?? t;
     const name = String(e.handler ?? '').split('.').pop();
-    const m = t?.methods.find((x) => x.name === name && x.hasBody !== false);
-    if (t && m) entries.push({ kind: 'endpoint', verb: e.verb, path: e.path, t, m });
+    const m = owner?.methods.find((x) => x.name === name && x.hasBody !== false);
+    if (t && m) entries.push({ kind: 'endpoint', verb: e.verb, path: e.path, t, m, owner, ctx: t.fqn });
   }
   for (const t of model.types.values())
     for (const m of t.methods) {
@@ -198,6 +202,8 @@ export function buildFlows(
     selected = [],
     securityRules = [],
     frontendPaths = [],
+    // Depth 5 needs exact targets; while the Node resolver still guesses, ambiguous targets would multiply instead.
+    exactTargets = false,
   } = {},
 ) {
   const { isPoll, isExecutor } = callClassifier(selected);
@@ -207,10 +213,16 @@ export function buildFlows(
   const refs = new Map((entities ?? []).map((e) => [e.name, e.refs ?? 0]));
 
   // ---- the walk -----------------------------------------------------------------------------------------------
-  // Collects, per method, the effect-bearing trails under it. Memoized per method: a shared service is walked once.
+  // The class the code runs for. An inherited mapping runs for the concrete controller, and the Java engine's
+  // per-class answers (`call.targetsIn[ctx]`) say what the call reaches there. Entering a concrete class switches the
+  // context; abstract parents keep it, because their code is the subclass's code.
+  const targetsOf = (c, ctx) => (ctx && c.targetsIn?.[ctx]) || c.targets || [];
+  const ctxAfter = (nt, ctx) => (nt.kind === 'class' && !nt.abstract ? nt.fqn : ctx);
+  const DEPTH = exactTargets ? FLOW_DEPTH : 3;
+  // Collects, per method and context, the effect-bearing trails under it. Memoized: a shared service is walked once.
   const memo = new Map();
-  const trailsOf = (t, m, depth) => {
-    const key = `${m.id}|${depth}`;
+  const trailsOf = (t, m, ctx, depth) => {
+    const key = `${ctx}|${m.id}|${depth}`;
     if (memo.has(key)) return memo.get(key);
     const out = [];
     memo.set(key, out); // inserted before the walk: a cyclic call graph terminates and yields what it found
@@ -221,13 +233,19 @@ export function buildFlows(
         out.push({ ids: [], hops: [], effects: [eff] });
         continue;
       }
-      for (const id of c.targets ?? []) {
+      for (const id of targetsOf(c, ctx)) {
         const [fqn] = id.split('#');
         const nt = model.types.get(fqn);
         const nm = nt?.methods.find((x) => x.id === id);
         if (!nm || nm.hasBody === false) continue;
-        if (!depth) continue;
-        for (const sub of trailsOf(nt, nm, depth - 1))
+        // A super call to the same name continues this method in its parent: a pass-through, not a hop deeper. Only
+        // with exact targets, because an ambiguous super target would branch without ever using a depth step.
+        const step = exactTargets && c.recvHow === 'super' && nm.name === m.name ? 0 : 1;
+        if (depth < step) continue;
+        // The context only changes where the engine gave a per-class answer; without one, switching it per hop
+        // would split the memo for no gain.
+        const nextCtx = c.targetsIn?.[ctx] ? ctxAfter(nt, ctx) : ctx;
+        for (const sub of trailsOf(nt, nm, nextCtx, depth - step))
           out.push({ ids: [nm.id, ...sub.ids], hops: [`${nt.name}#${nm.name}`, ...sub.hops], effects: sub.effects });
       }
     }
@@ -237,7 +255,7 @@ export function buildFlows(
   // Worker reachability: breadth-first with parent links, so the hop list is the path to an effect rather than every
   // method the loop touches. An executor call is not a wall: the calls inside the Runnable handed to it belong to the
   // same method and run in the worker, so they are walked too (hertzbeat's `pool.executeNotify(type, () -> send(...))`).
-  const workerReach = (t, m) => {
+  const workerReach = (t, m, ctx) => {
     const parent = new Map([[m.id, null]]);
     const hops = [],
       found = [],
@@ -265,7 +283,7 @@ export function buildFlows(
         return [];
       }
       const out = [];
-      for (const id of c.targets ?? []) {
+      for (const id of targetsOf(c, ctx)) {
         if (parent.has(id)) continue;
         const [fqn] = id.split('#');
         const nt = model.types.get(fqn);
@@ -301,8 +319,11 @@ export function buildFlows(
   };
 
   const flows = [];
-  for (const { kind, verb, path, t, m, inferred: entryInferred } of entries) {
-    const trails = kind === 'worker' ? null : trailsOf(t, m, 3);
+  for (const { kind, verb, path, t, m, owner, ctx: entryCtx, inferred: entryInferred } of entries) {
+    // The context is the concrete class the entry runs for; an inherited mapping runs the owner's method for it.
+    const ctx = entryCtx ?? t.fqn;
+    const codeOf = owner ?? t;
+    const trails = kind === 'worker' ? null : trailsOf(t, m, ctx, DEPTH);
     if (kind !== 'worker' && !trails.length) continue; // no effect reachable: not a flow
     // One line per entry: the union of the effect-bearing trails, in discovery order, effects named at the end.
     let hops = [],
@@ -313,7 +334,7 @@ export function buildFlows(
         for (const e of tr.effects) if (!found.some((x) => x.site === e.site && x.kind === e.kind)) found.push(e);
       }
     } else {
-      const r = workerReach(t, m);
+      const r = workerReach(t, m, ctx);
       hops = r.hops.slice(0, 20);
       found = r.effects;
       if (!found.length) continue; // a loop that reaches no effect is not a flow
@@ -375,19 +396,20 @@ export function buildFlows(
         visitor ? FLOW_WEIGHTS.publicEntry : access === 'authenticated' || access.startsWith('role:') ? FLOW_WEIGHTS.internalEntry : 0);
       add('frontend-called', publicPage ? FLOW_WEIGHTS.frontendCall : 0);
     }
-    const act = activityOf(t.file);
+    const act = activityOf(codeOf.file);
     add(`activity ${act} commit(s)`, act > 0 ? FLOW_WEIGHTS.activity : 0);
 
     flows.push({
-      id: `flow:${m.id}`,
-      entry: { kind, verb: verb ?? null, path: path ?? null, method: m.id, cite: `${t.file}:${m.nameLine}#${m.name}` },
+      // The same inherited method serves many controllers: the context keeps their flows apart.
+      id: `flow:${m.id}${codeOf !== t ? `@${t.fqn}` : ''}`,
+      entry: { kind, verb: verb ?? null, path: path ?? null, method: m.id, cite: `${codeOf.file}:${m.signatureLine ?? m.nameLine}#${m.name}` },
       steps: [...hops, ...found.map((e) => e.label)],
       effects: found,
       score,
       why,
       confidence: entryInferred ? 'inferred' : found.every((e) => e.cite) ? 'resolved' : 'inferred',
-      evidence: [`${t.file}:${m.nameLine}#${m.name}`, ...found.map((e) => e.cite).filter(Boolean)].slice(0, 6),
-      file: t.file,
+      evidence: [`${codeOf.file}:${m.signatureLine ?? m.nameLine}#${m.name}`, ...found.map((e) => e.cite).filter(Boolean)].slice(0, 6),
+      file: codeOf.file,
     });
   }
 
@@ -414,9 +436,9 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
 // Fixtures: an effectless path is not a flow; a transaction boundary outranks an otherwise equal flow; the order is
 // stable; a response envelope is not a step.
 {
-  const { index } = await import('../syntax/java.mjs');
-  const { buildModel } = await import('../model/model.mjs');
-  const { bindCalls } = await import('../model/calls.mjs');
+  const { index } = await import('../../test/fixtures/syntax-java.mjs');
+  const { buildModel } = await import('../../test/fixtures/model-from-source.mjs');
+  const { linkCalls } = await import('../model/link-for-tests.mjs');
   const L = (...x) => x.join('\n');
   const src = {
     'src/a/Order.java': L('package a;', 'public class Order {', '  public void mark() { }', '}'),
@@ -448,7 +470,7 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
     ),
   };
   const model = buildModel(Object.entries(src).map(([p, text]) => ({ p, text, ix: index(text) })));
-  bindCalls(model, new Map());
+  linkCalls(model);
   const endpoints = [
     { verb: 'POST', path: '/orders', handlerFqn: 'a.Ctl', handler: 'Ctl.create' },
     { verb: 'GET', path: '/orders', handlerFqn: 'a.Ctl', handler: 'Ctl.read' },
@@ -479,9 +501,9 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
 // The caps and the UI entry: a fan-out to the same client target is one outside effect; entity points stop at five;
 // a public action on a @Named bean is a UI entry, weighted like POST.
 {
-  const { index } = await import('../syntax/java.mjs');
-  const { buildModel } = await import('../model/model.mjs');
-  const { bindCalls } = await import('../model/calls.mjs');
+  const { index } = await import('../../test/fixtures/syntax-java.mjs');
+  const { buildModel } = await import('../../test/fixtures/model-from-source.mjs');
+  const { linkCalls } = await import('../model/link-for-tests.mjs');
   const { loadCatalogs } = await import('../catalogs/catalog.mjs');
   const L = (...x) => x.join('\n');
   const methods = ['a', 'b', 'c', 'd', 'e', 'f'];
@@ -509,7 +531,7 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
     'src/u/Bulk.java': L(...body),
   };
   const model = buildModel(Object.entries(src).map(([p, text]) => ({ p, text, ix: index(text) })));
-  bindCalls(model, new Map());
+  linkCalls(model);
   const stateWrites = methods.map((m, i) => ({
     id: `w${i}`,
     family: 'state-write',
@@ -540,4 +562,45 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
   assert.match(why, /entities 6 \(cap 5\)/);
   assert.match(why, /entities .* \+15/);
   assert.match(why, /outside 1 \+2/);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// An inherited endpoint: one base method serves two controllers, so the context keeps the two flows apart and the
+// citation points at the code that runs.
+{
+  const { index } = await import('../../test/fixtures/syntax-java.mjs');
+  const { buildModel } = await import('../../test/fixtures/model-from-source.mjs');
+  const { linkCalls } = await import('../model/link-for-tests.mjs');
+  const L = (...x) => x.join('\n');
+  const src = {
+    'src/b/Order.java': L('package b;', 'public class Order { }'),
+    'src/b/Repo.java': L('package b;', 'public interface Repo {', '  void save(Order o);', '}'),
+    'src/b/RepoImpl.java': L('package b;', 'public class RepoImpl implements Repo {', '  public void save(Order o) { }', '}'),
+    'src/b/Base.java': L(
+      'package b;',
+      'public abstract class Base {',
+      '  private Repo repo;',
+      '  public void publish(Order o) { repo.save(o); }',
+      '}',
+    ),
+    'src/b/OrderCtl.java': L('package b;', 'public class OrderCtl extends Base { }'),
+    'src/b/InvoiceCtl.java': L('package b;', 'public class InvoiceCtl extends Base { }'),
+  };
+  const model = buildModel(Object.entries(src).map(([p, text]) => ({ p, text, ix: index(text) })));
+  linkCalls(model);
+  const endpoints = ['b.OrderCtl', 'b.InvoiceCtl'].map((fqn) => ({
+    verb: 'POST',
+    path: '/publish',
+    handlerFqn: fqn,
+    handler: `${fqn.split('.').pop()}.publish`,
+    declaredIn: 'b.Base',
+  }));
+  const stateWrites = [
+    { id: 'w1', family: 'state-write', entity: 'b.Order', repository: 'b.Repo', operation: 'save', method: 'b.Base#publish(Order)', line: 4, evidence: ['src/b/Base.java:4#publish'] },
+  ];
+  const flows = buildFlows(model, { entries: flowEntries(model, endpoints), stateWrites, activityOf: () => 0 });
+  assert.equal(flows.length, 2, 'both controllers serve the inherited endpoint');
+  assert.deepEqual(flows.map((f) => f.id).sort(), ['flow:b.Base#publish(Order)@b.InvoiceCtl', 'flow:b.Base#publish(Order)@b.OrderCtl']);
+  assert.ok(flows.every((f) => f.entry.cite.startsWith('src/b/Base.java:4')), 'the citation is the code that runs');
+  assert.ok(flows.every((f) => f.steps[0] === 'writes Order'), 'the write on the inherited body is the effect');
 }
