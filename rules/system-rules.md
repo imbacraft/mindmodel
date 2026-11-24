@@ -23,7 +23,7 @@ All single-app principles hold (essence not coverage, no filler, every claim cit
 | How it talks | Who calls whom and who listens to what, and which few contracts carry the system? |
 | Main flows | How do the key business flows run across services, hop by hop? |
 | When a hop fails | What happens when the other side is down, slow, or a message comes twice? |
-| System rules & surprises | What must every service do, and what would you get wrong by assuming? |
+| System rules | What must every service do? |
 
 ---
 
@@ -37,7 +37,7 @@ All single-app principles hold (essence not coverage, no filler, every claim cit
 | 4 | Who owns what (3.3) | owners and copies |
 | 5 | How it talks (3.4) | domain order + key contracts |
 | 6 | Main flows (3.5), then When a hop fails (3.6) | flows, failure table |
-| 7 | System rules & surprises (3.7) | ranked rules |
+| 7 | System rules (3.7) | ranked rules |
 | 8 | Overview (3.1), written last | purpose + system sentence |
 | 9 | Critique, verify citations, check budgets | final `system.json` map |
 
@@ -80,7 +80,7 @@ All single-app principles hold (essence not coverage, no filler, every claim cit
 - **One row per important hop** (≤ 8): what happens if the other side is down, slow, or a message arrives twice or out of order. Mechanisms: retries (count, backoff), timeouts, circuit breaker, idempotency key, dead-letter queue, outbox, reconciliation job, compensation, **or nothing** (say it plainly).
 - Rank by damage: money and core data first.
 
-### 3.7 System rules & surprises (≤ 5, ranked)
+### 3.7 System rules (≤ 5, ranked)
 - Conventions every service must follow (auth/tenant propagation, correlation IDs, event naming and versioning, idempotent consumers) and traps (a header JMS listeners never receive, a topic two teams use differently, a library version that changes serialization).
 - Each with an importance line (reach × damage), as in single-app rules.
 
@@ -96,6 +96,6 @@ All single-app principles hold (essence not coverage, no filler, every claim cit
 | Key contracts | ≤ 8 |
 | Flows | 1–4, ≤ 10 hops each |
 | Failure rows | ≤ 8 |
-| Rules & surprises | ≤ 5 |
+| Rules | ≤ 5 |
 | Diagrams | the domain strip (computed) + one sequence per flow |
 | Words, whole page except flows | ≤ 3,000 |

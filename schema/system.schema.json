@@ -1,79 +1,387 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "mindmodel system",
-  "description": "A system mindmodel: what crosses service boundaries (rules/system-rules.md). Service names are spring.application.name values from system.md. A citation is 'path', 'path:line', 'path:start-end' or 'path#method', relative to the scanned folder.",
-  "type": "object",
-  "required": ["version", "project", "overview", "domains", "services", "ownership", "contracts", "flows", "failures", "rules"],
-  "additionalProperties": false,
-  "$defs": {
-    "cites": { "type": "array", "items": { "type": "string", "pattern": "^[^:#]+(:[0-9]+(-[0-9]+)?)?(#\\S+)?$" } },
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "mindmodel system",
+ "description": "A system mindmodel: what crosses service boundaries (rules/system-rules.md). Service names are spring.application.name values from system.md. A citation is 'path', 'path:line', 'path:start-end' or 'path#method', relative to the scanned folder.",
+ "type": "object",
+ "required": [
+  "version",
+  "project",
+  "overview",
+  "domains",
+  "services",
+  "ownership",
+  "contracts",
+  "flows",
+  "failures",
+  "rules"
+ ],
+ "additionalProperties": false,
+ "$defs": {
+  "cites": {
+   "type": "array",
+   "items": {
+    "type": "string",
+    "pattern": "^[^:#]+(:[0-9]+(-[0-9]+)?)?(#\\S+)?$"
+   }
   },
-  "properties": {
-    "version": { "const": "system-0.1" },
-    "project": { "type": "object", "required": ["name", "generatedAt"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "generatedAt": { "type": "string" }, "stack": { "type": "string" } } },
-    "overview": {
-      "type": "object", "required": ["purpose", "sentence", "shape", "cites"], "additionalProperties": false,
-      "properties": {
-        "purpose": { "type": "string", "description": "What the platform does for whom, one sentence." },
-        "sentence": { "type": "string", "description": "How business flows through the domains, in order. Mark domains as [[domain-id|text]]." },
-        "shape": { "type": "string", "description": "One line: services, brokers, gateway, shared libraries." },
-        "cites": { "$ref": "#/$defs/cites" }
-      }
+  "id": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9-]*$"
+  }
+ },
+ "properties": {
+  "version": {
+   "const": "system-0.1"
+  },
+  "project": {
+   "type": "object",
+   "required": [
+    "name",
+    "generatedAt"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "name": {
+     "type": "string"
     },
-    "domains": {
-      "type": "array", "maxItems": 8, "description": "In the order business flows through them (the strip shows them in this order). Platform/infrastructure last.",
-      "items": { "type": "object", "required": ["id", "name", "text"], "additionalProperties": false, "properties": { "id": { "$ref": "#/$defs/id" }, "name": { "type": "string" }, "text": { "type": "string" }, "platform": { "type": "boolean" } } }
+    "generatedAt": {
+     "type": "string"
     },
-    "services": {
+    "stack": {
+     "type": "string"
+    }
+   }
+  },
+  "overview": {
+   "type": "object",
+   "required": [
+    "purpose",
+    "sentence",
+    "shape",
+    "cites"
+   ],
+   "additionalProperties": false,
+   "properties": {
+    "purpose": {
+     "type": "string",
+     "description": "What the platform does for whom, one sentence."
+    },
+    "sentence": {
+     "type": "string",
+     "description": "How business flows through the domains, in order. Mark domains as [[domain-id|text]]."
+    },
+    "shape": {
+     "type": "string",
+     "description": "One line: services, brokers, gateway, shared libraries."
+    },
+    "cites": {
+     "$ref": "#/$defs/cites"
+    }
+   }
+  },
+  "domains": {
+   "type": "array",
+   "maxItems": 8,
+   "description": "In the order business flows through them (the strip shows them in this order). Platform/infrastructure last.",
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "name",
+     "text"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "$ref": "#/$defs/id"
+     },
+     "name": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "platform": {
+      "type": "boolean"
+     }
+    }
+   }
+  },
+  "services": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "domain",
+     "tier",
+     "responsibility"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "type": "string",
+      "description": "spring.application.name, exactly as in system.md."
+     },
+     "domain": {
+      "$ref": "#/$defs/id"
+     },
+     "tier": {
+      "enum": [
+       "core",
+       "supporting",
+       "peripheral"
+      ]
+     },
+     "responsibility": {
+      "type": "string",
+      "description": "What it decides, one line."
+     },
+     "owns": {
       "type": "array",
       "items": {
-        "type": "object", "required": ["name", "domain", "tier", "responsibility"], "additionalProperties": false,
-        "properties": {
-          "name": { "type": "string", "description": "spring.application.name, exactly as in system.md." },
-          "domain": { "$ref": "#/$defs/id" },
-          "tier": { "enum": ["core", "supporting", "peripheral"] },
-          "responsibility": { "type": "string", "description": "What it decides, one line." },
-          "owns": { "type": "array", "items": { "type": "string" } },
-          "importance": { "type": "string", "description": "Core only: why it ranks here, backed by the scan's dependence numbers." },
-          "map": { "type": "string", "description": "Link to its own mindmodel page, if one exists." },
-          "cites": { "$ref": "#/$defs/cites" }
-        }
+       "type": "string"
       }
-    },
-    "ownership": {
-      "type": "array", "maxItems": 8,
-      "items": {
-        "type": "object", "required": ["concept", "owner", "truth", "cites"], "additionalProperties": false,
-        "properties": {
-          "concept": { "type": "string" }, "owner": { "type": "string" }, "truth": { "type": "string" },
-          "copies": { "type": "array", "items": { "type": "object", "required": ["service", "feed", "cites"], "additionalProperties": false, "properties": { "service": { "type": "string" }, "feed": { "type": "string" }, "staleness": { "type": "string" }, "cites": { "$ref": "#/$defs/cites" } } } },
-          "flags": { "type": "array", "items": { "enum": ["shared write", "dual write"] } },
-          "cites": { "$ref": "#/$defs/cites" }
-        }
-      }
-    },
-    "contracts": {
-      "type": "array", "maxItems": 8, "description": "The few contracts the system depends on.",
-      "items": { "type": "object", "required": ["name", "kind", "from", "to", "carries", "cites"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "kind": { "enum": ["rest", "kafka", "jms"] }, "from": { "type": "string" }, "to": { "type": "array", "items": { "type": "string" } }, "carries": { "type": "string" }, "cites": { "$ref": "#/$defs/cites" } } }
-    },
-    "flows": {
-      "type": "array", "minItems": 1, "maxItems": 4,
-      "items": {
-        "type": "object", "required": ["id", "title", "importance", "hops"], "additionalProperties": false,
-        "properties": {
-          "id": { "$ref": "#/$defs/id" }, "title": { "type": "string" }, "importance": { "type": "string" },
-          "hops": { "type": "array", "maxItems": 10, "items": { "type": "object", "required": ["from", "to", "kind", "text", "cites"], "additionalProperties": false, "properties": { "from": { "type": "string" }, "to": { "type": "string" }, "kind": { "enum": ["sync", "async"] }, "text": { "type": "string" }, "compensation": { "type": "boolean" }, "cites": { "$ref": "#/$defs/cites" } } } }
-        }
-      }
-    },
-    "failures": {
-      "type": "array", "maxItems": 8,
-      "items": { "type": "object", "required": ["hop", "onFailure", "cites"], "additionalProperties": false, "properties": { "hop": { "type": "string" }, "onFailure": { "type": "string" }, "mechanism": { "type": "string" }, "cites": { "$ref": "#/$defs/cites" } } }
-    },
-    "rules": {
-      "type": "array", "maxItems": 5,
-      "items": { "type": "object", "required": ["title", "kind", "importance", "text", "cites"], "additionalProperties": false, "properties": { "title": { "type": "string" }, "kind": { "enum": ["rule", "surprise"] }, "importance": { "type": "string" }, "text": { "type": "string" }, "cites": { "$ref": "#/$defs/cites" } } }
+     },
+     "importance": {
+      "type": "string",
+      "description": "Core only: why it ranks here, backed by the scan's dependence numbers."
+     },
+     "map": {
+      "type": "string",
+      "description": "Link to its own mindmodel page, if one exists."
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     }
     }
+   }
+  },
+  "ownership": {
+   "type": "array",
+   "maxItems": 8,
+   "items": {
+    "type": "object",
+    "required": [
+     "concept",
+     "owner",
+     "truth",
+     "cites"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "concept": {
+      "type": "string"
+     },
+     "owner": {
+      "type": "string"
+     },
+     "truth": {
+      "type": "string"
+     },
+     "copies": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "required": [
+        "service",
+        "feed",
+        "cites"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "service": {
+         "type": "string"
+        },
+        "feed": {
+         "type": "string"
+        },
+        "staleness": {
+         "type": "string"
+        },
+        "cites": {
+         "$ref": "#/$defs/cites"
+        }
+       }
+      }
+     },
+     "flags": {
+      "type": "array",
+      "items": {
+       "enum": [
+        "shared write",
+        "dual write"
+       ]
+      }
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     }
+    }
+   }
+  },
+  "contracts": {
+   "type": "array",
+   "maxItems": 8,
+   "description": "The few contracts the system depends on.",
+   "items": {
+    "type": "object",
+    "required": [
+     "name",
+     "kind",
+     "from",
+     "to",
+     "carries",
+     "cites"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "rest",
+       "kafka",
+       "jms"
+      ]
+     },
+     "from": {
+      "type": "string"
+     },
+     "to": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "carries": {
+      "type": "string"
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     }
+    }
+   }
+  },
+  "flows": {
+   "type": "array",
+   "minItems": 1,
+   "maxItems": 4,
+   "items": {
+    "type": "object",
+    "required": [
+     "id",
+     "title",
+     "importance",
+     "hops"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "$ref": "#/$defs/id"
+     },
+     "title": {
+      "type": "string"
+     },
+     "importance": {
+      "type": "string"
+     },
+     "hops": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+       "type": "object",
+       "required": [
+        "from",
+        "to",
+        "kind",
+        "text",
+        "cites"
+       ],
+       "additionalProperties": false,
+       "properties": {
+        "from": {
+         "type": "string"
+        },
+        "to": {
+         "type": "string"
+        },
+        "kind": {
+         "enum": [
+          "sync",
+          "async"
+         ]
+        },
+        "text": {
+         "type": "string"
+        },
+        "compensation": {
+         "type": "boolean"
+        },
+        "cites": {
+         "$ref": "#/$defs/cites"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "failures": {
+   "type": "array",
+   "maxItems": 8,
+   "items": {
+    "type": "object",
+    "required": [
+     "hop",
+     "onFailure",
+     "cites"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "hop": {
+      "type": "string"
+     },
+     "onFailure": {
+      "type": "string"
+     },
+     "mechanism": {
+      "type": "string"
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     }
+    }
+   }
+  },
+  "rules": {
+   "type": "array",
+   "maxItems": 5,
+   "items": {
+    "type": "object",
+    "required": [
+     "title",
+     "importance",
+     "text",
+     "cites"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "title": {
+      "type": "string"
+     },
+     "importance": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "cites": {
+      "$ref": "#/$defs/cites"
+     }
+    }
+   }
   }
+ }
 }

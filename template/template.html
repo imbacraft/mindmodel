@@ -422,10 +422,10 @@ add('background', 'What runs on its own', `
   ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td class="when">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
   </tbody></table></div>${bgInventory()}`);
 
-add('rules', 'Rules & surprises', `
-  <h2>Rules and surprises</h2>
+add('rules', 'Rules', `
+  <h2>Rules</h2>
   <p class="lede">What you would get wrong by reading the code naively, most important first: ranked by how much of the code a rule touches and how bad it is when broken.</p>
-  <div class="rules">${M.rules.map((r, i) => `<div class="r"><div class="rank-col"><span class="rank">${i + 1}</span><span class="kind ${r.kind}">${r.kind}</span></div><div><h3>${esc(r.title)}</h3><p class="importance">${rich(r.importance)}</p><p>${rich(r.text)}</p>${cites(r.cites)}</div></div>`).join('')}</div>`);
+  <div class="rules">${M.rules.map((r, i) => `<div class="r"><div class="rank-col"><span class="rank">${i + 1}</span></div><div><h3>${esc(r.title)}</h3><p class="importance">${rich(r.importance)}</p><p>${rich(r.text)}</p>${cites(r.cites)}</div></div>`).join('')}</div>`);
 
 add('stories', 'Stories', `
   <h2>Stories: the main flows, most important first</h2>

@@ -2,7 +2,7 @@
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "$id": "https://mindmodel.dev/schema/mindmodel-0.7.json",
  "title": "mindmodel",
- "description": "A codebase mind map for humans. Layers follow PRD \u00a75: purpose, context, core concepts, regions, main flow, rules, stories. A citation is a string 'path', 'path:line' or 'path:line-line', relative to the project root. Diagrams are drawn only where they encode relationships or order; in v0.3 that is the main-flow sequence (from mainFlow.lanes/steps). How the core concepts relate is told in one sentence (coreSentence).",
+ "description": "A codebase mind map for humans. Layers follow PRD §5: purpose, context, core concepts, regions, main flow, rules, stories. A citation is a string 'path', 'path:line' or 'path:line-line', relative to the project root. Diagrams are drawn only where they encode relationships or order; in v0.3 that is the main-flow sequence (from mainFlow.lanes/steps). How the core concepts relate is told in one sentence (coreSentence).",
  "type": "object",
  "required": [
   "version",
@@ -218,7 +218,7 @@
    }
   },
   "concepts": {
-   "description": "Core concepts: the \u22645 things everything else is about, each a concept card. A concept may span several entities.",
+   "description": "Core concepts: the ≤5 things everything else is about, each a concept card. A concept may span several entities.",
    "type": "array",
    "minItems": 1,
    "maxItems": 5,
@@ -602,19 +602,12 @@
    "items": {
     "type": "object",
     "required": [
-     "kind",
      "title",
      "text",
      "cites",
      "importance"
     ],
     "properties": {
-     "kind": {
-      "enum": [
-       "rule",
-       "surprise"
-      ]
-     },
      "title": {
       "type": "string"
      },
@@ -634,7 +627,7 @@
      }
     }
    },
-   "description": "Ranked by importance: how much of the code the rule touches \u00d7 how bad it is when broken. Array order is the rank."
+   "description": "Ranked by importance: how much of the code the rule touches × how bad it is when broken. Array order is the rank."
   },
   "stories": {
    "type": "array",
@@ -708,7 +701,7 @@
      }
     }
    },
-   "description": "The main flows of the system as stories, ranked by importance (1-5, never padded; each must run through the absolute core of the app): how central to what the product does \u00d7 how much of the system it runs through. Array order is the rank. No change stories."
+   "description": "The main flows of the system as stories, ranked by importance (1-5, never padded; each must run through the absolute core of the app): how central to what the product does × how much of the system it runs through. Array order is the rank. No change stories."
   },
   "state": {
    "type": "object",

@@ -22,12 +22,12 @@
 | State & source of truth | Where does the truth for each concept live, who may change it, and where can copies disagree? |
 | How a request travels | What happens to *every* API call, whatever the feature? |
 | What runs on its own | What happens with no request at all? |
-| Rules & surprises | What must you never get wrong, and what would surprise you? |
+| Rules | What must you never get wrong? |
 | Stories | How do the main flows actually run, end to end? |
 
 **P3. Every claim is traced to code.** Each statement has a citation (`path`, `path:line` or `path:start-end`, optionally `#symbol`, which the validator checks is in the cited lines). The cited lines must contain what the text says. A claim you cannot trace is dropped, or, only in stories, marked *inferred*.
 
-**P4. The code wins, silently.** Read the project's docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then verify against the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose documentation. Configuration files are code: a config setting that the code ignores or overrides can be a surprise (3.8).
+**P4. The code wins, silently.** Read the project's docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then verify against the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose documentation. Configuration files are code: a config setting that the code ignores or overrides can be a rule (3.8).
 
 **P4a. The coverage line is a boundary, not a footnote.** `facts.md` opens with what the engine resolved and what it did not, and every fact carries a confidence. Treat `parsed` and `resolved` as settled: cite them without re-reading the code. Check `inferred` ones against the code before they reach the page. Anything under "What the engine did not understand" — unknown annotations, base classes no catalog explains, uncatalogued dependencies, source files the model cannot read, degraded files — or in the unresolved endpoints is a place the facts are blind: read the code there before claiming anything about it, or leave it out.
 
@@ -61,7 +61,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 | 6 | How a request travels (Part 3.6) | request path |
 | 7 | What runs on its own (Part 3.7) | background table + generated total |
 | 8 | Stories: choose, rank, trace (Part 3.9) | stories |
-| 9 | Rules & surprises (Part 3.8). Written after tracing, because most surprises show up while tracing | ranked rules |
+| 9 | Rules (Part 3.8). Written after tracing, because most rules show up while tracing | ranked rules |
 | 10 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
 | 11 | **Critique** against Part 4; fix; **verify** every citation; check budgets; trim (Part 5) | final `mindmodel.json` |
 
@@ -92,7 +92,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
   - **Entry points:** one per deployable unit: the backend `main` (from `facts.md` → Boot) and the frontend root (`index.html` script → `main.tsx`), with the dev port and any API proxy from the bundler config. One line each.
   - **Run locally (≤ 3 steps):** the one way to start the **whole app** (dependencies + backend + frontend). If one command does it (e.g. the backend build also builds and serves the frontend), give only that command. List more steps only when the app can't run without them; frontend dev servers and other conveniences are left out. Take them from README, compose file, build file and `package.json` scripts, plus the names (never values) of env vars without which it will not start. If no step is stated or derivable, omit this part; never guess a command.
   - **Copy `facts.md` → Boot, computed** (run command, profile, port, whether the profile file is in git, whether the backend builds the frontend, required settings). Open files only if a line looks wrong. If the section is missing or incomplete, derive it by hand:
-  - **Trace the run command to its profile.** Check which profile the run command activates (build-file run config such as `bootRun` args or the Spring Boot plugin's `profiles`, a `-Dspring.profiles.active` flag, or the env). Name that profile in the run note, and take ports and required settings from **its** config file, citing the line that sets them, not the main class. If its config file is not in git (check the ignore file), say the developer must create it. A conditional bean or flag that changes behavior is not listed here; if it would genuinely surprise a developer (a default that is not what the code claims), it competes for a slot in Rules & surprises (3.8).
+  - **Trace the run command to its profile.** Check which profile the run command activates (build-file run config such as `bootRun` args or the Spring Boot plugin's `profiles`, a `-Dspring.profiles.active` flag, or the env). Name that profile in the run note, and take ports and required settings from **its** config file, citing the line that sets them, not the main class. If its config file is not in git (check the ignore file), say the developer must create it. A conditional bean or flag that changes behavior is not listed here; if it would genuinely surprise a developer (a default that is not what the code claims), it competes for a slot in Rules (3.8).
 
 **Checks:** Could someone outside software understand the purpose sentence? Does it name the user and the value? Is every non-goal backed by a stated source? Does every entry point cite the line that defines it? Does every run step come from a file in the repo?
 
@@ -218,7 +218,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 3. **Steps that can half-succeed (seams, ≤ 4):** places where one change is split into steps that do not commit together: a transaction commits and then an outside system is called; a webhook or job finishes the change later; an event is published before or after commit. Each seam: the span (*first step → second step*), both sides cited, and **what happens when the second step fails or never arrives** (a retry, a cleanup job, a reconciler, or nothing; nothing must be said plainly).
    **Start from `facts.md` → Seams, computed.** Each line is a seam the scanner proved (an outside call inside a transaction, directly or via another bean; an after-commit hook; a new transaction; a job deleting rows). Each must be listed or dismissed on purpose; for an outside call inside a transaction, the usual failure is that the outside side happened and the local row rolled back. A cleanup job that deletes rows matters when an outside callback (a webhook) can still arrive for a deleted row.
 
-**Not here:** field lists, DTO mappings, every table. A trap in how data changes shape across tiers (money as cents, times in UTC) is a surprise (3.8), not a row here.
+**Not here:** field lists, DTO mappings, every table. A trap in how data changes shape across tiers (money as cents, times in UTC) is a rule (3.8), not a row here.
 
 **Checks:** Does every core concept have exactly one owner row? Is every other writer from the scanner's list either on its row or deliberately left off as a seeding/import tool? Does each seam cite both sides and say what happens on failure? Is any copy listed that cannot actually be stale?
 
@@ -253,9 +253,9 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 **Checks:** Does every row describe work that really runs with no request? Is every schedule copied exactly from the code or config? When the generated total is larger than your rows, does the intro or a row tell the reader what the rest of it is?
 
-### 3.8 Rules & surprises
+### 3.8 Rules
 
-**Goal:** the reader never makes the mistakes that matter most, and isn't blindsided by behavior that contradicts a reasonable assumption.
+**Goal:** the reader never makes the mistakes that matter most.
 
 **Candidates come from:**
 - Statements in the project's docs ("always", "never", "must").
@@ -264,14 +264,12 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - Asynchronous boundaries, where effects arrive later than they appear to.
 - Money handling.
 - Cross-cutting "touch X, also change Y" couplings.
-- **Whatever surprised you while tracing the stories.**
+- **Whatever you got wrong yourself while tracing the stories.**
 - Paths the security layer excludes (`facts.authExclusions`, read from `sureness.yml` or Spring Security): an authentication rule must say which paths skip it, not assume every request is checked.
 
 **Qualify:** non-obvious **and** consequential **and** verifiable in code, and stated with its condition (P10a). Not code smells, not style guides (unless breaking them causes real damage), not doc mismatches (P4). Flawed behavior a developer must know to work safely (e.g. "the charged price comes from the browser") qualifies, stated as behavior, never as a vulnerability or an exploit (P6).
 
 **A probable defect is not a rule.** The digest's *Security warnings, computed* section names prefixes that allow anonymous access and expose writes with no method-level check. The map states the condition neutrally ("`/api/shop/**` is anonymous, so `ProductController#create` needs no token") and the gap goes to `findings.md`; it never becomes a rule like "always check the tenant", because that is the missing code, not the code.
-
-**Kind:** *rule* = something you must do or never do. *Surprise* = something that behaves unexpectedly.
 
 **Rank** by **reach × damage**:
 
@@ -315,7 +313,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 A failure path qualifies only if what happens on failure changes core state in a way the developer must know (e.g. a failed payment still saving the order as paid).
 
-**Rank** the qualifying stories by **centrality × breadth**: how central the flow is to what the product does, times how many regions and concepts it runs through. **1–5 stories; never pad.** Two strong stories beat four where two are weak. A failure path ranks directly after the flow it belongs to.
+**Rank** the qualifying stories by **centrality × breadth**: how central the flow is to what the product does, times how many regions and concepts it runs through. **3–5 stories, always ranked, most important first.** The first is the flow that delivers the product's core value — the thing a customer comes for — not a queue consumer or a scheduled job. Order the rest by centrality × breadth, so the list reads from what most people do to what fewest do. A failure path ranks directly after the flow it belongs to. Never pad: if the app genuinely has fewer than three entry flows, say so in the section's first line and give the ones it has.
 
 **Trace, step by step:**
 1. Start at the frontend page or component the user acts on; cite the call site.
@@ -416,7 +414,7 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | State & source of truth | 1 row per core concept; ≤ 5 copies; ≤ 4 seams; ≤ 400 words |
 | How a request travels | ≤ 7 steps, ≤ 5 lanes |
 | What runs on its own | ≤ 10 rows |
-| Rules & surprises | ≤ 5 |
+| Rules | ≤ 5 |
 | Stories | 1–5, each ≤ 10 steps and about 250–500 words |
 | Diagrams | 1: the request-path sequence |
 | Words, core map (everything except stories) | ≤ 3,000 |

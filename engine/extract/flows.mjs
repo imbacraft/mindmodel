@@ -32,11 +32,12 @@ export const FLOW_WEIGHTS = {
   entityWrite: 3, // per distinct entity written
   outsideCall: 2, // per outside call (HTTP, mail, and the message send below counted in addition)
   message: 2, // per message sent
-  risk: 10, // a transaction-boundary fact on the path; bugs hide here
+  risk: 2, // a transaction-boundary fact on the path: a tie-break, never what makes a flow the main flow
   entryWriteVerb: 3, // POST/PUT/PATCH/DELETE
-  entryJob: 3, // scheduled job or message listener
+  entryJob: 2, // scheduled job or message listener: machinery around the product, not the product
   entryUi: 3, // a JSF action method on a UI bean (weighted like POST)
-  entryWorker: 5, // a continuous worker that fans out to every channel is at least as consequential as a request
+  entryWorker: 3, // a continuous worker fans out to every channel, but no user asks for it
+  listenerEntry: -6, // a flow that starts only because another system sent a message is downstream by nature
   // Visibility: a public, visitor-facing path is what the product is; an admin or internal path is not. The facts
   // decide (security rules and the frontend's API calls), never the path's spelling alone.
   publicEntry: 12,
@@ -372,6 +373,9 @@ export function buildFlows(
             ? FLOW_WEIGHTS.entryWorker
             : FLOW_WEIGHTS.entryJob,
     );
+    // Nobody in the product asks for a listener: it runs because another system spoke. Its entity writes and messages
+    // still count, so a consequential consumer stays visible — it just cannot outrank a flow a person starts.
+    if (kind === 'listener') add('listener', FLOW_WEIGHTS.listenerEntry);
     add(
       `entities ${written.length}${written.length > entities ? ` (cap ${entities})` : ''}${written.length ? ` (${written.join(', ')})` : ''}`,
       entities * FLOW_WEIGHTS.entityWrite,
@@ -491,8 +495,8 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
   // One effect, named at the end of the steps; the implementation is the hop, the interface is not.
   assert.deepEqual(flows[0].steps, ['Svc#create', 'writes Order']);
   // Score parts are facts, all of them listed.
-  assert.deepEqual(flows[0].why, ['entry POST +3', 'entities 1 (Order) +3', 'risk outside-in-transaction +10', 'centrality Order +2', 'activity 2 commit(s) +1']);
-  assert.equal(flows[0].score, 19);
+  assert.deepEqual(flows[0].why, ['entry POST +3', 'entities 1 (Order) +3', 'risk outside-in-transaction +2', 'centrality Order +2', 'activity 2 commit(s) +1']);
+  assert.equal(flows[0].score, 11);
   // Same inputs, same order (ties broken by id).
   assert.deepEqual(build(), build());
 }
