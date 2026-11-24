@@ -1064,7 +1064,7 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     const [modal, n] = ranked[0] ?? ['unknown', 0];
     // A prefix rule is stated only when every endpoint under the prefix has it. The modal value used to be reported as
-    // the prefix's rule, so `/api/v1/**: role:role:X` covered 142 endpoints when only the external
+    // the prefix's rule, so `/api/v1/**: role:X` covered every endpoint under the prefix when only the external
     // controllers carried the annotation and the rest were merely authenticated. A share ("role:A on 95 of 142") still
     // names the commonest check, which is what a reader acts on, and never claims it for the whole prefix.
     const mixed = ranked.length > 1;

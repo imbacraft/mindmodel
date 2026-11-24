@@ -152,7 +152,7 @@ export function routePath(line, angular = false) {
 
 // --- end-to-end test code -------------------------------------------------------
 // A Cypress/Playwright spec runs in a browser against a *running* application, so the calls it makes belong to
-// whoever wrote the test, not to this app's frontend: 31 of one app's 48 "unmatched frontend API calls" were helpers in
+// whoever wrote the test, not to this app's frontend: in one run 31 of 48 "unmatched frontend API calls" were helpers in
 // `cypress/cypress/integration/utils/`. The rule mirrors the Java scan's `src/test/` exclusion: a test folder — or the
 // Cypress `*.cy.*` naming — says the file is a test, wherever it sits.
 const E2E_DIRS = new Set([
