@@ -12,9 +12,9 @@ import { cacheJar, lock, matches, sha256 } from '../engine/engine.mjs';
 const REPO = path.resolve(import.meta.dirname, '..');
 const BUILT = path.join(REPO, 'engine-java', 'target', 'mindmodel-engine.jar');
 
-test('the plugin version and the engine lock agree', () => {
-  const plugin = JSON.parse(fs.readFileSync(path.join(REPO, '.claude-plugin', 'plugin.json'), 'utf8'));
-  assert.equal(lock().version, plugin.version, 'plugin.json and engine.lock must name the same release');
+test('the lock names a release that the repository points at', () => {
+  const held = lock();
+  assert.ok(held.url.endsWith(`/engine-v${held.version}/mindmodel-engine.jar`), 'lock version and release URL must agree');
 });
 
 test('the built jar is the artifact the lock pins', { skip: !fs.existsSync(BUILT) && 'run mvn package first' }, () => {
