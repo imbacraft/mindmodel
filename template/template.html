@@ -396,7 +396,7 @@ const bgInventory = () => {
   const rows = b.rows
     .map((r) => `<tr><td><b>${esc(r.name)}</b>${cites([r.cite])}</td><td>${esc(r.kind)}</td><td>${esc(r.args)}</td></tr>`)
     .join('');
-  return `<p class="also">From the code: ${b.total} scheduled / async / listener / socket handler${b.total === 1 ? '' : 's'}.</p>${rows ? `<details><summary>All ${b.total} handlers</summary><div class="wtc"><table><thead><tr><th>Handler</th><th>Kind</th><th>Trigger</th></tr></thead><tbody>${rows}</tbody></table>${b.more ? `<p class="also">+${b.more} more in facts.json</p>` : ''}</div></details>` : ''}`;
+  return `<p class="also">From the code: ${b.total} scheduled / async / listener / socket handler${b.total === 1 ? '' : 's'}.</p>`;
 };
 
 // Knowledge, not weaknesses (rule S4): gaps are in the owner's findings, never on the page.
@@ -419,7 +419,6 @@ add('background', 'What runs on its own', `
 
 add('rules', 'Rules', `
   <h2>Rules</h2>
-  <p class="lede">What the code expects of you, most important first: each rule is ordered by how much of the code it touches and what breaks when it is broken.</p>
   <div class="rules">${M.rules.map((r, i) => `<div class="r"><div class="rank-col"><span class="rank">${i + 1}</span></div><div><h3>${esc(r.title)}</h3><p class="importance">${rich(r.importance)}</p><p>${rich(r.text)}</p>${cites(r.cites)}</div></div>`).join('')}</div>`);
 
 add('stories', 'Stories', `

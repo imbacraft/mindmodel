@@ -252,7 +252,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - **Table**, ≤ 10 rows, grouped by purpose (not one row per class): name · when (human terms: "every 20 s", "hourly", "nightly 03:00") · what it does, in one or two sentences · region · citations to each scheduler or worker.
 - If an item explains user-visible delay ("paid" arrives after the redirect), say it in that row.
 - If the app truly has nothing that runs on its own, say so in the intro: that is itself useful knowledge.
-- **The page also prints, from the code, how many handlers exist in total, with a collapsed list of every one.** Your table is the selection that matters, not the inventory: never pad it to match the count, and never say a handler does not exist because it is not in your table.
+- **The page also prints, from the code, how many handlers exist in total.** Your table is the selection that matters, not the inventory: never pad it to match the count, and never say a handler does not exist because it is not in your table.
 
 **Checks:** Does every row describe work that really runs with no request? Is every schedule copied exactly from the code or config? When the generated total is larger than your rows, does the intro or a row tell the reader what the rest of it is?
 
