@@ -724,7 +724,7 @@
     },
     "owners": {
      "type": "array",
-     "maxItems": 5,
+     "maxItems": 6,
      "items": {
       "type": "object",
       "required": [
