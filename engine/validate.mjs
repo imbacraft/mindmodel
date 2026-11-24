@@ -79,8 +79,6 @@ const BUDGET = {
   storySteps: 10,
   parts: 7,
   coreWords: 3000,
-  copies: 5,
-  seams: 4,
   runSteps: 3,
 };
 
@@ -384,8 +382,6 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   }
   for (const id of conceptIds)
     if (owners.filter((o) => o.concept === id).length !== 1) err(`state: concept "${id}" needs exactly one owner row`);
-  max(map.state.copies, BUDGET.copies, 'state copies');
-  max(map.state.seams, BUDGET.seams, 'state seams');
   max(map.purpose.boot?.run, BUDGET.runSteps, 'boot run steps');
 
   const act = map.regions.filter((r) => r.activity);
@@ -401,6 +397,9 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     max(st.steps, BUDGET.storySteps, `story ${st.id} steps`);
     const touched = new Set(st.steps.map((s) => s.region));
     st.steps.forEach((s) => needRegion(s.region, `story ${st.id}`));
+    // A caution is a rare exception on the step it belongs to (rule 3.9), never a running commentary.
+    const careful = st.steps.filter((s) => s.careful?.trim());
+    if (careful.length > 2) warn(`story ${st.id}: ${careful.length} "careful" cautions (at most 2)`);
     if (touched.size < 2) err(`story ${st.id}: touches ${touched.size} region(s), needs >= 2`);
     touched.forEach((r) => covered.add(r));
   }

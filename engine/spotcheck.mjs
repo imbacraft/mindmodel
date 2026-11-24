@@ -32,10 +32,6 @@ export function claimsOf(map) {
   const state = map.state ?? {};
   for (const row of state.owners ?? [])
     if (row.cites?.length) out.push({ where: `state owner: ${row.concept}`, text: `${row.truth} (writer: ${row.writer})`, cites: row.cites });
-  for (const c of state.copies ?? [])
-    if (c.cites?.length) out.push({ where: `state copy: ${c.name}`, text: `${c.holds}; wins: ${c.wins}`, cites: c.cites });
-  for (const x of state.seams ?? [])
-    if (x.cites?.length) out.push({ where: `state seam: ${x.span ?? ''}`.trim(), text: x.text ?? '', cites: x.cites });
   return out;
 }
 

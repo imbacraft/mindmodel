@@ -15,7 +15,7 @@ It is deliberately *not* complete. Graph tools show hundreds of nodes; mindmodel
 2. **People & outside systems:** who it serves, most important first, and which outside systems it calls.
 3. **Core concepts:** the ≤ 5 things everything else is about, one sentence linking them, and a card each (what it is, what not to confuse it with, its lifecycle, the fields that matter).
 4. **Regions:** where the code lives, ordered along the user's journey, with how often each part changes.
-5. **State & source of truth:** where the truth for each concept lives, which code may change it (shared writes flagged), copies that can go stale, and steps that can half-succeed.
+5. **State & source of truth:** where the truth for each concept lives and which code may change it (shared writes flagged).
 6. **How a request travels:** the path every API call takes, as one sequence diagram.
 7. **What runs on its own:** scheduled jobs, webhooks, queues and async work.
 8. **Rules & surprises:** ranked by how much code they touch × how bad it is to get them wrong.

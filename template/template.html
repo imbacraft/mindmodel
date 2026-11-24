@@ -206,8 +206,8 @@ details.story .body { padding: 0 22px 22px; }
 .wtc td.when { width: 28%; }
 .wtc .cite, .wtc code { overflow-wrap: anywhere; }
 .wtc th { font: 600 13px/1.2 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
-#state h3 { margin: 32px 0 10px; }
-#state .rules h3 { margin: 0 0 6px; }
+ol.steps .careful { margin: 8px 0 6px; padding: 8px 12px; border-left: 3px solid var(--surprise); background: var(--surprise-soft); border-radius: 0 8px 8px 0; color: var(--surprise); font-size: 17px; max-width: 72ch; }
+ol.steps .careful b { font: 700 16px/1.4 var(--sans); }
 #state .kind { display: inline-block; white-space: nowrap; margin-top: 6px; }
 #state .wtc td { line-height: 1.5; }
 #state .wtc td > div { margin-top: 6px; }
@@ -378,12 +378,10 @@ add('regions', 'Regions', `
 
 add('state', 'State & source of truth', `
   <h2>State and source of truth</h2>
-  <p class="lede">${M.state.intro ? rich(M.state.intro) : 'Where the truth for each concept lives, which code may change it, and where a copy or a later step can disagree with it.'}</p>${cites(M.state.cites)}
+  <p class="lede">${M.state.intro ? rich(M.state.intro) : 'Where the truth for each concept lives and which code may change it.'}</p>${cites(M.state.cites)}
   <div class="wtc"><table><thead><tr><th>Concept</th><th>Truth</th><th>Written by</th><th>Every change passes</th></tr></thead><tbody>
   ${M.state.owners.map((o) => `<tr><td><a href="#concept-${o.concept}"><b>${esc(conceptName(o.concept))}</b></a>${o.others?.length ? '<div><span class="kind surprise">shared write</span></div>' : ''}</td><td>${rich(o.truth)}</td><td>${chip(o.writer)}${(o.others ?? []).map((w) => `<div class="also">also ${chip(w.region)} ${rich(w.text)}${cites(w.cites)}</div>`).join('')}</td><td>${rich(o.gate)}${cites(o.cites)}</td></tr>`).join('')}
-  </tbody></table></div>
-  ${M.state.copies?.length ? `<h3>Copies that can disagree</h3><ul class="ctx-list">${M.state.copies.map((c) => `<li><b>${esc(c.name)}</b><span>${rich(c.holds)} ${rich(c.wins)} ${rich(c.stale)}</span>${cites(c.cites)}</li>`).join('')}</ul>` : ''}
-  ${M.state.seams?.length ? `<h3>Steps that can half-succeed</h3><p class="lede">One action, several steps that don't commit together. If a later step fails, the earlier ones stay done.</p><div class="rules">${M.state.seams.map((m) => `<div class="r"><div class="rank-col"><span class="kind surprise">split</span></div><div><h3>${esc(m.span)}</h3><p>${rich(m.text)}</p><p class="importance"><b>If a later step fails:</b> ${rich(m.onFailure)}</p>${cites(m.cites)}</div></div>`).join('')}</div>` : ''}`);
+  </tbody></table></div>`);
 
 add('flow', 'How a request travels', `
   <h2>${esc(M.runtime.title)}</h2>
@@ -435,7 +433,7 @@ add('stories', 'Stories', `
       <summary><span class="storykind"><span class="rank">${i + 1}</span> ${st.kind === 'failure' ? 'failure path' : 'flow'}</span><h3>${esc(st.title)}</h3><p class="importance">${rich(st.importance)}</p><p class="setup">${rich(st.setup)}</p>
         <div class="story-route">${[...new Set(st.steps.map((s) => s.region))].map(chip).join('')}</div></summary>
       <div class="body">
-        <ol class="steps">${st.steps.map((s) => `<li><div><div class="head">${chip(s.region)}${s.inferred ? '<span class="inferred">inferred</span>' : ''}</div>${rich(s.text)}${cites(s.cites)}</div></li>`).join('')}</ol>
+        <ol class="steps">${st.steps.map((s) => `<li><div><div class="head">${chip(s.region)}${s.inferred ? '<span class="inferred">inferred</span>' : ''}</div>${rich(s.text)}${s.careful ? `<p class="careful"><b>Be careful:</b> ${rich(s.careful)}</p>` : ''}${cites(s.cites)}</div></li>`).join('')}</ol>
         <div class="takeaways"><b>What you now know</b><ul>${st.takeaways.map((t) => `<li>${rich(t)}</li>`).join('')}</ul></div>
       </div>
     </details>`).join('')}`);

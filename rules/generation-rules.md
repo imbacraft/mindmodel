@@ -19,7 +19,7 @@
 | People & outside systems | Who does it serve, most important first, and what outside systems does it call? |
 | Core concepts | What are the few things everything else is about, and how do they relate? |
 | Regions | How is the code laid out, and where does each capability live? |
-| State & source of truth | Where does the truth for each concept live, who may change it, and where can copies disagree? |
+| State & source of truth | Where does the truth for each concept live, and who may change it? |
 | How a request travels | What happens to *every* API call, whatever the feature? |
 | What runs on its own | What happens with no request at all? |
 | Rules | What must you never get wrong? |
@@ -57,7 +57,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 | 2 | **Read the project's docs.** All titles; fully read the intro docs (README, CLAUDE.md/AGENTS.md) and any doc about architecture, domain, tenancy, flows or security | Notes: vocabulary, intent, stated rules, stated non-goals |
 | 3 | Core concepts (Part 3.3) | concepts + core sentence |
 | 4 | Regions (Part 3.4) | regions + region sentence |
-| 5 | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners, copies, seams |
+| 5 | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners |
 | 6 | How a request travels (Part 3.6) | request path |
 | 7 | What runs on its own (Part 3.7) | background table + generated total |
 | 8 | Stories: choose, rank, trace (Part 3.9) | stories |
@@ -204,23 +204,26 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 ### 3.5 State & source of truth
 
-**Goal:** the reader knows, for each core concept, which copy is the truth, which code is allowed to change it, and where a second copy or a second step can disagree with it. Most real mistakes happen here: changing a concept from the wrong place and skipping its rules, trusting a stale copy, or assuming "saved" means "done" when the rest happens later. ("What code can change this?" is one of the questions developers find hardest to answer by reading.)
+**Goal:** the reader knows, for each core concept, which copy is the truth and which code is allowed to change it. Most real mistakes happen here: changing a concept from the wrong place and skipping its rules. ("What code can change this?" is one of the questions developers find hardest to answer by reading.)
 
-**Where to look:** `facts.md` → State (repository writes per entity grouped by file, `@Modifying` queries, caches and client storage, transaction/event lines in files that call outside systems); session state; webhook and scheduled handlers; the frontend's query cache and local storage.
+**Where to look:** `facts.md` → State (repository writes per entity grouped by file, `@Modifying` queries); session state; the frontend's query cache and local storage, for the region parts below.
 
-**Write three parts, in this order** (copies are short sentences: what it holds, who wins, when it goes stale):
+**Write one part: owners (one row per core concept):**
 
-1. **Owners (one row per core concept):**
-   - **Truth:** where the authoritative value lives. Usually "the database"; say more only when it differs: an outside system wins on conflict (the payment provider for payment status), part of it is derived and never stored, or it is copied into another row at a moment and then frozen (a price copied into an order).
-   - **Written by:** the region and the file that make the normal changes, and the method or rule every change must pass (a state-transition method, a check, a version row). Cite it.
-   - **Other writers:** every other region or job that changes it (from the scanner's write list), each cited. If there is at least one, the row is marked **shared write**: say in a few words whether the other writers go through the same rule. A data import or seeding tool that writes everything is named once in the intro, not on every row.
-2. **Copies that can disagree (≤ 5):** every second place that holds a version of a concept and can be out of date: session state, server cache, browser storage, frontend query cache, a copied column, an outside system's mirror. For each: what it holds, which side wins, and when it is refreshed or goes stale (exact TTL or trigger, cited). Leave out copies that cannot be stale in practice. If there are none, say so in one line.
-3. **Steps that can half-succeed (seams, ≤ 4):** places where one change is split into steps that do not commit together: a transaction commits and then an outside system is called; a webhook or job finishes the change later; an event is published before or after commit. Each seam: the span (*first step → second step*), both sides cited, and **what happens when the second step fails or never arrives** (a retry, a cleanup job, a reconciler, or nothing; nothing must be said plainly).
-   **Start from `facts.md` → Seams, computed.** Each line is a seam the scanner proved (an outside call inside a transaction, directly or via another bean; an after-commit hook; a new transaction; a job deleting rows). Each must be listed or dismissed on purpose; for an outside call inside a transaction, the usual failure is that the outside side happened and the local row rolled back. A cleanup job that deletes rows matters when an outside callback (a webhook) can still arrive for a deleted row.
+1. **Truth:** where the authoritative value lives. Usually "the database"; say more only when it differs: an outside system wins on conflict (the payment provider for payment status), part of it is derived and never stored, or it is copied into another row at a moment and then frozen (a price copied into an order). When a copy is frozen that way, the consequence goes in the same cell as one clause: editing the source afterwards does not change the copy.
+2. **Written by:** the region and the file that make the normal changes, and the method or rule every change must pass (a state-transition method, a check, a version row). Cite it.
+3. **Other writers:** every other region or job that changes it (from the scanner's write list), each cited. If there is at least one, the row is marked **shared write**: say in a few words whether the other writers go through the same rule. A data import or seeding tool that writes everything is named once in the intro, not on every row.
+
+**Where everything else goes.** The table is the whole section: it names the truth and its writers, nothing else. The map already ranks these rules, so a copy or a half-done step is stated where the reader meets it, never as a subsection here:
+
+- **A copy that can go stale** — a cache, a resolution table, a client cache, a mirrored value — is a **region part** (3.4): inside the region that owns the cache, one line with the exact TTL or refresh trigger, cited.
+- **A value copied once and then frozen** is a sentence in the **Truth** cell (step 1), and may also appear on the concept card (3.3) in an existing text field (`what`, `keyFields`, `lifecycle`) — no new field for it.
+- **A step that can half-succeed** (an outside call in a transaction, a webhook or job finishing the change later) is a `careful` caution on the story step that crosses the boundary (3.9). Start from `facts.md` → Transaction boundaries, computed; every seam it proves is either that caution somewhere or deliberately dismissed.
+- **A design smell with a repair path but no obligation** (for example an `@Async` processor enqueued inside a transaction) is an observation in `mindmodel/.work/findings.md`. It is not a map field.
 
 **Not here:** field lists, DTO mappings, every table. A trap in how data changes shape across tiers (money as cents, times in UTC) is a rule (3.8), not a row here.
 
-**Checks:** Does every core concept have exactly one owner row? Is every other writer from the scanner's list either on its row or deliberately left off as a seeding/import tool? Does each seam cite both sides and say what happens on failure? Is any copy listed that cannot actually be stale?
+**Checks:** Does every core concept have exactly one owner row? Is every other writer from the scanner's list either on its row or deliberately left off as a seeding/import tool? Does the section hold nothing but the owners table — no cache, no copied value as a row, no half-done step?
 
 ### 3.6 How a request travels
 
@@ -330,6 +333,7 @@ A failure path qualifies only if what happens on failure changes core state in a
 **Write:**
 - One **persona** reused across stories, with concrete values that are **valid in the code** (a price type that exists, a real duration, a real status). Valid values may come from a SQL dump or seed file; cite it.
 - ≤ 10 steps, about 250–500 words. Each step: the region it happens in, 1–3 sentences, citations.
+- **`careful` on a step (optional, at most 1–2 per story):** add it only where the step leaves something a rollback cannot undo — an outside call already made, a job or event already enqueued, a message published. Say what stays done if the later step fails and **name the repair path**: automatic (a retry, a reconciler, a cleanup job), an endpoint a person can call, or plainly *nothing*. One sentence, about 200 characters (hard cap 220), covered by that step's citations; it renders inline under the step as "Be careful:". Never its own section, and never on a step that leaves nothing behind.
 - **Importance line:** why it ranks here.
 - **Takeaways:** 2–3 lines tying it back to concepts, regions and rules.
 - Only the map's plain names. Never introduce a new concept name inside a story.
@@ -338,7 +342,7 @@ A failure path qualifies only if what happens on failure changes core state in a
 
 **Report, don't force:** regions no story runs through are listed for the critic. Do not invent a flow just to cover a region.
 
-**Checks:** Does every step cite code that does what the step says? Do the values used actually exist in the code (enum values, durations)? Does the top-ranked flow deliver the product's core value?
+**Checks:** Does every step cite code that does what the step says? Do the values used actually exist in the code (enum values, durations)? Does the top-ranked flow deliver the product's core value? Does each `careful` sit on a step that really leaves something behind, and name how it is repaired?
 
 ---
 
@@ -413,7 +417,7 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | People & outside systems | ≤ 7 each, ranked |
 | Core concepts | ≤ 6, one card each, plus 1 core sentence that mentions every concept |
 | Regions | ≤ 7 + Shared infrastructure; ≤ 7 parts each |
-| State & source of truth | 1 row per core concept; ≤ 5 copies; ≤ 4 seams; ≤ 400 words |
+| State & source of truth | 1 row per core concept; ≤ 400 words |
 | How a request travels | ≤ 7 steps, ≤ 5 lanes |
 | What runs on its own | ≤ 10 rows |
 | Rules | ≤ 5 |

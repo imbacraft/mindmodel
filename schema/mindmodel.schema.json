@@ -681,6 +681,11 @@
         "inferred": {
          "type": "boolean"
         },
+        "careful": {
+         "type": "string",
+         "maxLength": 220,
+         "description": "A caution on this step only, at most two per story: what the step leaves behind that a rollback cannot undo, and how it is repaired (automatic, an endpoint, or 'nothing'). Inline under the step, never a section."
+        },
         "cites": {
          "$ref": "#/$defs/cites"
         }
@@ -770,66 +775,6 @@
           }
          }
         }
-       }
-      }
-     }
-    },
-    "copies": {
-     "type": "array",
-     "maxItems": 5,
-     "items": {
-      "type": "object",
-      "required": [
-       "name",
-       "holds",
-       "wins",
-       "stale",
-       "cites"
-      ],
-      "additionalProperties": false,
-      "properties": {
-       "name": {
-        "type": "string"
-       },
-       "holds": {
-        "type": "string"
-       },
-       "wins": {
-        "type": "string"
-       },
-       "stale": {
-        "type": "string"
-       },
-       "cites": {
-        "$ref": "#/$defs/cites"
-       }
-      }
-     }
-    },
-    "seams": {
-     "type": "array",
-     "maxItems": 4,
-     "items": {
-      "type": "object",
-      "required": [
-       "span",
-       "text",
-       "onFailure",
-       "cites"
-      ],
-      "additionalProperties": false,
-      "properties": {
-       "span": {
-        "type": "string"
-       },
-       "text": {
-        "type": "string"
-       },
-       "onFailure": {
-        "type": "string"
-       },
-       "cites": {
-        "$ref": "#/$defs/cites"
        }
       }
      }
