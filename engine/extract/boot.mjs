@@ -1,15 +1,85 @@
-// Boot and deployables (moved unchanged from deep.mjs): which module is the app, how it runs, and its config keys.
+// Boot and deployables: which module is the app, how it runs, and its config keys. The Java questions — a `main`, the
+// Spring Boot annotation or base class that makes it an app, the component-scan filters on its type — are answered by
+// the dump's rows; build files, YAML and properties stay text, because they are not Java.
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { configKeys } from './config.mjs';
+import { dumpFor } from '../run.mjs';
 
-export function deployables({ java, files, rel, read }) {
-  const isMain = (j) =>
-    /static\s+void\s+main\s*\(/.test(j.text) &&
-    /SpringApplication(Builder)?\b|@SpringBootApplication|@SpringBootConfiguration|@EnableAutoConfiguration/.test(
-      j.text,
-    );
+// What makes a `main` an app's entry point: a Spring Boot annotation on its type, or a Spring Boot initialiser it
+// extends (a plain `main` that boots Spring through `SpringApplication` without an annotation). The dump names an
+// annotation as the author wrote it, so the simple name is what is compared.
+const SPRING_APP = ['SpringBootApplication', 'SpringBootConfiguration', 'EnableAutoConfiguration'];
+const SPRING_BASE = ['SpringBootServletInitializer'];
+
+const simple = (name) => String(name ?? '').split('.').pop();
+const hasAnn = (row, name) => (row.ann ?? []).some((a) => simple(a.name) === name);
+const baseOf = (s) => simple(s.fqn ?? String(s.text ?? '').replace(/<[\s\S]*/, ''));
+const bindsSpring = (t) =>
+  SPRING_APP.some((n) => hasAnn(t, n)) || (t.supertypes ?? []).some((s) => SPRING_BASE.includes(baseOf(s)));
+const linesOf = (file) =>
+  (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []);
+
+/**
+ * The app entry points a dump names: every method the engine marked `isMain` in a file whose types bind Spring — one
+ * answer per file, the first declaration in source order. Only the two sections this needs are read (types, and the
+ * `isMain` member lines), because the scan opens the whole dump a moment later and its calls section is far larger than
+ * everything here.
+ */
+export function mainIndex(dir) {
+  const types = new Map();
+  for (const line of linesOf(path.join(dir, 'types.ndjson'))) {
+    const t = JSON.parse(line);
+    const file = t.pos?.file;
+    if (file) types.set(file, [...(types.get(file) ?? []), t]);
+  }
+  const mains = new Map();
+  for (const line of linesOf(path.join(dir, 'members.ndjson')).filter((l) => l.includes('"isMain":true'))) {
+    const m = JSON.parse(line);
+    const file = m.pos?.file;
+    if (!file || !(types.get(file) ?? []).some(bindsSpring)) continue;
+    mains.set(file, [...(mains.get(file) ?? []), { type: simple(m.owner), line: m.pos.line ?? null, id: m.id }]);
+  }
+  for (const list of mains.values()) list.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
+  return { typesOf: (file) => types.get(file) ?? [], mainsIn: (file) => mains.get(file) ?? [] };
+}
+
+/**
+ * The dump of the checkout these files belong to. `deployables` runs before the scan has a dump to hand over, so it
+ * asks `dumpFor` for one — fingerprint-cached, so the scan that follows reuses this run instead of starting a second
+ * — and answers from it, or null when the engine cannot run (the scan fails loudly on that, a few lines later).
+ */
+function checkoutDump(files, rel, java) {
+  if (!files.length || !java.length) return null;
+  const first = files[0];
+  const root = first.slice(0, first.length - rel(first).length).replace(/[\\/]+$/, '') || path.sep;
+  const run = dumpFor(root, java.map((j) => j.p));
+  return run.ok ? mainIndex(run.dir) : null;
+}
+
+/**
+ * Every string written as `pattern` in an annotation's argument tree, at any depth: `excludeFilters` is an array of
+ * nested `@ComponentScan.Filter` annotations in the dump, so a filter is found by its argument name, not by its text.
+ */
+function patternsIn(node, out = [], key = null) {
+  if (Array.isArray(node)) {
+    for (const item of node) patternsIn(item, out, key);
+    return out;
+  }
+  if (!node || typeof node !== 'object') return out;
+  if (typeof node.kind === 'string') {
+    if (key === 'pattern' && node.kind === 'string') out.push(String(node.value));
+    else if (node.kind === 'array') patternsIn(node.value, out, key);
+    else if (node.kind === 'annotation') patternsIn(node.value?.args, out, null);
+    return out;
+  }
+  for (const [name, value] of Object.entries(node)) patternsIn(value, out, name);
+  return out;
+}
+
+export function deployables({ java, files, rel, read, dump }) {
+  const d = dump ?? checkoutDump(files, rel, java);
   const moduleOf = (p) => (p.includes('/src/main/java/') ? p.split('/src/main/java/')[0] : '.');
   const mods = new Set(java.map((j) => moduleOf(j.p)).filter((m) => m !== '.'));
   const deps = (m) => {
@@ -23,14 +93,8 @@ export function deployables({ java, files, rel, read }) {
     const t = read(b);
     return [...mods].filter((o) => o !== m && new RegExp(`[>:'"]${path.basename(o)}[<'"]`).test(t)).length;
   };
-  const mains = java
-    .filter(isMain)
-    .map((j) => ({
-      file: j.p,
-      line: j.text.split('\n').findIndex((l) => /static\s+void\s+main/.test(l)) + 1 || null,
-      module: moduleOf(j.p),
-      name: j.name,
-    }))
+  const mains = (d ? java : [])
+    .flatMap((j) => d.mainsIn(j.p).map((m) => ({ file: j.p, line: m.line, module: moduleOf(j.p), name: m.type })))
     .map((m) => ({ ...m, deps: deps(m.module) }))
     .sort((a, b) => b.deps - a.deps);
   if (!mains.length) return { primary: null, others: [], isExcluded: () => false };
@@ -38,14 +102,11 @@ export function deployables({ java, files, rel, read }) {
     others = mains
       .slice(1)
       .filter((o) => o.module !== primary.module && !primary.module.startsWith(o.module + '/') && o.module !== '.');
-  const mainText = java.find((j) => j.p === primary.file).text;
-  const scanBlock =
-    /@ComponentScan\s*\(([\s\S]*?)\)\s*\n\s*@|@ComponentScan\s*\(([\s\S]*?)\)\s*\n\s*(public\s+)?class/.exec(mainText);
-  const patterns = scanBlock
-    ? [...(scanBlock[1] ?? scanBlock[2]).matchAll(/pattern\s*=\s*"([^"]+)"/g)].map(
-        (m) => new RegExp(m[1].replace(/\\\\/g, '\\')),
-      )
-    : [];
+  const patterns = d
+    .typesOf(primary.file)
+    .flatMap((t) => (t.ann ?? []).filter((a) => simple(a.name) === 'ComponentScan'))
+    .flatMap((a) => patternsIn(a.args))
+    .map((p) => new RegExp(p));
   const fqn = (p) =>
     p
       .split('/src/main/java/')[1]
@@ -56,25 +117,114 @@ export function deployables({ java, files, rel, read }) {
   return { primary, others, excludedPatterns: patterns.map(String), isExcluded };
 }
 {
-  const java = [
-    {
-      p: 'app/src/main/java/x/App.java',
-      name: 'App',
-      text: '@SpringBootConfiguration\n@ComponentScan(basePackages = {"x"}, excludeFilters = @ComponentScan.Filter(type = FilterType.REGEX, pattern = "x\\\\.gw\\\\..*"))\npublic class App { public static void main(String[] a) {} }',
-    },
-    {
-      p: 'worker/src/main/java/x/W.java',
-      name: 'W',
-      text: '@SpringBootApplication\nclass W { public static void main(String[] a) {} }',
-    },
-  ];
+  // Two mains, two modules; the app's type carries the scan filter as the dump writes it (a nested annotation in an
+  // array), and the worker's module still answers "pom.xml names it".
+  const java = [{ p: 'app/src/main/java/x/App.java' }, { p: 'worker/src/main/java/x/W.java' }];
+  const types = {
+    'app/src/main/java/x/App.java': [
+      {
+        fqn: 'x.App',
+        pos: { file: 'app/src/main/java/x/App.java', line: 3 },
+        ann: [
+          { name: 'SpringBootConfiguration', args: {} },
+          {
+            name: 'ComponentScan',
+            args: {
+              basePackages: { kind: 'array', value: [{ kind: 'string', value: 'x' }] },
+              excludeFilters: {
+                kind: 'array',
+                value: [
+                  {
+                    kind: 'annotation',
+                    value: {
+                      name: 'ComponentScan.Filter',
+                      args: {
+                        type: { kind: 'enum', value: 'org.springframework.context.annotation.FilterType.REGEX' },
+                        pattern: { kind: 'string', value: 'x\\.gw\\..*' },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    'worker/src/main/java/x/W.java': [
+      { fqn: 'x.W', pos: { file: 'worker/src/main/java/x/W.java', line: 2 }, ann: [{ name: 'SpringBootApplication' }] },
+    ],
+  };
+  const mains = {
+    'app/src/main/java/x/App.java': [{ type: 'App', line: 4, id: 'x.App#main(String[])' }],
+    'worker/src/main/java/x/W.java': [{ type: 'W', line: 3, id: 'x.W#main(String[])' }],
+  };
+  const dump = { typesOf: (f) => types[f] ?? [], mainsIn: (f) => mains[f] ?? [] };
   const files = ['app/pom.xml', 'worker/pom.xml'],
     text = { 'app/pom.xml': '<artifactId>worker</artifactId>', 'worker/pom.xml': '' };
-  const d = deployables({ java, files, rel: (f) => f, read: (f) => text[f] });
+  const d = deployables({ java, files, rel: (f) => f, read: (f) => text[f], dump });
   assert.equal(d.primary.module, 'app');
+  assert.equal(d.primary.name, 'App', "the entry point's type names the deployable");
+  assert.equal(d.primary.line, 4);
+  assert.deepStrictEqual(d.others.map((o) => [o.name, o.module, o.deps]), [['W', 'worker', 0]]);
+  assert.deepStrictEqual(
+    d.excludedPatterns,
+    ['/x\\.gw\\..*/'],
+    'the filter pattern is the annotation value, unescaped once',
+  );
   assert.ok(d.isExcluded('worker/src/main/java/x/W.java'));
   assert.ok(d.isExcluded('app/src/main/java/x/gw/Api.java'));
   assert.ok(!d.isExcluded('app/src/main/java/x/core/Svc.java'));
+  // A dump with no entry point has no app: the answer comes from the rows, not from the word "main" in a file.
+  const none = { typesOf: (f) => types[f] ?? [], mainsIn: () => [] };
+  assert.equal(deployables({ java, files, rel: (f) => f, read: (f) => text[f], dump: none }).primary, null);
+}
+{
+  // The dump-section reader on a written-out dump: `isMain` picks the entry point, the Spring Boot annotation on its
+  // type decides whether it is an app, and a main without one is left out.
+  const os = await import('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boot-index-'));
+  const w = (name, list) =>
+    fs.writeFileSync(path.join(dir, name), list.map((x) => JSON.stringify(x)).join('\n') + '\n');
+  w('types.ndjson', [
+    { fqn: 'a.App', kind: 'class', pos: { file: 'a/App.java' }, ann: [{ name: 'SpringBootApplication', args: {} }] },
+    { fqn: 'a.Util', kind: 'class', pos: { file: 'a/Util.java' }, ann: [] },
+    {
+      fqn: 'a.Boot',
+      kind: 'class',
+      pos: { file: 'a/Boot.java' },
+      ann: [],
+      supertypes: [
+        {
+          kind: 'class',
+          text: 'SpringBootServletInitializer',
+          fqn: 'org.springframework.boot.web.servlet.support.SpringBootServletInitializer',
+        },
+      ],
+    },
+  ]);
+  const main = (owner, line) => ({
+    kind: 'method',
+    owner,
+    name: 'main',
+    isMain: true,
+    id: `${owner}#main(String[])`,
+    pos: { file: `a/${owner.slice(2)}.java`, line },
+  });
+  w('members.ndjson', [
+    main('a.App', 7),
+    main('a.Util', 3),
+    main('a.Boot', 5),
+    { kind: 'method', owner: 'a.App', id: 'a.App#run()', name: 'run', isMain: false,
+      pos: { file: 'a/App.java', line: 9 } },
+  ]);
+  const index = mainIndex(dir);
+  assert.deepStrictEqual(index.mainsIn('a/App.java'), [{ type: 'App', line: 7, id: 'a.App#main(String[])' }]);
+  assert.deepStrictEqual(index.mainsIn('a/Boot.java'), [{ type: 'Boot', line: 5, id: 'a.Boot#main(String[])' }],
+    'a servlet initialiser boots Spring without an annotation');
+  assert.deepStrictEqual(index.mainsIn('a/Util.java'), [],
+    'a main in a type that is not a Spring app is not an entry point');
+  assert.deepStrictEqual(index.mainsIn('a/Missing.java'), [], 'a file the dump does not list has no entry point');
 }
 
 // --- Boot: the one way to run the whole app locally ---------------------------------

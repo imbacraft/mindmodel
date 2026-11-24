@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { open } from '../engine/dump.mjs';
+import { CONTRACT, open } from '../engine/dump.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.dirname(here);
@@ -38,7 +38,7 @@ function dumpInto(dir) {
   walk(path.join(fixture, 'src'));
   fs.writeFileSync(list, files.sort().join('\n') + '\n');
   const out = path.join(dir, 'dump');
-  execFileSync('java', ['-jar', jar, 'dump', '--contract', '2', fixture, list, out], { stdio: ['ignore', 'ignore', 'pipe'] });
+  execFileSync('java', ['-jar', jar, 'dump', '--contract', String(CONTRACT), fixture, list, out], { stdio: ['ignore', 'ignore', 'pipe'] });
   return { out, types: read(out, 'types.ndjson'), members: read(out, 'members.ndjson'), files: read(out, 'files.ndjson'), fields: read(out, 'fields.ndjson'), calls: read(out, 'calls.ndjson'), meta: JSON.parse(fs.readFileSync(path.join(out, 'meta.json'), 'utf8')) };
 }
 
@@ -134,7 +134,7 @@ test('dump: the fixture contract', { skip }, () => {
 
   // The loader the rest of Node will use: queries only, no analysis, every answer carrying its position.
   const db = open(d.out);
-  assert.equal(db.meta.contract, 2);
+  assert.equal(db.meta.contract, CONTRACT);
   assert.equal(db.type('orders.OrderController').kind, 'class');
   assert.deepEqual(db.implsOf('orders.Port'), ['orders.PortImpl']);
   const manyCalls = db.callsOf('orders.OrderController#many(String[])');
@@ -174,8 +174,9 @@ test('dump: the fixture contract', { skip }, () => {
 
   // 1b: lambdas and method references are rows of their own, and say when they may not run.
   const refs = d.calls.filter((c) => c.via === 'methodRef');
-  assert.ok(refs.some((r) => r.name === 'helper' && r.targets.includes('contract.Lambdas#helper()')));
-  assert.ok(refs.some((r) => r.name === 'name' && r.targets.includes('contract.Sink#name()')), 'a type-qualified reference resolves');
+  assert.ok(refs.some((r) => r.name === 'helper' && db.targetsOf(r).includes('contract.Lambdas#helper()')));
+  assert.ok(refs.some((r) => r.name === 'name' && db.targetsOf(r).includes('contract.Sink#name()')),
+    'a type-qualified reference resolves');
   const libraryRef = refs.find((r) => r.name === 'trim');
   assert.equal(libraryRef.targets.length, 0);
   assert.equal(libraryRef.origin, 'library');
@@ -256,6 +257,50 @@ test('dump: the fixture contract', { skip }, () => {
   assert.equal(entry.isMain, true);
   assert.equal(d.members.filter((m) => m.kind === 'method' && m.isMain).length, 1, 'one entry point in the fixture');
   assert.equal(d.members.find((m) => m.id === 'contract.Entry#run()').isMain, false);
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Contract 3. The receiver's type arguments, the declaration told apart from its overrides, and a static member of a
+  // type the dump never declares.
+
+  const callAt = (method, line, name) =>
+    d.calls.find((c) => c.method === method && c.line === line && c.name === name);
+  // A receiver declared as a type parameter is the argument the one subclass writes: `Base<Row>` binds T to Row, so
+  // the call on `T row` names generic.Row and the dump says why it could.
+  const base = callAt('generic.Base#publish(T)', 12, 'save');
+  assert.deepEqual(base.recv.typeArgs, ['T'], 'the field is declared Repo<T>');
+  assert.equal(base.recv.type, 'generic.Repo');
+  const touch = callAt('generic.Base#publish(T)', 13, 'touch');
+  assert.equal(touch.recv.type, 'generic.Base', 'a call on `this` inside a generic base');
+  assert.deepEqual(touch.recv.typeArgs, ['T']);
+  const superCall = callAt('generic.RowBase#publish(Row)', 10, 'publish');
+  assert.deepEqual(superCall.recv.typeArgs, ['generic.Row'], 'super is written Base<Row>');
+  // Targets: the declaration first, then each override, told apart.
+  assert.deepEqual(superCall.targets, [
+    { id: 'generic.Base#publish(T)', kind: 'declared' },
+    { id: 'generic.RowBase#publish(Row)', kind: 'override' },
+  ]);
+  assert.equal(superCall.uniqueImpl, false, 'the declaration has a body: nothing is "the" implementation');
+  const single = callAt('generic.Caller#single(Row)', 9, 'go');
+  assert.deepEqual(single.targets.map((t) => t.kind), ['declared', 'override']);
+  assert.equal(single.uniqueImpl, true, 'one override, no declaration body');
+  const either = callAt('generic.Caller#either(Row)', 14, 'go');
+  assert.deepEqual(either.targets.map((t) => t.kind), ['declared', 'override', 'override']);
+  assert.equal(either.uniqueImpl, false, 'two implementations are not one');
+  // The accessors the extractors read: ids, the declaration, the overrides, the one implementation.
+  assert.deepEqual(db.targetsOf(single), ['generic.OnlyPort#go(Row)', 'generic.OnlyImpl#go(Row)']);
+  assert.equal(db.declaredOf(single), 'generic.OnlyPort#go(Row)');
+  assert.deepEqual(db.overridesOf(either), ['generic.FirstImpl#go(Row)', 'generic.SecondImpl#go(Row)']);
+  assert.equal(db.uniqueImpl(single), true);
+  assert.equal(db.uniqueImpl(either), false);
+  assert.deepEqual(db.typeArgsOf(superCall), ['generic.Row']);
+  // A field access carries its field's type arguments too, and a static read of a type outside the dump is named.
+  const genericField = d.fields.find((f) => f.field === 'generic.Base#repo' && f.op === 'read');
+  assert.deepEqual(genericField.typeArgs, ['T']);
+  const outside = d.fields.find((f) => f.field === 'generic.Row#state' && f.op === 'write' && f.value.kind === 'field');
+  assert.deepEqual(outside.value, {
+    text: 'OrderState.CANCELLED', kind: 'field', type: 'external.OrderState',
+    field: 'external.OrderState#CANCELLED', reason: 'declaration-outside-dump',
+  });
 
   // A dump written twice is byte-identical, every section included.
   const again = dumpInto(tmp());

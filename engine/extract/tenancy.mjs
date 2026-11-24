@@ -2,7 +2,10 @@
 // repository methods that read or write a keyed entity without the key (possible cross-tenant access), where the key
 // comes from (round 4's tenant sources), and code without a request (jobs, listeners, async, webhooks) that touches
 // keyed entities and whether it sets the tenant context first.
+import assert from 'node:assert/strict';
+import { queries } from '../model/query.mjs';
 import { isTestPath } from './entities.mjs';
+import { targetIds } from '../model/targets.mjs';
 
 export const MIN_ENTITIES = 3;
 // Tuned from 30% (§0): hertzbeat's workspace sits on 9 of 60 entities (15%), and the 30% cut produced no key at all.
@@ -17,9 +20,13 @@ export const NOT_A_KEY =
 
 const writeMethods = /^(save|saveAll|delete|deleteAll|deleteById|deleteAllById|flush|persist|merge|remove|insert|update)$/;
 
+// A written identifier — `workspaceId`, `workspace_id` — and nothing else: the dump's argument `text` is display
+// text (cut at 80 characters), so an expression in it is never matched against a key, only a bare name is.
+export const identifier = (text) => (/^[A-Za-z_]\w*$/.test(String(text ?? '')) ? String(text) : null);
+
 export function tenancyFacts(
   { entities, repos, repoMethods },
-  { tenantSources = [], model, annotations = {}, minShare = MIN_SHARE, entryMethods = [], requestMethods = [] } = {},
+  { tenantSources = [], model, db = null, minShare = MIN_SHARE, entryMethods = [], requestMethods = [] } = {},
 ) {
   const byName = new Map(entities.map((e) => [e.name, e]));
   // Field name → entity names carrying it (own or inherited fields are both in `e.fields`).
@@ -47,96 +54,100 @@ export function tenancyFacts(
     return { filtered, total: all.length, share: filtered / all.length };
   };
 
-  // (b2) the key is *stored into* a request/context holder — a ThreadLocal write, a field of a request-scoped bean,
-  // a request attribute — through a call chain of at most three hops. Being read off the request (a `@PathVariable`,
-  // a query parameter) is a foreign key in the path, not a tenant: naming it in request-scoped code used to be enough
-  // to outvote the repository evidence, so a child id in controllers became "the tenant". The key may be handed over
-  // directly or wrapped by a helper (`setupForSubscription(subscriptionId)` builds a context and stores it).
+  // (b2) the key is *stored into* a request/context holder — a ThreadLocal write, a request attribute, the security
+  // context — through a call chain of at most three hops. ONE definition of "store", shared with security:
+  // `engine/model/query.mjs`'s `stores()`. Being read off the request (a `@PathVariable`, a query parameter) is a
+  // foreign key in the path, not a tenant: naming it in request-scoped code used to be enough to outvote the repository
+  // evidence, so a child id in controllers became "the tenant". The key may be handed over directly or wrapped by a
+  // helper (`setupForSubscription(subscriptionId)` builds a context and stores it).
   const flat = (s) => String(s ?? '').replace(/_/g, '').toLowerCase();
   const namesKey = (key) => (s) => flat(s).includes(flat(key));
-  // Store calls, by their framework meaning: a ThreadLocal set on the declared type, a context/attribute write, or a
-  // setter on a request-scoped bean (its field assignment, the only write a dump can name).
-  const HOLDER_RECV =
-    /(ThreadLocal|SecurityContextHolder|SecurityContext|RequestContextHolder|HttpServletRequest|ServletRequest)$/;
-  const requestScoped = new Set();
-  for (const t of model?.types?.values() ?? []) {
-    const scoped = (t.ann ?? []).some((a) => {
-      const n = a.fqn ?? a.name ?? '';
-      return /(^|\.)RequestScoped?$/.test(n) || (/(^|\.)Scope$/.test(n) && /request/i.test(a.args ?? ''));
-    });
-    if (scoped) requestScoped.add(t.fqn);
-  }
-  const isHolderStore = (c) =>
-    c.name === 'setAttribute' ||
-    c.name === 'setContext' ||
-    c.name === 'setAuthentication' ||
-    (c.name === 'set' && HOLDER_RECV.test(c.recvFqn ?? '')) ||
-    (/^set[A-Z]/.test(c.name ?? '') && requestScoped.has(c.recvFqn));
-  const bare = (id) => String(id).replace(/\(.*$/, '');
-  const byId = new Map();
-  for (const t of model?.types?.values() ?? [])
-    for (const m of t.methods ?? []) byId.set(`${t.fqn}#${m.name}`, { t, m });
-  // A method *containing* a store call is a holder at distance 0; its callers are one hop from the store.
-  const storeOf = new Set();
-  for (const { t, m } of byId.values()) {
+  const d = db ?? model?.dump ?? null;
+  const q = queries(d);
+  // A name the dump wrote: `value.from` and `value.call` are call ids, a target a member id.
+  const callIndex = new Map((d?.calls ?? []).map((c) => [c.id, c]));
+  const nameOfCall = (id) => callIndex.get(id)?.name ?? d?.members?.get(id)?.name ?? null;
+  // Methods in the order the model lists them, so a tie between two holders is broken the same way every run.
+  const methodsInOrder = [];
+  for (const t of model?.types?.values() ?? []) for (const m of t.methods ?? []) methodsInOrder.push({ t, m });
+  // A method *containing* a store is at distance 0; its callers are one hop from the store. A clear is not a store.
+  const distance = new Map();
+  const storeCallers = (id) => d?.callersOf?.(id) ?? [];
+  for (const { t, m } of methodsInOrder) {
     if (isTestPath(t.file)) continue;
-    if ((m.calls ?? []).some(isHolderStore)) storeOf.add(`${t.fqn}#${m.name}`);
+    if (q.stores(m.id, 0).stores.some((s) => s.op !== 'clear')) distance.set(m.id, 0);
   }
-  const callersOfId = new Map();
-  for (const { t, m } of byId.values())
-    for (const c of m.calls ?? [])
-      for (const tg of (c.targets ?? []).map(bare)) {
-        if (!callersOfId.has(tg)) callersOfId.set(tg, new Set());
-        callersOfId.get(tg).add(`${t.fqn}#${m.name}`);
-      }
-  // Distance in calls to a method that stores (`dist` ≤ 3): the chain a key may travel and still count.
-  const dist = new Map([...storeOf].map((id) => [id, 0]));
-  let frontier = [...storeOf];
+  let frontier = [...distance.keys()];
   for (let d = 1; d <= 3 && frontier.length; d++) {
     const next = [];
     for (const id of frontier)
-      for (const caller of callersOfId.get(id) ?? [])
-        if (!dist.has(caller)) {
-          dist.set(caller, d);
-          next.push(caller);
-        }
+      for (const c of storeCallers(id)) {
+        if (!c.method || distance.has(c.method)) continue;
+        distance.set(c.method, d);
+        next.push(c.method);
+      }
     frontier = next;
   }
-  // The key names the holder when a method's own parameter or name carries it, or when a call passes it into a
-  // method within the remaining hops of a store. `setupForSubscription(Long subscriptionId)` covers the wrapper.
+  // The store's name, as the dump names it: the constant a call passes (a query parameter), the field a value is
+  // assigned to, the call a local was assigned from, the type a value is created as, or — for a local or a parameter
+  // the dump has no other name for — the written identifier itself (see `identifier` above).
+  const valueNames = (value, named) => {
+    if (!value) return false;
+    const candidates =
+      value.kind === 'constant' || value.kind === 'literal' || value.kind === 'string'
+        ? [value.value]
+        : value.kind === 'field'
+          ? [String(value.field ?? '').split('#').pop()]
+          : value.kind === 'call'
+            ? [nameOfCall(value.call)]
+            : value.kind === 'local'
+              ? [nameOfCall(value.from), identifier(value.text)]
+              : value.kind === 'param'
+                ? [identifier(value.text)]
+                : value.kind === 'new'
+                  ? [String(value.created ?? value.type ?? '').split('.').pop()]
+                  : [];
+    return candidates.some((text) => typeof text === 'string' && text.length > 0 && named(text));
+  };
+  // The key names the holder when a method's own parameter or name carries it, or when a call passes a value named
+  // after it into a method within the remaining hops of a store. `setupForSubscription(Long subscriptionId)` covers
+  // the wrapper; `holder.setWorkspace(workspaceId)` covers the setter.
   const holderStore = (key) => {
     const named = namesKey(key);
     const selfNamed = [],
       viaArg = [];
-    for (const { t, m } of byId.values()) {
+    for (const { t, m } of methodsInOrder) {
       if (isTestPath(t.file)) continue;
-      if (!dist.has(`${t.fqn}#${m.name}`)) continue;
-      if ((m.params ?? []).some((p) => named(p.name)) || named(m.name)) {
+      if (!distance.has(m.id)) continue;
+      if ((m.params ?? []).some((p) => p.name && named(p.name)) || named(m.name)) {
         selfNamed.push(`${t.name}#${m.name}`);
         continue;
       }
-      const carries = (m.calls ?? []).some(
+      const carries = (d?.callsOf?.(m.id) ?? []).some(
         (c) =>
-          (c.args ?? []).some(named) &&
-          (c.targets ?? []).some((tg) => (dist.get(bare(tg)) ?? Infinity) <= 2),
+          targetIds(c).some((tg) => (distance.get(tg) ?? Infinity) <= 2) &&
+          (c.args ?? []).some((_, i) => q.argValue(c, i).values.some((v) => valueNames(v.value, named))),
       );
       if (carries) viaArg.push(`${t.name}#${m.name}`);
     }
     return selfNamed[0] ?? viaArg[0] ?? null;
   };
-  // A tie-break only: the request names the key literally in a filter (`getParameter("workspaceId")`) or a filter
-  // method is named after it. It ranks candidates; it no longer decides on its own (being read is not being stored).
+  // A tie-break only: the request names the key literally in a filter (`getParameter("workspaceId")`), or a filter
+  // method's own parameter is named after it. It ranks candidates; it no longer decides on its own.
   const strongLink = (key) => {
+    const named = namesKey(key);
     for (const t of model?.types?.values() ?? []) {
       if (isTestPath(t.file)) continue;
       if (!/(Filter|Interceptor|Security|ApiToken)/i.test(t.name)) continue;
-      for (const m of t.methods ?? [])
-        for (const c of m.calls ?? [])
-          // The request names the key literally: `request.getParameter("workspaceId")`, `headers.get("X-Tenant")`.
-          if ((c.args ?? []).some((a) => a.replace(/["']/g, '').toLowerCase() === key.toLowerCase())) return `${t.name}#${m.name}`;
-      for (const m of t.methods ?? [])
-        if (/^(get|resolve|read|parse|current)/i.test(m.name) && m.name.toLowerCase().includes(key.replace(/(Id|ID)$/, '').toLowerCase()) && !isTestPath(t.file))
-          return `${t.name}#${m.name}`;
+      for (const m of t.methods ?? []) {
+        // The request names the key literally: `request.getParameter("workspaceId")`, `headers.get("X-Tenant")`, or a
+        // value the code itself calls `workspaceId` handed on.
+        for (const c of d?.callsOf?.(m.id) ?? [])
+          for (let i = 0; i < (c.args ?? []).length; i++)
+            if (q.argValue(c, i).values.some(({ value }) => valueNames(value, named)))
+              return `${t.name}#${m.name}`;
+        if ((m.params ?? []).some((p) => p.name && named(p.name)) || named(m.name)) return `${t.name}#${m.name}`;
+      }
     }
     return null;
   };
@@ -477,3 +488,9 @@ export function noRequestPaths({ model, tenancy, repos, extra = [] }) {
   return out;
 }
 
+{
+  // The name test a key is matched with, and the identifier guard that keeps display text out of it.
+  assert.deepEqual(['workspaceId', 'workspace_id', '_id'].map(identifier), ['workspaceId', 'workspace_id', '_id']);
+  assert.equal(identifier('subscription.getSubscriptionId()'), null, 'an expression is display text, never a name');
+  assert.equal(identifier('name.equals(other) + "x"................. truncated by the dump at eighty chars'), null);
+}

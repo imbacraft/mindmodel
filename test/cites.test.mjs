@@ -6,6 +6,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CONTRACT } from '../engine/dump.mjs';
 import { validate, declaredFromModel, citeCandidates, citeProblem, parseCite } from '../engine/validate.mjs';
 
 // The long overload does the work; the short one only throws, which is the failure the fixer used to pin silently.
@@ -93,7 +94,7 @@ fs.mkdirSync(DUMP, { recursive: true });
 const ndjson = (rows) => rows.map((r) => `${JSON.stringify(r)}\n`).join('');
 fs.writeFileSync(
   path.join(DUMP, 'meta.json'),
-  JSON.stringify({ contract: 2, engine: 'fixture', counts: { types: 1 } }),
+  JSON.stringify({ contract: CONTRACT, engine: 'fixture', counts: { types: 1 } }),
 );
 fs.writeFileSync(
   path.join(DUMP, 'types.ndjson'),

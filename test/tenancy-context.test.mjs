@@ -2,13 +2,11 @@
 // request/context holder. Being read off the request — a @PathVariable, a query parameter — is a foreign key in the
 // path, and a child id named in controllers once became "the tenant" over the repository evidence.
 //
-// The fixtures are Java source only; they run through the same syntax index, model, catalogs and entity extractor the
-// scan uses, and the linker stands in for Spoon by naming receiver types from declarations.
+// Every fixture below runs through the real engine: the Java is written to a scratch dir, the jar dumps it, and the
+// entity and tenancy extractors read only that dump. The store definition is `stores()`, the same one security uses.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { index } from './fixtures/syntax-java.mjs';
-import { buildModel } from './fixtures/model-from-source.mjs';
-import { linkCallsTyped } from '../engine/model/link-for-tests.mjs';
+import { NO_ENGINE, dumpOf } from './fixtures/dump-run.mjs';
 import { annotationIndex, loadCatalogs, selectCatalogs, typeIndex } from '../engine/catalogs/catalog.mjs';
 import { entityFacts } from '../engine/extract/entities.mjs';
 import { tenancyFacts } from '../engine/extract/tenancy.mjs';
@@ -55,8 +53,8 @@ const repo = (name, entityName, key, keyed = 0) =>
     '}',
   );
 
-// Fixture A: 20 entities, 5 carry childId; controllers take it as a @PathVariable and a resolver names a `findChild`
-// call on it — exactly what the old "named in request-scoped code" rule counted as a tenant. Never stored.
+// Fixture A: 20 entities, 5 carry childId; controllers take it as a @PathVariable and a resolver reads it off the
+// request — exactly what the old "named in request-scoped code" rule counted as a tenant. Never stored.
 function fixtureA() {
   const files = {};
   for (let i = 1; i <= 20; i++) {
@@ -120,9 +118,8 @@ function fixtureA() {
   return files;
 }
 
-// Fixture B: the key is set into a ThreadLocal holder by a filter, and only 20% of the keyed reads filter by it — the
-// existing holder path must keep working on evidence the filter share alone would reject. (`tenantId` itself is not a
-// candidate at all: NOT_A_KEY excludes every `tenant\w*Id` field, so this fixture uses the name hertzbeat uses.)
+// Fixture B: the key is set into a ThreadLocal holder from a filter, and only 20% of the keyed reads filter by it —
+// the holder path must keep working on evidence the filter share alone would reject.
 function fixtureB() {
   const files = {};
   for (let i = 1; i <= 20; i++) {
@@ -135,28 +132,22 @@ function fixtureB() {
     'package shop;',
     'public class WorkspaceContext {',
     '  private static final ThreadLocal<Long> CURRENT_WORKSPACE = new ThreadLocal<>();',
-    '  public void setWorkspace(Long id) {',
+    '  public static void setWorkspace(Long id) {',
     '    CURRENT_WORKSPACE.set(id);',
     '  }',
-    '  public Long currentWorkspace() {',
+    '  public static Long currentWorkspace() {',
     '    return CURRENT_WORKSPACE.get();',
     '  }',
     '}',
   );
-  // The holder is injected, not called statically: the fixture's linker resolves a receiver through its declared type,
-  // the way the dump's recv.type does, and a static call's receiver is a type name it does not carry.
   files['src/main/java/shop/WorkspaceFilter.java'] = L(
     'package shop;',
     'import jakarta.servlet.Filter;',
     'import jakarta.servlet.http.HttpServletRequest;',
     'public class WorkspaceFilter implements Filter {',
-    '  private final WorkspaceContext holder;',
-    '  public WorkspaceFilter(WorkspaceContext holder) {',
-    '    this.holder = holder;',
-    '  }',
     '  public void doFilter(HttpServletRequest request) {',
     '    Long workspaceId = Long.valueOf(request.getHeader("X-Workspace"));',
-    '    holder.setWorkspace(workspaceId);',
+    '    WorkspaceContext.setWorkspace(workspaceId);',
     '  }',
     '}',
   );
@@ -164,7 +155,7 @@ function fixtureB() {
 }
 
 // Fixture C: the key is stored through a wrapper helper — `setupForSubscription(Long subscriptionId)` gets the key,
-// builds a context object around it and hands that to a ThreadLocal setter. Reading the key is not storing it, but
+// builds a context object around it and hands that to the ThreadLocal setter. Reading the key is not storing it, but
 // flowing it into a chain that ends in a store is, whether it is passed directly or wrapped.
 function fixtureC() {
   const files = {};
@@ -186,8 +177,8 @@ function fixtureC() {
   files['src/main/java/shop/TenantContext.java'] = L(
     'package shop;',
     'public class TenantContext {',
-    '  private final ThreadLocal<ResolvedTenantContext> RESOLVED = new ThreadLocal<>();',
-    '  public void setResolvedContext(ResolvedTenantContext ctx) {',
+    '  private static final ThreadLocal<ResolvedTenantContext> RESOLVED = new ThreadLocal<>();',
+    '  public static void setResolvedContext(ResolvedTenantContext ctx) {',
     '    RESOLVED.set(ctx);',
     '  }',
     '}',
@@ -196,12 +187,8 @@ function fixtureC() {
   files['src/main/java/shop/TenantContextSetup.java'] = L(
     'package shop;',
     'public class TenantContextSetup {',
-    '  private final TenantContext context;',
-    '  public TenantContextSetup(TenantContext context) {',
-    '    this.context = context;',
-    '  }',
     '  public void setupForSubscription(Long subscriptionId) {',
-    '    context.setResolvedContext(new ResolvedTenantContext(subscriptionId));',
+    '    TenantContext.setResolvedContext(new ResolvedTenantContext(subscriptionId));',
     '  }',
     '}',
   );
@@ -228,17 +215,16 @@ function fixtureC() {
   return files;
 }
 
-// One build: syntax -> model -> catalogs -> the entity extractor, exactly the order the scan uses.
+// One build: dump -> model -> catalogs -> the entity extractor -> the tenancy rule, the order the scan uses.
 function tenancyOf(files) {
-  const model = buildModel(Object.entries(files).map(([p, text]) => ({ p, text, ix: index(text) })));
-  linkCallsTyped(model);
-  const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
+  const { model } = dumpOf(files);
+  const imports = [...model.importsOf.values()].flatMap((i) => (i.imports ?? []).map((x) => x.name));
   const selected = selectCatalogs(loadCatalogs(), { imports });
   const entFacts = entityFacts(model, annotationIndex(selected), typeIndex(selected));
   return tenancyFacts(entFacts, { model });
 }
 
-test('fixture A: a child id read off the request is not a tenant key', () => {
+test('fixture A: a child id read off the request is not a tenant key', { skip: NO_ENGINE }, () => {
   const tenancy = tenancyOf(fixtureA());
   // The counts the doc's fixture names, so the fixture is what it claims: 5 of 20 entities, 10% of the keyed reads.
   const childId = tenancy.candidates.find((c) => c.key === 'childId');
@@ -256,21 +242,24 @@ test('fixture A: a child id read off the request is not a tenant key', () => {
   assert.deepEqual(tenancy.coverage.withKey, []);
 });
 
-test('fixture B: the key stored into a ThreadLocal by a filter still wins on a 20% filter share', () => {
+test('fixture B: the key stored into a ThreadLocal still wins on a 20% filter share', { skip: NO_ENGINE }, () => {
   const tenancy = tenancyOf(fixtureB());
   assert.equal(tenancy.key, 'workspaceId');
   const chosen = tenancy.candidates.find((c) => c.key === 'workspaceId');
   assert.equal(chosen.counts.filteredPercent, 20, 'below MIN_FILTER_SHARE, so only the holder can carry it');
-  assert.equal(chosen.holder, 'WorkspaceFilter#doFilter', `the filter stores it: ${chosen.holder}`);
+  // The store the dump finds is the ThreadLocal write one hop in; the filter hands it the value named after the key.
+  assert.equal(chosen.holder, 'WorkspaceFilter#doFilter', `the store the dump found: ${chosen.holder}`);
+  assert.equal(chosen.strong, 'WorkspaceFilter#doFilter', `the request-side link: ${chosen.strong}`);
   assert.match(chosen.why.join(' | '), /stored into a request\/context holder by WorkspaceFilter#doFilter/);
   assert.deepEqual(tenancy.coverage.withKey, ['Row01', 'Row02', 'Row03', 'Row04', 'Row05']);
 });
 
-test('fixture C: a key stored through a wrapper helper into a ThreadLocal counts as a holder', () => {
+test('fixture C: a key stored through a wrapper helper into a ThreadLocal counts as a holder', { skip: NO_ENGINE }, () => {
   const tenancy = tenancyOf(fixtureC());
   const chosen = tenancy.candidates.find((c) => c.key === 'subscriptionId');
   assert.ok(chosen, `subscriptionId is a candidate: ${tenancy.candidates.map((c) => c.key).join(', ')}`);
   assert.equal(chosen.counts.filteredPercent, 20, 'below MIN_FILTER_SHARE, so only the holder can carry it');
+  // The wrapper's own parameter names the key: that is the method the app calls to store it.
   assert.equal(chosen.holder, 'TenantContextSetup#setupForSubscription');
   assert.equal(chosen.passed, true);
   assert.equal(tenancy.key, 'subscriptionId');

@@ -1,536 +1,532 @@
-import { scheduleFacts } from './schedules.mjs';
-// Lifecycle helpers moved out of deep.mjs (which is meant to disappear). A status chosen inline
-// (`cond ? ENUM.A : ENUM.B`, possibly across lines) inside a method that sets a status sets both values.
+// Lifecycles: which status values each entity's status field can hold, and where this code sets them. Every answer is
+// a query over the Spoon dump (`engine/model/query.mjs`); nothing here reads Java source text. A status write is a call
+// whose argument has the status enum's type — a constant (the dump's typed argument) or the values the called method
+// returns (the dump's `returns`/switch arms) — or a write of the entity's own status field (the dump's field accesses).
+// The owner is the entity the call is made on, or the entity whose field the callee writes from that argument. A value
+// the dump cannot trace is reported as unresolved, never filled in from source text.
 import assert from 'node:assert/strict';
+import { scheduleFacts } from './schedules.mjs';
+import { queries } from '../model/query.mjs';
+import { declaredId, targetIds } from '../model/targets.mjs';
 
-export function chosenInline({ enumName, value, stmt, methodText }) {
-  if (!stmt.includes('?')) return false;
-  if (!new RegExp(`\\b${enumName}\\.${value}\\b`).test(stmt)) return false;
-  return /\.(set\w*Status|status)\s*\(/.test(methodText ?? '');
-}
-
-
-// The calls on one line, with their argument lists split at top-level commas. A status literal that sits in one of
-// those arguments is handed to a method, and only what the callee does with that parameter decides set or read.
-export function callArgs(line) {
-  const out = [];
-  const re = /([A-Za-z_$][\w$]*)\s*\(/g;
-  let m;
-  while ((m = re.exec(line))) {
-    let depth = 0,
-      i = re.lastIndex - 1;
-    for (; i < line.length; i++) {
-      if (line[i] === '(') depth++;
-      else if (line[i] === ')' && --depth === 0) break;
-    }
-    if (depth !== 0) continue; // an unclosed call on this line: its arguments are on the next one
-    const args = [];
-    let cur = '',
-      d = 0;
-    for (const ch of line.slice(re.lastIndex, i)) {
-      if (ch === '(' || ch === '<') d++;
-      else if (ch === ')' || ch === '>') d--;
-      if (ch === ',' && d === 0) {
-        args.push(cur.trim());
-        cur = '';
-      } else cur += ch;
-    }
-    if (cur.trim()) args.push(cur.trim());
-    out.push({ name: m[1], args, at: re.lastIndex - 1 });
-  }
-  return out;
-}
-
-// True when the callee writes that parameter into a status (`setXStatus(param)`, `.status(param)`); false when it
-// does not (`change(model, NEW, previous)` passes the value on, it is the previous status and a read); null when the
-// literal is not an argument of any call on the line.
-export function setByArgument(methodsByName, line, enumName, value) {
-  const literal = new RegExp(`\\b${enumName}\\.${value}\\b`);
-  for (const call of callArgs(line)) {
-    const at = call.args.findIndex((a) => literal.test(a));
-    if (at < 0) continue;
-    const candidates = methodsByName.get(`${call.name}/${call.args.length}`) ?? [];
-    return candidates.some(({ f, m }) => {
-      const param = m.params?.[at]?.name;
-      if (!param) return false;
-      const body = f.lines.slice(m.start - 1, m.end).join('\n');
-      // A setter, a builder field, or a plain assignment into the status field.
-      const write = new RegExp(`(?:set\\w*(?:Status|State)|(?:status|state))\\s*\\(\\s*${param}\\s*\\)`);
-      const assign = new RegExp(`(?:status|state)\\s*=\\s*${param}\\b`);
-      return write.test(body) || assign.test(body);
-    });
-  }
-  return null;
-}
-
-{
-  const line = 'service.change(model, Status.NEW, previous);';
-  assert.deepEqual(callArgs(line).map((c) => [c.name, c.args.length]), [['change', 3]]);
-  assert.deepEqual(callArgs('repo.save(Order.builder().status(Status.OPEN).build());').map((c) => c.name), [
-    'save',
-    'builder',
-    'status',
-    'build',
-  ]);
-  const methods = new Map([
-    ['change/3', [{ f: { lines: ['void change(E m, S s, S prev) { }'] }, m: { start: 1, end: 1, params: [{ name: 'm' }, { name: 's' }, { name: 'prev' }] } }]],
-    ['mark/1', [{ f: { lines: ['void mark(S s) { this.status = s; }'] }, m: { start: 1, end: 1, params: [{ name: 's' }] } }]],
-  ]);
-  // The previous status is an argument the callee never writes: a read.
-  assert.equal(setByArgument(methods, line, 'Status', 'NEW'), false);
-  assert.equal(setByArgument(methods, 'x.mark(Status.DONE);', 'Status', 'DONE'), true); // the callee assigns it
-  assert.equal(setByArgument(methods, 'String s = "Status.NEW";', 'Status', 'NEW'), null);
-}
-
-
-// The return type a method declares: the dump says it (`returns`), the syntax index says it (`returnText`), and the
-// declaration line says it when neither does (the test fixtures build the model from source alone).
-export function returnTypeOf(f, m) {
-  const named = m.returns ?? m.returnText;
-  if (named) return String(named).replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop();
-  const head = f.lines.slice(m.start - 1, m.start + 2).join(' ');
-  const at = head.indexOf(`${m.name}(`);
-  if (at < 0) return null;
-  const before = head
-    .slice(0, at)
-    .replace(/@[\w.]+(\s*\([^)]*\))?/g, ' ') // annotations sit before the modifiers
-    .trim();
-  return before.split(/\s+/).filter(Boolean).pop()?.replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop() ?? null;
-}
-
-// A method writes the status from its own argument or a variable: the setter shapes a switch result reaches.
-const SETS_STATUS = new RegExp(
-  '\\.set\\w*(?:Status|State)\\s*\\(\\s*\\w+\\s*\\)' + // setStatus(s), setBookingStatus(s)
-    '|\\.(?:status|state)\\s*\\(\\s*\\w+\\s*\\)' + // the builder field: .status(s)
-    '|\\b(?:status|state)\\s*=\\s*\\w+\\s*;', // this.status = s
-);
-
-// The status constants a method *chooses* instead of receiving: a switch expression's arms
-// (`case FIXED -> Status.PENDING_PAYMENT`), a `return Status.X`, or a switch whose result the method then sets
-// (`Status s = switch (...) { ... }; row.setStatus(s)`). Two type tests decide, never a name: the method declares the
-// entity's status enum as its return type, or a switch result feeds a status setter. A method that only reads a
-// status (`return row.getStatus()`) names no constant, so it contributes nothing.
-export function chosenByMethod(f, m, enumName) {
-  const lines = f.lines.slice(m.start - 1, m.end);
-  const body = lines.join('\n');
-  const returnsEnum = returnTypeOf(f, m) === enumName;
-  const switchIntoStatus = /=switch\(/.test(body.replace(/\s+/g, '')) && SETS_STATUS.test(body);
-  if (!returnsEnum && !switchIntoStatus) return [];
-  const out = [];
-  lines.forEach((l, k) => {
-    for (const hit of l.matchAll(new RegExp(`(?:->\\s*|\\breturn\\s+)${enumName}\\.([A-Z][A-Z0-9_]*)\\b`, 'g')))
-      out.push({ value: hit[1], line: m.start + k });
-  });
-  return out;
-}
-
-{
-  const f = {
-    lines: ['  private BookingStatus resolve(PricingType t) {', '    case FIXED -> BookingStatus.PENDING_PAYMENT;', '  }'],
-  };
-  const m = { name: 'resolve', start: 1, end: 3, returnText: 'BookingStatus' };
-  assert.deepEqual(chosenByMethod(f, m, 'BookingStatus').map((x) => x.value), ['PENDING_PAYMENT']);
-  // A reader names no constant; another enum's constant is not this lifecycle's.
-  const get = { name: 'get', start: 1, end: 1, returnText: 'BookingStatus' };
-  const readLine = ['  public BookingStatus get() { return b.getStatus(); }'];
-  assert.deepEqual(chosenByMethod({ lines: readLine }, get, 'BookingStatus'), []);
-  assert.deepEqual(chosenByMethod(f, { ...m, returnText: 'void' }, 'BookingStatus'), []);
-  // A switch assigned into a variable the method sets is the same choice without the enum as the return type.
-  const g = {
-    lines: [
-      '  void create(PricingType t) {',
-      '    BookingStatus s = switch (t) {',
-      '      case FIXED -> BookingStatus.PENDING_PAYMENT;',
-      '    };',
-      '    booking.setStatus(s);',
-      '  }',
-    ],
-  };
-  const picks = chosenByMethod(g, { name: 'create', start: 1, end: 6, returnText: 'void' }, 'BookingStatus');
-  assert.deepEqual(picks.map((x) => x.value), ['PENDING_PAYMENT']);
-  // The declaration line answers when the model carries no return type at all.
-  assert.equal(returnTypeOf(f, { name: 'resolve', start: 1, end: 3 }), 'BookingStatus');
-  const h = { lines: ['  public Optional<BookingStatus> find() {', '    return Optional.empty();', '  }'] };
-  assert.equal(returnTypeOf(h, { name: 'find', start: 1, end: 3 }), 'Optional');
-}
-
-// A status enum declared in the organisation's shared library: imported from a package under the project's root
-// package (the first three segments of the most common package), declared by no scanned file, and not an entity
-// field type — the constants pass reads those. The map is keyed by the enum's full name and lists the files that
-// import it, because `State` in one class is not the `State` of another. Only values this repo sets are listed.
-export function outsideEnums(files, entities = []) {
-  const declared = new Set();
-  for (const f of files) {
-    const pkg = f.ix?.pkg ?? '';
-    for (const t of f.ix?.types ?? []) declared.add(t.owner ? `${pkg}.${t.owner}.${t.name}` : `${pkg}.${t.name}`);
-  }
-  const fieldTypes = new Set(
-    entities.flatMap((e) => (e.fields ?? []).map((fl) => String(fl.type ?? '').replace(/<.*/, '').split('.').pop())),
-  );
-  const counts = new Map();
-  for (const f of files) {
-    const root = String(f.ix?.pkg ?? '').split('.').slice(0, 3).join('.');
-    if (root) counts.set(root, (counts.get(root) ?? 0) + 1);
-  }
-  const root = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0];
-  if (!root) return new Map();
-  const out = new Map();
-  for (const f of files)
-    for (const i of f.ix?.imports ?? []) {
-      if (i.wildcard || i.isStatic) continue;
-      const simple = i.name.split('.').pop();
-      if (!/(Status|State)$/.test(simple) || declared.has(i.name) || fieldTypes.has(simple)) continue;
-      if (i.name.split('.').slice(0, 3).join('.') !== root) continue;
-      const hit = out.get(i.name) ?? { simple, files: new Set() };
-      hit.files.add(f);
-      out.set(i.name, hit);
-    }
-  return out;
-}
-
-{
-  const own = { name: 'Local', ix: { pkg: 'com.acme.orders.api', types: [{ name: 'Order' }], imports: [] } };
-  const foreign = { name: 'Elsewhere', ix: { pkg: 'com.acme.orders.shared', types: [{ name: 'Elsewhere' }], imports: [] } };
-  const declare = {
-    name: 'Holder',
-    ix: { pkg: 'com.acme.orders.shared', types: [{ name: 'Holder' }, { name: 'Status', owner: 'Holder' }], imports: [] },
-  };
-  const files = [
-    own,
-    {
-      name: 'Use',
-      ix: {
-        pkg: 'com.acme.orders.api',
-        types: [{ name: 'Use' }],
-        imports: [
-          { name: 'com.acme.orders.shared.OrderStatus', wildcard: false, isStatic: false },
-          { name: 'com.acme.orders.shared.Holder.Status', wildcard: false, isStatic: false },
-          { name: 'com.other.Status', wildcard: false, isStatic: false },
-        ],
-      },
-    },
-    foreign,
-    declare,
-  ];
-  const found = outsideEnums(files, [{ fields: [{ name: 'code', type: 'String' }] }]);
-  // Declared in the project (a nested enum) or outside its root package: neither is an outside enum.
-  assert.deepEqual([...found.keys()], ['com.acme.orders.shared.OrderStatus']);
-  assert.deepEqual([...found.get('com.acme.orders.shared.OrderStatus').files].map((f) => f.name), ['Use']);
-  // A status held as another type's field belongs to the constants pass, not to this list.
-  assert.equal(outsideEnums(files, [{ fields: [{ name: 'status', type: 'OrderStatus' }] }]).size, 0);
-}
-
-// Status lifecycles, moved unchanged from deep.mjs (slice 6, R2). Every place each value is set, by method;
-// conditional updates vs plain sets; a value chosen inline counts as set.
-export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEntity }) {
-  // Lifecycle: every place each status value is set, by method; conditional updates vs plain saves.
-  const statusEnums = new Map(enums.filter((e) => /(Status|State)$/.test(e.name)).map((e) => [e.name, e]));
-  const owner = new Map();
-  for (const e of entities) for (const fl of e.fields) if (statusEnums.has(fl.type)) owner.set(fl.type, e.name);
-  const conditionalNames = new Set(
-    files
-      .filter((f) => repoEntity.has(f.name))
-      .flatMap((f) =>
-        f.lines.flatMap((l, i) =>
-          /@Modifying/.test(l)
-            ? [
-                f.lines
-                  .slice(i, i + 8)
-                  .join(' ')
-                  .match(/\b(\w+)\s*\(\s*@Param/)?.[1],
-              ]
-            : [],
-        ),
-      )
-      .filter(Boolean),
-  );
-  const STATUS_VAR = /(\.set\w*(Status|State)|\.\w*(status|Status|state|State))\s*\(\s*[a-z]\w*\s*\)/;
-  const lifecycle = [];
-  // The same sets, as facts: entity, value, and the method that performs them. The flow rank reads these — a flow
-  // that sets a status moves that entity through its lifecycle — while the lines above stay the digest's wording.
-  const statusSites = [];
-  // Every project method by name and arity, so a status literal handed to a call can be followed into the callee.
-  const methodsByName = new Map();
-  for (const f of files)
-    for (const m of f.methods ?? []) {
-      const key = `${m.name}/${m.params?.length ?? 0}`;
-      methodsByName.set(key, [...(methodsByName.get(key) ?? []), { f, m }]);
-    }
-  for (const [en, e] of statusEnums) {
-    if (!owner.has(en)) continue; // every status enum with an owner, not only the shortlisted entities
-    const sites = Object.fromEntries(e.values.map((v) => [v, { set: [], conditional: [], read: 0 }]));
-    // Which values each method chooses rather than receives: a switch expression's arms or a returned constant
-    // (`chosenByMethod`). Computed once per enum so the per-line pass is a lookup; a file that never names the enum
-    // cannot choose one of its values.
-    const chosen = new Map();
-    for (const f of files) {
-      if (f.name === en || (f.text && !f.text.includes(en))) continue;
-      for (const m of f.methods ?? []) {
-        const picks = chosenByMethod(f, m, en);
-        if (picks.length) chosen.set(`${f.p}:${m.start}`, new Set(picks.map((p) => p.value)));
-      }
-    }
-    for (const f of files) {
-      if (f.name === en) continue;
-      f.lines.forEach((l, i) => {
-        for (const x of l.matchAll(new RegExp(`\\b${en}\\.([A-Z][A-Z0-9_]*)\\b`, 'g'))) {
-          const s = (sites[x[1]] ??= { set: [], conditional: [], read: 0 }); // values the enum parser missed still count
-          const pickTop = f.methods
-            .filter((mm) => mm.start <= i + 1 && i + 1 <= mm.end)
-            .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-          // A Lombok accessor keeps the position of the field it reads, so its range is a declaration line, not a
-          // body. `getStatus` covers `status = BookingStatus.CONFIRMED` and sets nothing: that line's site belongs to
-          // the field, not to the accessor, and no branch below may treat the accessor's range as a body.
-          const m = pickTop && namesItsOwnBody(f, pickTop) ? pickTop : null;
-          const where = m ? cite(f, m) : `${f.p}:${i + 1}`;
-          // A plain set is one status fact at this method and line; the digest's wording (`where`) rides along.
-          const markSet = (wording) => {
-            s.set.push(wording);
-            statusSites.push({
-              entity: owner.get(en),
-              value: x[1],
-              method: m?.id ?? null,
-              line: i + 1,
-              evidence: [m ? cite(f, m) : `${f.p}:${i + 1}`],
-            });
-          };
-          const stmt = f.lines.slice(Math.max(0, i - 2), i + 1).join(' ');
-          // The call and the value must share a line: a transition on one line and a status literal three lines
-          // later (a repository query argument) are not the same statement.
-          const call = [...conditionalNames].find((n) => new RegExp(`\\.${n}\\s*\\(`).test(l));
-          if (call) {
-            const vals = [
-                ...f.lines
-                  .slice(i, i + 3)
-                  .join(' ')
-                  .split(/\)\s*;/)[0]
-                  .matchAll(new RegExp(`${en}\\.([A-Z][A-Z0-9_]*)`, 'g')),
-              ].map((y) => y[1]),
-              prev = [...l.matchAll(new RegExp(`${en}\\.([A-Z][A-Z0-9_]*)`, 'g'))].map((y) => y[1]);
-            const all = [...new Set([...prev, ...vals])];
-            if (all[all.length - 1] === x[1])
-              s.conditional.push(`${where} (from ${all.slice(0, -1).join('/') || '?'} via ${call})`);
-            else s.read++;
-          }
-          // Direct: setXxxStatus(V), builder .xxxStatus(V), or xxxStatus = V (field default or assignment).
-          else if (
-            new RegExp(
-              // A setter (`setStatus`), a builder field (`status(`), or an assignment. Not every method whose name ends
-              // in Status: `findAllByStatus(X)` is a query, and counting it made a read look like a write.
-              `(\\.set\\w*(Status|State)\\s*\\(\\s*|\\.(status|state)\\s*\\(\\s*|\\w*(status|Status|state|State)\\s*=\\s*)${en}\\.${x[1]}\\b`,
-            ).test(l)
-          )
-            markSet(where);
-          // Handed to a method: a set only when the callee writes that parameter into a status. The previous status in
-          // `change(model, NEW, previous)` is an argument the callee reads, so it is a read.
-          else if (setByArgument(methodsByName, l, en, x[1]) === true)
-            markSet(`${where} (set by the callee from the argument)`);
-          else if (setByArgument(methodsByName, l, en, x[1]) === false) s.read++;
-          // Chosen into a variable (ternary or assignment) in a method that sets the status from a variable.
-          // A status chosen inline (`cond ? ENUM.A : ENUM.B`) sets both values (extract/lifecycle.mjs).
-          else if (m && chosenInline({ enumName: en, value: x[1], stmt, methodText: f.lines.slice(m.start - 1, m.end).join('\n') }))
-            markSet(`${where} (chosen inline)`);
-          else if (
-            m &&
-            /\?[^;]*\b${en}\b/.test(l) &&
-            STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n')) &&
-            new RegExp(`\\?[^;]*${en}\\.${x[1]}\\b`).test(l)
-          )
-            markSet(`${where} (chosen inline)`);
-          else if (
-            m &&
-            !new RegExp(`[=!]=\\s*${en}\\.${x[1]}|${en}\\.${x[1]}\\s*[=!]=|case\\s+${en}|equals\\(`).test(l) &&
-            // The literal itself must be what is being chosen: `status = X`, `x ? A : X`. A query argument such as
-            // `List.of(Status.TRIAL)` is a read, even when the method sets a status somewhere else.
-            new RegExp(`[?:=]\\s*[^;]*\\b${en}\\.${x[1]}\\b`).test(l.replace(/[=!]=/g, '')) &&
-            STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n'))
-          )
-            markSet(`${where} (via a variable)`);
-          // Chosen by the method itself: a switch expression's arm or a returned constant, where the method's declared
-          // return type is the entity's status enum or its switch result is what it sets (extract/lifecycle.mjs).
-          else if (m && chosen.get(`${f.p}:${m.start}`)?.has(x[1])) markSet(`${where} (chosen by a switch/return)`);
-          else s.read++;
-        }
-      });
-    }
-    // A status chosen by a helper and handed to a setter or builder: `.status(initialStatus)`, where `initialStatus`
-    // came from a method that chooses constants of this enum (`resolveInitialBookingStatus`). The literal never
-    // appears at the builder line, so the helper's own picks are read here: the helper writes the constant, the
-    // caller sets it, and both are sites. A helper that only reads the status picks nothing and adds nothing.
-    for (const f of files) {
-      if (f.name === en || (f.text && !f.text.includes(en))) continue;
-      f.lines.forEach((l, i) => {
-        const call = /\.(?:set\w*(?:Status|State)|status|state)\(\s*(\w+)\s*\)/.exec(l);
-        if (!call) return;
-        const m = enclosing(f, i + 1);
-        if (!m || !namesItsOwnBody(f, m)) return;
-        const body = f.lines.slice(m.start - 1, m.end).join('\n');
-        const from = new RegExp(`\\b${call[1]}\\s*=\\s*([A-Za-z0-9_]+)\\s*\\(`).exec(body)?.[1];
-        const helper = from && (f.methods ?? []).find((mm) => mm.name === from);
-        if (!helper) return;
-        for (const pick of chosenByMethod(f, helper, en)) {
-          const st = (sites[pick.value] ??= { set: [], conditional: [], read: 0 });
-          st.set.push(`${cite(f, m)} (chosen in ${cite(f, helper)})`);
-          statusSites.push({
-            entity: owner.get(en),
-            value: pick.value,
-            method: m?.id ?? null,
-            line: i + 1,
-            evidence: [cite(f, m)],
-          });
-        }
-      });
-    }
-    // A status chosen by a helper method is also a set above: the helper's own type names the enum, so its
-    // switch arms are recorded at the helper, where the constant is written.
-    const hasConditional = Object.values(sites).some((s) => s.conditional.length);
-    lifecycle.push(
-      `${owner.get(en)}.${en}${hasConditional ? ' (has conditional updates: plain sets below skip that guard)' : ''}`,
-    );
-    for (const [v, s] of Object.entries(sites)) {
-      const parts = [
-        s.conditional.length && `conditional update in ${[...new Set(s.conditional)].join(', ')}`,
-        s.set.length && `${hasConditional ? 'PLAIN set' : 'set'} in ${[...new Set(s.set)].join(', ')}`,
-      ].filter(Boolean);
-      lifecycle.push(`  ${v}: ${parts.join('; ') || 'no setter found by the engine (check the code before saying it is never set)'}`);
-    }
-  }
-
-  // Status fields that hold constants instead of an enum (byte/int/String codes): every place a constant is set,
-  // attributed to the entity from the receiver's declared type or the nearest Entity.builder().
-  const constStatus = entities.filter(
-    (e) =>
-      (!shortlist || shortlist.has(e.name)) &&
-      e.fields.some((fl) => /^(status|state)$/i.test(fl.name) && !statusEnums.has(fl.type)),
-  );
-  if (constStatus.length) {
-    const names = constStatus.map((e) => e.name),
-      sites = Object.fromEntries(names.map((n) => [n, {}]));
-    const SET =
-      /(\w+)\s*\.\s*set(?:Status|State)\s*\(\s*((?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]+)\s*\)|\.(?:status|state)\s*\(\s*((?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]+)\s*\)|\b(?:status|state)\s*=\s*((?:[A-Z]\w*\.)*[A-Z][A-Z0-9_]+)\s*;/;
-    for (const f of files)
-      f.lines.forEach((l, i) => {
-        const x = SET.exec(l);
-        if (!x) return;
-        const m = enclosing(f, i + 1),
-          body = m ? f.lines.slice(m.start - 1, m.end).join('\n') : '';
-        let ent = null;
-        if (x[1])
-          ent = names.find((n) =>
-            new RegExp(
-              `\\b${n}(?:<[^>]*>)?\\s+${x[1]}\\b|\\b${x[1]}\\s*=\\s*(?:new\\s+)?${n}\\b|\\b${x[1]}\\s*=\\s*${n}\\.builder`,
-            ).test(body),
-          );
-        else if (x[3])
-          ent = names
-            .map((n) => [
-              n,
-              f.lines
-                .slice(Math.max(0, i - 8), i + 1)
-                .join('\n')
-                .lastIndexOf(`${n}.builder(`),
-            ])
-            .filter(([, k]) => k >= 0)
-            .sort((a, b) => b[1] - a[1])[0]?.[0];
-        else if (x[4] && names.includes(f.name)) ent = f.name; // field default inside the entity itself
-        if (!ent) return;
-        const v = (x[2] ?? x[3] ?? x[4]).split('.').pop();
-        (sites[ent][v] ??= new Set()).add(m ? cite(f, m) : `${f.p}:${i + 1}`);
-        statusSites.push({
-          entity: ent,
-          value: v,
-          method: m?.id ?? null,
-          line: i + 1,
-          evidence: [m ? cite(f, m) : `${f.p}:${i + 1}`],
-        });
-      });
-    for (const [ent, vals] of Object.entries(sites)) {
-      if (!Object.keys(vals).length) continue;
-      const fl = constStatus.find((e) => e.name === ent).fields.find((x) => /^(status|state)$/i.test(x.name));
-      lifecycle.push(`${ent}.${fl.name} (${fl.type} constants, not an enum: only values seen being set are listed)`);
-      for (const [v, where] of Object.entries(vals))
-        lifecycle.push(
-          `  ${v}: set in ${[...where].slice(0, 6).join(', ')}${where.size > 6 ? ` +${where.size - 6}` : ''}`,
-        );
-    }
-  }
-
-  // A status enum from the organisation's shared library: listed only when this repo sets it, and only the values it
-  // sets, so the section says what happens here rather than what the library allows. Test code sets a status for a
-  // fixture, never for the app, so it is not a site of this lifecycle.
-  const isTest = (p) => /(?:^|\/)(?:test|integration-test|it)\//.test(String(p));
-  for (const [, { simple: en, files: users }] of outsideEnums(files, entities)) {
-    const sites = new Map();
-    for (const f of users) {
-      if (isTest(f.p)) continue;
-      f.lines.forEach((l, i) => {
-        for (const hit of l.matchAll(new RegExp(`\\b${en}\\.([A-Z][A-Z0-9_]*)\\b`, 'g'))) {
-          const v = hit[1];
-          const direct = new RegExp(
-            `(?:\\.set\\w*(?:Status|State)\\s*\\(\\s*|\\.(?:status|state)\\s*\\(\\s*|` +
-              `\\w*(?:status|Status|state|State)\\s*=\\s*)${en}\\.${v}\\b`,
-          ).test(l);
-          if (!direct && setByArgument(methodsByName, l, en, v) !== true) continue;
-          const m = enclosing(f, i + 1);
-          if (!sites.has(v)) sites.set(v, new Set());
-          sites.get(v).add(m ? cite(f, m) : `${f.p}:${i + 1}`);
-        }
-      });
-    }
-    if (!sites.size) continue; // nothing here sets it: that is not a lifecycle of this repo
-    lifecycle.push(`${en} (declared outside this repo)`);
-    for (const [v, where] of sites)
-      lifecycle.push(`  ${v}: set in ${[...where].slice(0, 6).join(', ')}${where.size > 6 ? ` +${where.size - 6}` : ''}`);
-  }
-
-  return { lifecycle, sites: statusSites };
-}
-
-
-
-/** The innermost model method whose range covers a line: what `methodAt` read from the syntax index. */
-const enclosing = (f, line) =>
-  (f.methods ?? [])
-    .filter((m) => m.start <= line && line <= m.end)
-    .sort((a, b) => a.end - a.start - (b.end - b.start))[0] ?? null;
-
-// A member whose range carries a body (`{`). A Lombok accessor is pinned to the field's own position instead, so its
-// range is a field declaration: it names no constant, calls no setter, and would otherwise turn
-// `private Status state = Status.ON;` into a site of the generated getter.
-export function namesItsOwnBody(f, m) {
-  return f.lines.slice(m.start - 1, m.end).join('\n').includes('{');
-}
-
-{
-  // The Lombok accessor of a field keeps the field's line: not its own body.
-  const f = {
-    lines: ['  private BookingStatus status = BookingStatus.CONFIRMED;', '  public BookingStatus resolve(Type t) {'],
-  };
-  assert.equal(namesItsOwnBody(f, { name: 'getStatus', start: 1, end: 1 }), false);
-  // An annotated method's range starts at the annotation; the body is still its own.
-  assert.equal(namesItsOwnBody(f, { name: 'resolve', start: 2, end: 2 }), true);
-  const g = { lines: ['  @Transactional', '  public void cancel(Order o) {', '    o.setStatus(S.CANCELLED);', '  }'] };
-  assert.equal(namesItsOwnBody(g, { name: 'cancel', start: 1, end: 4 }), true);
-  // A one-line method still has a body.
-  assert.equal(namesItsOwnBody({ lines: ['  public Status get() { return s; }'] }, { name: 'get', start: 1, end: 1 }), true);
-}
-
-// The fact families this module owns, over the scanned files (moved out of deep.mjs in slice 6, R3). Only what the two
-// families read is prepared here: fields, lines and the syntax index.
-const cite = (f, m) => {
-  const overloaded = (f.methods ?? f.ix?.methods ?? []).some((n) => n !== m && n.name === m.name);
-  return overloaded ? `${f.p}:${m.start}-${m.end}#${m.name}` : `${f.p}#${m.name}`;
+const simple = (name) => String(name ?? '').split('.').pop();
+const norm = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
+const STATUS_NAME = /(?:Status|State)$/;
+const STATUS_FIELD = /^(?:status|state)$/i;
+const NO_SETTER = 'no setter found by the engine (check the code before saying it is never set)';
+const HOW = {
+  chooser: 'chosen by a switch/return',
+  inline: 'chosen inline',
+  via: 'via a variable',
+  argument: 'set by the callee from the argument',
 };
 
-export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
-  const files = java.map((j) => ({ ...j, lines: j.text.split('\n') }));
-  for (const f of files)
-    f.fields = new Map(
-      f.fields
-        .filter((x) => /^[A-Z]/.test(x.type))
-        .map((x) => [x.name, x.type.replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop()]),
+/** A constant's value name: `a.b.S.PAID` -> `PAID`. A nested enum keeps its `$` in the type, not in the value. */
+const constantName = (value) => simple(value?.value ?? value?.text ?? value?.field ?? '').split(/[<$]/)[0];
+/**
+ * A value that names a status without the dump declaring its type: the source wrote `OrderState.CANCELLED`, and the
+ * row carries the field it read (`field: OrderState#CANCELLED`) with a reason saying the declaration is elsewhere.
+ * The name it reads is the value, and the type it is read from is the one the source names.
+ */
+const outsideRead = (value) =>
+  value?.kind === 'field' && value.reason === 'declaration-outside-dump' && value.field
+    ? { type: value.type, value: String(value.field).split('#').pop() }
+    : null;
+const noHop = (reason, at) => ({ values: [], unresolved: [{ reason, at }] });
+
+/** The constants one expression can be: a constant, or the two branches of a conditional (`a ? S.X : S.Y`). */
+function expressionValues(value, enumFqn, at) {
+  if (!value) return noHop('no-value', at);
+  if (value.kind === 'unresolved') return noHop(value.reason ?? 'unresolved', at);
+  if (value.kind === 'constant')
+    return norm(value.type) === enumFqn
+      ? { values: [{ value: constantName(value), cite: at?.method ?? null, how: 'direct' }], unresolved: [] }
+      : noHop('other-type', at);
+  if (value.kind === 'conditional') {
+    const out = { values: [], unresolved: [] };
+    for (const branch of [value.then, value.otherwise]) {
+      const sub = expressionValues(branch, enumFqn, at);
+      out.values.push(...sub.values.map((v) => ({ ...v, how: v.how === 'direct' ? 'inline' : v.how })));
+      out.unresolved.push(...sub.unresolved);
+    }
+    return out;
+  }
+  return noHop(`${value.kind}-value`, at);
+}
+
+/** The constants a method returns, directly or through a switch: the dump's `returned`, cited at the method. */
+function returnsIn(methodId, enumFqn, ctx, only = null) {
+  const out = { values: [], unresolved: [] };
+  const at = { method: methodId, call: null };
+  for (const entry of only ? [only] : ctx.dump.returnsOf(methodId)) {
+    const expressions = entry.kind === 'switch' ? (entry.arms ?? []).map((arm) => arm.value) : [entry.value];
+    for (const expression of expressions) {
+      const sub = expressionValues(expression, enumFqn, at);
+      out.values.push(...sub.values.map((v) => ({ ...v, cite: methodId, how: 'chooser' })));
+      out.unresolved.push(...sub.unresolved);
+    }
+  }
+  return out;
+}
+
+/** A local: the call it was assigned from, or the switch whose result it holds, names its values. */
+function localValues(local, at, enumFqn, ctx) {
+  const out = { values: [], unresolved: [] };
+  if (local.from) {
+    const source = ctx.byCall.get(local.from);
+    if (!source) return noHop('no-source-call', at);
+    for (const target of targetIds(source)) {
+      const chosen = returnsIn(target, enumFqn, ctx);
+      out.values.push(...chosen.values);
+      out.unresolved.push(...chosen.unresolved);
+    }
+  } else if (at?.method) {
+    // A local assigned from a switch carries no call id: the dump's `returned` names the switch by its target local.
+    for (const entry of ctx.dump.returnsOf(at.method))
+      if (entry.kind === 'switch' && entry.target && entry.target === local.text) {
+        const chosen = returnsIn(at.method, enumFqn, ctx, entry);
+        out.values.push(...chosen.values);
+        out.unresolved.push(...chosen.unresolved);
+      }
+  }
+  // The value is chosen in a helper and set here: the method that holds the local is a site too, but only when the
+  // chooser is another method (a switch in this method is already cited where it is).
+  for (const v of [...out.values]) if (at?.method && v.cite !== at.method) out.values.push({ value: v.value, cite: at.method, how: 'via' });
+  return out.values.length || out.unresolved.length ? out : noHop('local-unresolved', at);
+}
+
+/** One call argument: its constants, a local's source, a nested call's returns, or (bounded) a parameter's callers. */
+function argumentValues(call, arg, index, enumFqn, ctx, depth = 2) {
+  const at = { method: call.method, call: call.id };
+  if (!arg) return noHop('no-argument', at);
+  if (arg.kind === 'param') {
+    if (!depth) return noHop('param-depth', at);
+    const found = ctx.q.argValue(call, index, depth);
+    const out = { values: [], unresolved: [] };
+    for (const { value, at: where, stopped } of found.values) {
+      if (stopped) continue; // the hops ran out: nothing resolved, nothing guessed
+      const here = { method: where?.method ?? null, call: where?.call ?? null };
+      const sub = value.kind === 'local' ? localValues(value, here, enumFqn, ctx) : expressionValues(value, enumFqn, here);
+      out.values.push(...sub.values.map((v) => ({ ...v, how: v.how === 'direct' ? 'argument' : v.how })));
+      out.unresolved.push(...sub.unresolved);
+    }
+    out.unresolved.push(...found.unresolved.map((u) => ({ ...u, reason: `parameter:${u.reason}` })));
+    return out.values.length || out.unresolved.length ? out : noHop('param-unresolved', at);
+  }
+  if (arg.kind === 'local') return localValues(arg, at, enumFqn, ctx);
+  if (arg.kind === 'call' && arg.call) {
+    const out = { values: [], unresolved: [] };
+    const inner = ctx.byCall.get(arg.call);
+    for (const target of targetIds(inner)) out.values.push(...returnsIn(target, enumFqn, ctx).values);
+    if (out.values.length) return out;
+  }
+  if (arg.kind === 'field') return noHop('field-value', at);
+  const out = expressionValues(arg, enumFqn, at);
+  return out.values.length || out.unresolved.length ? out : noHop(`${arg.kind}-unresolved`, at);
+}
+
+/** The citation of one method id: `file#name`, with the range when the name is overloaded in its type. */
+function citing(dump) {
+  return (methodId) => {
+    const m = methodId ? dump.members.get(methodId) : null;
+    if (!m?.pos) return null;
+    const overloaded = dump.membersOf(m.owner).some((x) => x.id !== m.id && x.name === m.name);
+    return overloaded ? `${m.pos.file}:${m.pos.line}-${m.pos.endLine}#${m.name}` : `${m.pos.file}#${m.name}`;
+  };
+}
+
+/**
+ * The lifecycle facts: one entry per (entity, status enum), each value with the places it is set. Also returns the
+ * sites the flows rank reads, and the questions the dump could not answer (as `unresolved`, with a reason).
+ */
+export function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortlist = null, repoEntity = new Map() }) {
+  const sites = [];
+  const unresolved = [];
+  if (!dump) return { lifecycle: [], sites, unresolved: [{ reason: 'no-dump', at: null }] };
+  // The app's own files: the dump spans the whole checkout, but a module the deployable excludes is not this app.
+  const inApp = (file) => !files || file == null || files.has(file);
+  const q = queries(dump);
+  const cite = citing(dump);
+  const ctx = { dump, q, byCall: new Map(dump.calls.map((c) => [c.id, c])) };
+
+  // The app's status enums, in the order the model lists their types: the digest's order, and the values' order.
+  const appEnums = new Map();
+  for (const en of enums) {
+    const found = [...dump.types.values()].find(
+      (t) => t.kind === 'enum' && simple(t.fqn) === en.name && t.pos?.file === en.file,
     );
-  const { lifecycle, sites } = lifecycleFacts({ files, enums, entities, shortlist, cite, repoEntity });
-  const schedules = scheduleFacts({ files, cite });
-  return { lifecycle, statusSets: sites, schedules };
+    if (found && STATUS_NAME.test(simple(found.fqn))) appEnums.set(norm(found.fqn), en);
+  }
+  const valuesOf = (fqn) => (appEnums.get(fqn)?.values?.length ? appEnums.get(fqn).values : dump.membersOf(fqn).filter((m) => m.kind === 'enumConstant').map((m) => m.name));
+
+  // One pair per (entity, status enum): two entities sharing an enum are two lifecycles, the doc's own bug.
+  const pairs = [];
+  for (const e of entities)
+    for (const field of e.fields ?? []) {
+      const enumFqn = norm(field.typeFqn);
+      if (!appEnums.has(enumFqn)) continue;
+      pairs.push({ entity: e.name, entityFqn: e.type?.fqn ?? e.fqn, field: field.name, enumFqn, values: valuesOf(enumFqn) });
+    }
+  const order = new Map([...appEnums.keys()].map((k, i) => [k, i]));
+  pairs.sort((a, b) => order.get(a.enumFqn) - order.get(b.enumFqn) || a.entity.localeCompare(b.entity) || a.field.localeCompare(b.field));
+  for (const pair of pairs) pair.setting = new Map(pair.values.map((v) => [v, { set: [], conditional: [] }]));
+
+  /** Records one site: the digest's wording plus the flat fact the flow rank reads. One site once. */
+  const seen = new Set();
+  const mark = (pair, value, citeText, how, method, line, note = null) => {
+    if (!value || !citeText) return;
+    const wording = note ?? HOW[how] ?? how;
+    const key = `${pair.entity}\u0000${value}\u0000${citeText}\u0000${wording}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const slot = pair.setting.get(value) ?? { set: [], conditional: [] };
+    pair.setting.set(value, slot);
+    slot.set.push(how === 'direct' && !note ? citeText : `${citeText} (${wording})`);
+    sites.push({ entity: pair.entity, value, method: method ?? null, line: line ?? null, evidence: [citeText] });
+  };
+
+  // Which method writes which field from which parameter: the callee side of a status write (`setStatus(status)`).
+  const paramWriters = new Map();
+  for (const pair of pairs)
+    for (const row of dump.fieldAccessOf(`${pair.entityFqn}#${pair.field}`))
+      if (row.op === 'write' && row.value?.kind === 'param' && row.value.index != null) {
+        const key = `${row.method}\u0000${row.value.index}`;
+        paramWriters.set(key, [...(paramWriters.get(key) ?? []), pair]);
+      }
+
+  // The entity a Lombok builder setter writes. The synthesis names the builder `Entity.Builder` and marks its members
+  // `generated: lombok`; the entity is that owner without the suffix, and only when the dump declares it. A builder the
+  // source itself declares (`OrderBuilder`) has no such owner and stays unattributed.
+  const BUILDER_SUFFIX = '.Builder';
+  const builtEntity = (targetId) => {
+    const member = dump.members.get(targetId);
+    if (!member || member.generated !== 'lombok') return null;
+    const owner = String(member.owner ?? '');
+    if (!owner.endsWith(BUILDER_SUFFIX)) return null;
+    const entity = owner.slice(0, -BUILDER_SUFFIX.length);
+    return dump.types.has(entity) ? entity : null;
+  };
+
+  // A write of the entity's own status field: the dump's field accesses carry the value, so a field default, a
+  // constructor assignment and a setter body are one shape.
+  for (const pair of pairs)
+    for (const row of dump.fieldAccessOf(`${pair.entityFqn}#${pair.field}`)) {
+      if (row.op !== 'write' || !inApp(row.file)) continue;
+      const at = { method: row.method, call: null };
+      const found =
+        row.value?.kind === 'param'
+          ? parameterValues(row, pair, ctx)
+          : row.value?.kind === 'local'
+            ? localValues(row.value, at, pair.enumFqn, ctx)
+            : expressionValues(row.value, pair.enumFqn, at);
+      for (const v of found.values) mark(pair, v.value, v.cite ? cite(v.cite) : cite(row.method), v.how, v.cite ?? row.method, row.line);
+      unresolved.push(...found.unresolved);
+    }
+
+  // A call whose argument has the status enum's type: on the entity itself, into a method that writes its field, or on
+  // the Lombok builder of the entity (`Booking.builder().status(x)`).
+  for (const call of dump.calls) {
+    if (call.via === 'methodRef' || call.origin === 'error' || !inApp(call.file)) continue;
+    const args = dump.argsOf(call.id);
+    args.forEach((arg, index) => {
+      const type = norm(arg?.type);
+      if (!STATUS_NAME.test(simple(type))) return;
+      // The type whose instance receives the call: the receiver the dump typed, or the entity a Lombok builder setter
+      // belongs to. Both are facts of the call row, not a reading of the argument's text.
+      const receivers = new Set(
+        [norm(q.receiverEntity(call).type), ...targetIds(call).map(builtEntity)].filter(Boolean),
+      );
+      const owners = pairs.filter(
+        (p) =>
+          p.enumFqn === type &&
+          (receivers.has(p.entityFqn) ||
+            targetIds(call).some((t) => (paramWriters.get(`${t}\u0000${index}`) ?? []).includes(p))),
+      );
+      if (!owners.length) {
+        // A status constant handed to nothing this dump can name may still be a write: reported, not dropped.
+        if (arg.kind === 'constant') unresolved.push({ reason: 'no-owner', at: { method: call.method, call: call.id, line: call.line } });
+        return;
+      }
+      const found = argumentValues(call, arg, index, type, ctx, 2);
+      for (const pair of owners)
+        for (const v of found.values) mark(pair, v.value, v.cite ? cite(v.cite) : cite(call.method), v.how, v.cite ?? call.method, call.line);
+      // A value a helper chose and this site hands over: the helper writes the constant, this call sets it, and the
+      // wording names both — `.status(initialStatus)` where `initialStatus` came from `resolveInitialBookingStatus`.
+      if (arg.kind === 'local' && arg.from)
+        for (const pair of owners)
+          for (const v of found.values)
+            if (v.cite && v.cite !== call.method)
+              mark(pair, v.value, cite(call.method), 'direct', call.method, call.line, `chosen in ${cite(v.cite)}`);
+      unresolved.push(...found.unresolved);
+    });
+  }
+
+  // A @Modifying repository query is a conditional update: the last status constant is the new value, the others the
+  // values it matches on. The repository's entity is the call graph's own repository→entity map.
+  for (const call of dump.calls)
+    for (const target of targetIds(call)) {
+      if (!inApp(call.file)) continue;
+      const member = dump.members.get(target);
+      if (!member || dump.annotation(member, 'Modifying') == null) continue;
+      const constants = (call.args ?? []).filter((a) => a?.kind === 'constant' && STATUS_NAME.test(simple(a.type)));
+      if (!constants.length) continue;
+      const entity = repoEntity.get(simple(member.owner));
+      for (const pair of pairs) {
+        if (entity !== pair.entity || norm(constants[constants.length - 1].type) !== pair.enumFqn) continue;
+        const from = constants.slice(0, -1).map(constantName).join('/') || '?';
+        const value = constantName(constants[constants.length - 1]);
+        const slot = pair.setting.get(value) ?? { set: [], conditional: [] };
+        pair.setting.set(value, slot);
+        slot.conditional.push(`${cite(call.method)} (from ${from} via ${call.name})`);
+      }
+    }
+
+  // A method whose declared return type is the status enum chooses its constants: for an enum with one owner, record
+  // that choice at the method (the dump's `returns`), as the digest always has. With several owners the entity a value
+  // belongs to is not in the return type, so those are recorded only where a call hands the value to a field.
+  const byEnum = new Map();
+  for (const pair of pairs) byEnum.set(pair.enumFqn, [...(byEnum.get(pair.enumFqn) ?? []), pair]);
+  for (const [enumFqn, group] of byEnum) {
+    if (group.length !== 1) continue;
+    const [pair] = group;
+    const simpleName = simple(pair.enumFqn);
+    for (const member of dump.members.values()) {
+      if (member.kind !== 'method' || simple(member.returns) !== simpleName || !inApp(member.pos?.file)) continue;
+      for (const v of returnsIn(member.id, enumFqn, ctx).values)
+        mark(pair, v.value, cite(member.id), v.how, member.id, member.pos?.line ?? null);
+    }
+  }
+
+  // The digest's sentences: the entity and enum, then every value with its conditional and plain sets.
+  const lifecycle = [];
+  for (const pair of pairs) {
+    const rows = [...pair.setting.values()];
+    const hasConditional = rows.some((s) => s.conditional.length);
+    lifecycle.push(
+      `${pair.entity}.${simple(pair.enumFqn)}${hasConditional ? ' (has conditional updates: plain sets below skip that guard)' : ''}`,
+    );
+    for (const [value, slot] of pair.setting) {
+      const set = [...new Set(slot.set)].sort();
+      const conditional = [...new Set(slot.conditional)].sort();
+      const parts = [
+        conditional.length && `conditional update in ${conditional.join(', ')}`,
+        set.length && `${hasConditional ? 'PLAIN set' : 'set'} in ${set.join(', ')}`,
+      ].filter(Boolean);
+      lifecycle.push(`  ${value}: ${parts.join('; ') || NO_SETTER}`);
+    }
+  }
+
+  const constants = constantStatuses({ dump, entities, shortlist, ctx, cite, unresolved, inApp });
+  lifecycle.push(...constants.lifecycle);
+  sites.push(...constants.sites);
+  const outside = outsideStatuses({ dump, declared: new Set(appEnums.keys()), entities, cite, unresolved, inApp });
+  lifecycle.push(...outside.lifecycle);
+  sites.push(...outside.sites);
+
+  return { lifecycle, sites, unresolved };
+}
+
+/** A field write whose value is a parameter: every caller's argument at that index is what the field receives. */
+function parameterValues(row, pair, ctx) {
+  const out = { values: [], unresolved: [] };
+  for (const call of ctx.dump.callersOf(row.method)) {
+    const index = row.value.index;
+    const found = argumentValues(call, ctx.dump.argsOf(call.id)[index], index, pair.enumFqn, ctx, 1);
+    out.values.push(...found.values);
+    out.unresolved.push(...found.unresolved);
+  }
+  return out.values.length || out.unresolved.length ? out : noHop('no-caller', { method: row.method, call: null });
+}
+
+/**
+ * Status fields that hold constants instead of an enum (byte/int/String codes): a value handed to a method that writes
+ * the field. Only values this code sets are listed, and a field nothing sets is reported as unresolved.
+ */
+function constantStatuses({ dump, entities, shortlist, ctx, cite, unresolved, inApp }) {
+  const lifecycle = [];
+  const sites = [];
+  for (const e of entities) {
+    if (shortlist && !shortlist.has(e.name)) continue;
+    const entityFqn = e.type?.fqn ?? e.fqn;
+    for (const field of e.fields ?? []) {
+      if (!STATUS_FIELD.test(field.name) || STATUS_NAME.test(simple(field.typeFqn))) continue;
+      const writes = dump.fieldAccessOf(`${entityFqn}#${field.name}`).filter((r) => r.op === 'write' && inApp(r.file));
+      if (!writes.length) continue;
+      const found = new Map();
+      const take = (value, wording, method, line) => {
+        if (!value) return;
+        if (!found.has(value)) found.set(value, { where: new Set(), method, line });
+        found.get(value).where.add(wording);
+      };
+      for (const row of writes) {
+        const at = { method: row.method, call: null };
+        for (const branch of row.value?.kind === 'conditional' ? [row.value.then, row.value.otherwise] : [row.value]) {
+          if (branch?.kind !== 'constant') continue;
+          take(constantName(branch), cite(row.method), row.method, row.line);
+        }
+      }
+      for (const call of dump.calls)
+        for (const [i, arg] of dump.argsOf(call.id).entries()) {
+          if (arg?.kind !== 'constant' || !inApp(call.file)) continue;
+          const writesIt = targetIds(call).some((t) =>
+            writes.some((r) => r.method === t && r.value?.kind === 'param' && r.value.index === i),
+          );
+          if (writesIt) take(constantName(arg), cite(call.method), call.method, call.line);
+        }
+      if (!found.size) {
+        unresolved.push({ reason: 'no-write', at: { entity: e.name, field: field.name } });
+        continue;
+      }
+      lifecycle.push(`${e.name}.${field.name} (${field.type} constants, not an enum: only values seen being set are listed)`);
+      for (const [value, w] of found) {
+        const where = [...w.where].sort();
+        lifecycle.push(`  ${value}: set in ${where.slice(0, 6).join(', ')}${where.length > 6 ? ` +${where.length - 6}` : ''}`);
+        sites.push({ entity: e.name, value, method: w.method, line: w.line, evidence: where.slice(0, 6) });
+      }
+    }
+  }
+  return { lifecycle, sites };
+}
+
+/**
+ * A status enum declared outside the app's own types (another module, a shared library): listed by simple name, only
+ * when this code sets it, and only the values it sets. The values are the typed constants the dump carries.
+ */
+function outsideStatuses({ dump, declared, entities, cite, unresolved, inApp }) {
+  const lifecycle = [];
+  const sites = [];
+  const groups = new Map();
+  // One group per enum, by simple name: the section lists an outside enum by name, and Spoon names the same type with
+  // and without its package depending on whether the file imports it (a static import qualifies, a type access may not).
+  const take = (typeFqn, value, method, line) => {
+    const name = simple(typeFqn);
+    if (!groups.has(name)) groups.set(name, { simple: name, sites: new Map() });
+    const g = groups.get(name);
+    if (!g.sites.has(value)) g.sites.set(value, { where: new Set(), method, line });
+    g.sites.get(value).where.add(cite(method));
+  };
+  // A status enum the engine never saw declared: a shared module's, or a library's. An enum this dump declares is
+  // either an app enum (a lifecycle of its own, above) or belongs to another module of the same checkout, so it is not
+  // "declared outside" — and a field holding one is still a status field here, which is why holding the entity's
+  // status is not what excludes it.
+  const declaredNames = new Set([...dump.types.keys()].map(simple));
+  const outside = (type) =>
+    STATUS_NAME.test(simple(type)) &&
+    !declared.has(norm(type)) &&
+    !dump.types.has(norm(type)) &&
+    !declaredNames.has(simple(type));
+  // The entity whose status field holds each outside enum, when exactly one does: a value set there is that entity's
+  // transition, which is what the flow rank reads. Two entities sharing an enum leave it unattributed, not guessed.
+  const ownerOf = new Map();
+  for (const e of entities ?? [])
+    for (const field of e.fields ?? [])
+      if (STATUS_FIELD.test(String(field.name)) && STATUS_NAME.test(simple(field.typeFqn))) {
+        const type = simple(field.typeFqn);
+        ownerOf.set(type, ownerOf.has(type) ? null : e.name);
+      }
+  // A status constant handed to a method that writes it into a field of that type (a setter, by the callee's body).
+  const writers = new Set();
+  for (const row of dump.fields)
+    if (row.op === 'write' && row.value?.kind === 'param' && row.value.index != null && inApp(row.file))
+      writers.add(`${row.method}\u0000${row.value.index}`);
+  for (const call of dump.calls)
+    for (const [i, arg] of dump.argsOf(call.id).entries()) {
+      const read = arg?.kind === 'constant' ? null : outsideRead(arg);
+      if (!(arg?.kind === 'constant' || read) || !outside(read ? read.type : arg.type) || !inApp(call.file)) continue;
+      const setter = /^(?:set\w*(?:Status|State)|status|state)$/.test(call.name ?? '');
+      if (!setter && !targetIds(call).some((t) => writers.has(`${t}\u0000${i}`))) continue;
+      take(read ? read.type : arg.type, read ? read.value : constantName(arg), call.method, call.line);
+    }
+  // A default written into a status field: `this.status = SomeStatus.PENDING` — a constant, or a static read of a field
+  // whose type this dump does not declare (`OrderState.CANCELLED`).
+  for (const row of dump.fields) {
+    if (row.op !== 'write' || !inApp(row.file)) continue;
+    if (!STATUS_FIELD.test(String(row.field).split('#').pop())) continue;
+    const read = row.value?.kind === 'constant' ? null : outsideRead(row.value);
+    const value = row.value?.kind === 'constant' ? row.value : read;
+    if (!value || !outside(read ? read.type : row.value.type)) continue;
+    take(read ? read.type : row.value.type, read ? read.value : constantName(row.value), row.method, row.line);
+  }
+  for (const [name, g] of groups) {
+    if (!g.sites.size) {
+      unresolved.push({ reason: 'no-set', at: { enum: name } });
+      continue;
+    }
+    lifecycle.push(`${g.simple} (declared outside this repo)`);
+    for (const [value, w] of g.sites) {
+      const where = [...w.where].sort();
+      lifecycle.push(`  ${value}: set in ${where.slice(0, 6).join(', ')}${where.length > 6 ? ` +${where.length - 6}` : ''}`);
+      sites.push({ entity: ownerOf.get(name) ?? null, value, method: w.method, line: w.line, evidence: where.slice(0, 6) });
+    }
+  }
+  return { lifecycle, sites };
+}
+
+// The fact families this module owns. Schedules come off the model's annotation and call rows (`extract/schedules.mjs`);
+// the lifecycle family below reads only the dump.
+export function javaFacts({ java = [], dump = null, model = null, repoEntity = new Map(), enums = [], entities = [], shortlist = null }) {
+  const db = dump ?? model?.dump ?? null;
+  const overloaded = (f, m) => (f.methods ?? []).some((n) => n !== m && n.name === m.name);
+  const cite = (f, m) => (overloaded(f, m) ? `${f.p ?? f.file}:${m.start}-${m.end}#${m.name}` : `${f.p ?? f.file}#${m.name}`);
+  const files = new Set(java.map((j) => j.p ?? j.file));
+  const { lifecycle, sites, unresolved } = lifecycleFacts({ dump: db, files, entities, enums, shortlist, repoEntity });
+  const schedules = scheduleFacts({ files: java, cite });
+  return { lifecycle, statusSets: sites, schedules, unresolved };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Self-check on a written-out dump: a constant argument, a setter reached through a parameter, and a switch result a
+// helper chooses. The fixture-based checks (a real dump of test/dump-fixture) live in test/lifecycle-choices.test.mjs.
+{
+  const call = (method, id, name, targets, recv, args) => ({
+    method, id, file: `${method.split('#')[0].replace(/\./g, '/')}.java`, line: Number(id.split(':')[0].split('@')[1]), col: Number(id.split(':')[1]),
+    name, targets, origin: 'java', recv, args,
+  });
+  const calls = [
+    call('shop.Svc#direct()', 'shop.Svc#direct()@3:5', 'setStatus', ['shop.Order#setStatus(shop.Status)'], { type: 'shop.Order', how: 'local' },
+      [{ text: 'shop.Status.PAID', kind: 'constant', type: 'shop.Status', value: 'shop.Status.PAID' }]),
+    call('shop.Order#setStatus(shop.Status)', 'shop.Order#setStatus(shop.Status)@8:5', 'setStatus', [], { type: 'shop.Order', how: 'this' },
+      [{ text: 's', kind: 'param', type: 'shop.Status', index: 0 }]),
+    call('shop.Svc#mark(shop.Status)', 'shop.Svc#mark(shop.Status)@12:5', 'setStatus', ['shop.Order#setStatus(shop.Status)'], { type: 'shop.Order', how: 'field' },
+      [{ text: 's', kind: 'param', type: 'shop.Status', index: 0 }]),
+    call('shop.Caller#run()', 'shop.Caller#run()@20:5', 'mark', ['shop.Svc#mark(shop.Status)'], { type: 'shop.Svc', how: 'field' },
+      [{ text: 'shop.Status.NEW', kind: 'constant', type: 'shop.Status', value: 'shop.Status.NEW' }]),
+  ];
+  const members = [
+    ...['NEW', 'PAID', 'GONE'].map((name) => ({ kind: 'enumConstant', owner: 'shop.Status', name })),
+    { kind: 'method', owner: 'shop.Svc', name: 'direct', id: 'shop.Svc#direct()', pos: { file: 'shop/Svc.java', line: 3, endLine: 4 } },
+    { kind: 'method', owner: 'shop.Order', name: 'setStatus', id: 'shop.Order#setStatus(shop.Status)', params: [{ name: 's', type: 'Status' }],
+      pos: { file: 'shop/Order.java', line: 7, endLine: 9 } },
+    { kind: 'method', owner: 'shop.Svc', name: 'mark', id: 'shop.Svc#mark(shop.Status)', params: [{ name: 's', type: 'Status' }],
+      pos: { file: 'shop/Svc.java', line: 11, endLine: 13 } },
+    { kind: 'method', owner: 'shop.Caller', name: 'run', id: 'shop.Caller#run()', pos: { file: 'shop/Caller.java', line: 19, endLine: 21 } },
+    { kind: 'method', owner: 'shop.Svc', name: 'choose', id: 'shop.Svc#choose()', returns: 'Status',
+      returned: [{ kind: 'switch', line: 30, col: 9, arms: [{ labels: ['A'], value: { text: 'shop.Status.NEW', kind: 'constant', type: 'shop.Status', value: 'shop.Status.NEW' } }] }],
+      pos: { file: 'shop/Svc.java', line: 29, endLine: 34 } },
+    { kind: 'field', owner: 'shop.Order', name: 'status', type: 'Status', typeFqn: 'shop.Status', pos: { file: 'shop/Order.java', line: 4, endLine: 4 } },
+  ];
+  const fields = [{ method: 'shop.Order#setStatus(shop.Status)', field: 'shop.Order#status', op: 'write', line: 8, value: { text: 's', kind: 'param', type: 'shop.Status', index: 0 } }];
+  const types = new Map([
+    ['shop.Order', { fqn: 'shop.Order', kind: 'class', pos: { file: 'shop/Order.java', line: 1, endLine: 10 }, ann: [] }],
+    ['shop.Status', { fqn: 'shop.Status', kind: 'enum', pos: { file: 'shop/Status.java', line: 1, endLine: 4 } }],
+  ]);
+  const byOwner = new Map();
+  for (const m of members) byOwner.set(m.owner, [...(byOwner.get(m.owner) ?? []), m]);
+  const dump = {
+    types, members: new Map(members.filter((m) => m.id).map((m) => [m.id, m])), calls, fields,
+    membersOf: (fqn) => byOwner.get(fqn) ?? [], callsOf: (id) => calls.filter((c) => c.method === id),
+    callersOf: (id) => calls.filter((c) => (c.targets ?? []).includes(id)), argsOf: (id) => calls.find((c) => c.id === id)?.args ?? [],
+    fieldAccessOf: (id) => fields.filter((f) => f.field === id), returnsOf: (id) => dump.members.get(id)?.returned ?? [],
+    annotation: () => null, type: (fqn) => types.get(fqn) ?? null, methodRefsIn: () => [],
+  };
+  const entities = [{ name: 'Order', type: { fqn: 'shop.Order' }, fields: [{ name: 'status', type: 'Status', typeFqn: 'shop.Status' }] }];
+  const enums = [{ name: 'Status', file: 'shop/Status.java', line: 1, values: ['NEW', 'PAID', 'GONE'] }];
+  const { lifecycle, sites } = lifecycleFacts({ dump, entities, enums });
+  assert.match(lifecycle[0], /^Order\.Status/);
+  assert.match(lifecycle.find((l) => l.startsWith('  PAID:')), /set in shop\/Svc\.java#direct/);
+  // The setter's parameter is followed to its caller: the constant written by a caller is the site.
+  assert.match(lifecycle.find((l) => l.startsWith('  NEW:')), /set in shop\/Caller\.java#run \(set by the callee from the argument\)/);
+  assert.match(lifecycle.find((l) => l.startsWith('  GONE:')), /no setter found/);
+  assert.ok(sites.some((s) => s.value === 'PAID' && s.entity === 'Order'), 'the flow rank reads the sites');
+  assert.deepEqual(lifecycleFacts({ dump: null }).unresolved.map((u) => u.reason), ['no-dump']);
 }

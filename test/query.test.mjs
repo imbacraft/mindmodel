@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { open } from '../engine/dump.mjs';
+import { CONTRACT, open } from '../engine/dump.mjs';
 import { queries } from '../engine/model/query.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +34,7 @@ function opened() {
   const list = path.join(dir, 'files.txt');
   fs.writeFileSync(list, files.sort().join('\n') + '\n');
   const out = path.join(dir, 'dump');
-  execFileSync('java', ['-jar', jar, 'dump', '--contract', '2', fixture, list, out], { stdio: ['ignore', 'ignore', 'pipe'] });
+  execFileSync('java', ['-jar', jar, 'dump', '--contract', String(CONTRACT), fixture, list, out], { stdio: ['ignore', 'ignore', 'pipe'] });
   once = open(out);
   return once;
 }
@@ -80,11 +80,15 @@ test('query: argValue follows a parameter one hop by default and keeps every cal
   assert.deepStrictEqual(both.values.map((v) => v.value.value), ['literal']);
   assert.deepStrictEqual(both.unresolved.map((u) => u.reason), ['no-caller']);
   assert.equal(both.unresolved[0].at.method, 'contract.Chain#unknown(String)');
-  // An argument the call does not have, and an argument the dump could not describe, are both unresolved.
+  // An argument the call does not have is unresolved.
   assert.deepStrictEqual(q().argValue(inner, 3).unresolved.map((u) => u.reason), ['no-argument']);
+  // A static field of a library type (`BigDecimal.ONE`) is a read the dump names, not a value it folds.
   const setter = callTo('orders.OrderService#mark(Long)', 'setTotal');
-  assert.deepStrictEqual(q().argValue(setter, 0).values, []);
-  assert.deepStrictEqual(q().argValue(setter, 0).unresolved.map((u) => u.reason), ['no-declaration']);
+  assert.deepStrictEqual(
+    q().argValue(setter, 0).values.map((v) => [v.value.kind, v.value.field]),
+    [['field', 'java.math.BigDecimal#ONE']],
+  );
+  assert.deepStrictEqual(q().argValue(setter, 0).unresolved, []);
 });
 
 test('query: holders are the static ThreadLocal fields, with the method that writes and the one that clears', { skip }, () => {

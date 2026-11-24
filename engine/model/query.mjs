@@ -16,6 +16,7 @@
 //     unless the library table gives `getSession` a return type. Those calls come back as `receiver-untyped`.
 import assert from 'node:assert';
 import { raw, table } from '../tools/library-table.mjs';
+import { targetIds } from './targets.mjs';
 import { typeArgsOf } from './type-args.mjs';
 
 // ThreadLocal, its JDK subclass, and any project type extending either one.
@@ -120,13 +121,14 @@ export function queries(db) {
       const next = [];
       for (const id of frontier)
         for (const c of [...db.callsOf(id), ...db.methodRefsIn(id)]) {
-          if (!(c.targets ?? []).length) {
+          const reached = targetIds(c);
+          if (!reached.length) {
             if (c.origin === 'unresolved' || c.origin === 'error')
               gaps.push({ ...site(c), name: c.name, owner: id, depth: d, reason: c.reason ?? c.origin });
             continue;
           }
           if (d === depth) continue;
-          for (const t of c.targets)
+          for (const t of reached)
             if (!seen.has(t)) {
               seen.add(t);
               next.push(t);

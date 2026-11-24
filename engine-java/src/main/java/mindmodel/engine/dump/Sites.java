@@ -14,6 +14,7 @@ import spoon.reflect.declaration.CtExecutable;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.reference.CtExecutableReference;
+import spoon.reflect.reference.CtTypeParameterReference;
 import spoon.reflect.reference.CtTypeReference;
 
 /**
@@ -25,6 +26,11 @@ import spoon.reflect.reference.CtTypeReference;
  * Each row carries an {@code id}: an argument that is a call names that row, so the argument graph is a lookup.
  * {@code inLambda} marks a site inside a lambda (it may run later, or never); {@code via: methodRef} marks a method
  * reference, whose {@code argc} is the referenced method's parameter count.
+ *
+ * Contract 3 adds three things a reader needs and Spoon can answer: {@code recv.typeArgs}, the type arguments the
+ * receiver's declared type is written with at the site (`[shop.Voucher]` for `Base<Voucher>.publish`); {@code targets}
+ * as {@code {id, kind}} with {@code declared} for the member Spoon resolved and {@code override} for each implementation
+ * of it in a subtype; and {@code uniqueImpl}, true only when the declaration has no body and exactly one override.
  */
 public final class Sites {
 
@@ -37,7 +43,13 @@ public final class Sites {
             java.util.Map<String, java.util.Map<String, String>> methods,
             java.util.Map<String, java.util.Map<String, String>> generated,
             java.util.Map<String, String> generatedFields,
-            java.util.Map<String, java.util.Map<String, String>> arity) {
+            java.util.Map<String, java.util.Map<String, String>> arity,
+            // `ownerFqn#T -> bound fqn`, only where every subtype that names the type writes the same argument.
+            java.util.Map<String, String> bound) {
+    }
+
+    /** One target of a call: the declaration Spoon resolved, or an override of it in a subtype declared here. */
+    record Target(String id, String kind) {
     }
 
     private static Index index(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth) {
@@ -127,7 +139,61 @@ public final class Sites {
             }
             supertypes.put(Names.qualified(t), supers);
         }
-        return new Index(declared, subtypes, supertypes, methods, generated, generatedFields, arity);
+        return new Index(declared, subtypes, supertypes, methods, generated, generatedFields, arity,
+                bindings(types, declared));
+    }
+
+    /**
+     * The type arguments this checkout settles. `VoucherService extends Base<Voucher>` binds `Base`'s `T` to
+     * `shop.Voucher`; a type parameter written as the argument (`class Sub<U> extends Base<U>`) or a type whose two
+     * subtypes disagree binds nothing. Only arguments declared here count: a member reached through a parameter bound
+     * to a type outside the checkout is still unresolved, because nothing in this dump can say what that type is.
+     */
+    private static java.util.Map<String, String> bindings(List<CtType<?>> types, java.util.Set<String> declared) {
+        java.util.Map<String, java.util.Set<String>> seen = new java.util.HashMap<>();
+        for (CtType<?> t : types) {
+            try {
+                List<CtTypeReference<?>> supers = new ArrayList<>(t.getSuperInterfaces());
+                if (t instanceof spoon.reflect.declaration.CtClass<?> c && c.getSuperclass() != null)
+                    supers.add(c.getSuperclass());
+                for (CtTypeReference<?> superRef : supers) bindingOf(superRef, declared, seen);
+            } catch (RuntimeException e) {
+                // One type Spoon cannot read must not cost the dump the bindings of every other type.
+            }
+        }
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        for (var e : seen.entrySet()) if (e.getValue().size() == 1) out.put(e.getKey(), e.getValue().iterator().next());
+        return out;
+    }
+
+    private static void bindingOf(CtTypeReference<?> superRef, java.util.Set<String> declared,
+            java.util.Map<String, java.util.Set<String>> seen) {
+        CtType<?> declaration = superRef.getTypeDeclaration();
+        if (declaration == null || !declared.contains(Names.qualified(declaration))) return;
+        List<CtTypeReference<?>> args = superRef.getActualTypeArguments();
+        var params = declaration.getFormalCtTypeParameters();
+        for (int i = 0; i < params.size() && i < args.size(); i++) {
+            CtTypeReference<?> arg = args.get(i);
+            if (arg == null || arg instanceof CtTypeParameterReference) continue;
+            String fqn = Names.qualified(arg);
+            if (!declared.contains(fqn)) continue;
+            String key = Names.qualified(declaration) + "#" + params.get(i).getSimpleName();
+            seen.computeIfAbsent(key, k -> new java.util.TreeSet<>()).add(fqn);
+        }
+    }
+
+    /**
+     * The type a receiver declared as a type parameter has here: the one argument this checkout writes for it, or
+     * null when there is no such answer. The parameter is looked up on the type the body is written in, or an
+     * enclosing one, because a nested type inherits its outer class's parameters.
+     */
+    private static String boundType(Index index, CtType<?> type, CtTypeReference<?> reference) {
+        if (!(reference instanceof CtTypeParameterReference parameter)) return null;
+        for (CtType<?> owner = type; owner != null; owner = owner.getDeclaringType())
+            for (var formal : owner.getFormalCtTypeParameters())
+                if (formal.getSimpleName().equals(parameter.getSimpleName()))
+                    return index.bound().get(Names.qualified(owner) + "#" + parameter.getSimpleName());
+        return null;
     }
 
     /**
@@ -245,8 +311,12 @@ public final class Sites {
         if (receiverName == null && fieldType == null && call.getTarget() == null)
             receiverName = Names.qualified(type);
         if (fieldType != null) receiverName = fieldType;
+        // A receiver declared as a type parameter (`T row`) is typed as the argument this checkout writes for it, and
+        // stays untyped when there is none: a member reached through an open parameter is unresolved.
+        if (receiverName == null && fieldType == null && call.getTarget() != null)
+            receiverName = boundType(index, type, call.getTarget().getType());
 
-        List<String> targets = targets(ref, index, receiverName, name, argc);
+        List<Target> targets = targets(ref, index, receiverName, name, argc);
         boolean generated = false;
         if (targets.isEmpty()) {
             // Unqualified call: its receiver is the class being written, so a generated sibling is the target.
@@ -255,7 +325,7 @@ public final class Sites {
             String id = members.get(name + "/" + argc);
             if (id == null) id = members.get(name);
             if (id != null) {
-                targets = List.of(id);
+                targets = List.of(new Target(id, "declared"));
                 generated = true;
                 receiverName = generatedOwner;
             }
@@ -271,15 +341,15 @@ public final class Sites {
         g.writeObjectFieldStart("recv");
         if (receiverName == null) g.writeNullField("type");
         else g.writeStringField("type", receiverName);
+        writeTypeArgs(g, call.getTarget() == null ? null : call.getTarget().getType());
         g.writeStringField("kind", kind(call));
         g.writeStringField("how", how(call.getTarget()));
         // The receiver as written (`cargoRepository`, `this.x`, `a.b()`), which is how a reader names the site.
         if (targetText == null) g.writeNullField("text");
         else g.writeStringField("text", targetText);
         g.writeEndObject();
-        g.writeArrayFieldStart("targets");
-        for (String target : targets) g.writeString(target);
-        g.writeEndArray();
+        writeTargets(g, targets);
+        g.writeBooleanField("uniqueImpl", uniqueImpl(ref, targets));
         // Every argument, as data: `text` is for display, `kind` and its fields are the fact.
         g.writeArrayFieldStart("args");
         for (CtExpression<?> argument : call.getArguments()) {
@@ -331,7 +401,7 @@ public final class Sites {
         if (receiverName == null && ref != null && ref.getDeclaringType() != null)
             receiverName = Names.qualified(ref.getDeclaringType());
         if (receiverName == null) receiverName = Names.qualified(type);
-        List<String> targets = targets(ref, index, receiverName, name, argc);
+        List<Target> targets = targets(ref, index, receiverName, name, argc);
 
         g.writeStringField("method", methodId);
         g.writeStringField("id", ids.id(expression));
@@ -343,15 +413,15 @@ public final class Sites {
         g.writeNumberField("argc", argc);
         g.writeObjectFieldStart("recv");
         g.writeStringField("type", receiverName);
+        writeTypeArgs(g, target == null ? null : target.getType());
         g.writeStringField("kind", ref != null && ref.isStatic() ? "static" : "instance");
         g.writeStringField("how", target == null ? "static" : how(target));
         String text = Refs.textOf(expression);
         if (text == null) g.writeNullField("text");
         else g.writeStringField("text", text);
         g.writeEndObject();
-        g.writeArrayFieldStart("targets");
-        for (String targetId : targets) g.writeString(targetId);
-        g.writeEndArray();
+        writeTargets(g, targets);
+        g.writeBooleanField("uniqueImpl", uniqueImpl(ref, targets));
         g.writeArrayFieldStart("args");
         g.writeEndArray();
         if (expression.getParent(spoon.reflect.code.CtLambda.class) != null)
@@ -361,6 +431,41 @@ public final class Sites {
                 : receiverDeclared ? "unresolved" : "library");
         if (targets.isEmpty())
             g.writeStringField("reason", receiverDeclared ? "no-declaration-here" : "library-signature");
+    }
+
+    /** `targets`: the declaration and each override of it, in that order, each with which of the two it is. */
+    private static void writeTargets(JsonGenerator g, List<Target> targets) throws IOException {
+        g.writeArrayFieldStart("targets");
+        for (Target target : targets) {
+            g.writeStartObject();
+            g.writeStringField("id", target.id());
+            g.writeStringField("kind", target.kind());
+            g.writeEndObject();
+        }
+        g.writeEndArray();
+    }
+
+    /**
+     * The type arguments of a written type, as names: a project or library type qualified, a type parameter by the
+     * letter its author wrote. Sorted by nothing — the order is Java's — and empty when the type has no arguments.
+     */
+    private static void writeTypeArgs(JsonGenerator g, CtTypeReference<?> type) throws IOException {
+        g.writeArrayFieldStart("typeArgs");
+        for (String name : Refs.typeArgs(type)) g.writeString(name);
+        g.writeEndArray();
+    }
+
+    /**
+     * True when the call reaches an open declaration with no body and exactly one override here: the one case where
+     * "the implementation" is a fact, and the case Node follows. With two overrides it is false, and a reader that
+     * follows implementations must not pick one.
+     */
+    private static boolean uniqueImpl(CtExecutableReference<?> ref, List<Target> targets) {
+        int overrides = 0;
+        for (Target target : targets) if ("override".equals(target.kind())) overrides++;
+        if (overrides != 1 || targets.size() != 2) return false;
+        var declaration = ref == null ? null : ref.getDeclaration();
+        return declaration instanceof CtMethod<?> method && method.getBody() == null;
     }
 
     /** The receiver and the type it is declared with share a package: a name Spoon invented, not a library type. */
@@ -401,6 +506,7 @@ public final class Sites {
         g.writeEndObject();
         g.writeArrayFieldStart("targets");
         g.writeEndArray();
+        g.writeBooleanField("uniqueImpl", false);
         g.writeArrayFieldStart("args");
         g.writeEndArray();
         g.writeStringField("origin", "error");
@@ -439,11 +545,12 @@ public final class Sites {
 
     /**
      * The declaration, then every implementation of it: a call through an interface reaches each subclass method with
-     * the same name and arity, which is the graph a flow has to walk.
+     * the same name and arity, which is the graph a flow has to walk. The declaration is `declared`, each subtype
+     * method `override`: which of the two a reader may follow is its policy, and this file only says which is which.
      */
-    private static List<String> targets(CtExecutableReference<?> ref, Index index, String receiver,
+    private static List<Target> targets(CtExecutableReference<?> ref, Index index, String receiver,
             String name, int argc) {
-        List<String> out = new ArrayList<>();
+        List<Target> out = new ArrayList<>();
         if (ref == null) return out;
         var declaration = ref.getDeclaration();
         if (!(declaration instanceof CtMethod<?> method)) {
@@ -458,7 +565,8 @@ public final class Sites {
                 for (String owner : level) {
                     if (!seen.add(owner)) continue;
                     String id = index.arity().getOrDefault(owner, java.util.Map.of()).get(name + "/" + argc);
-                    if (id != null && !out.contains(id)) out.add(id);
+                    if (id != null && out.stream().noneMatch(t -> t.id().equals(id)))
+                        out.add(new Target(id, "declared"));
                     next.addAll(index.supertypes().getOrDefault(owner, java.util.Set.of()));
                 }
                 level = next;
@@ -470,13 +578,13 @@ public final class Sites {
         // The method's own position can be synthetic (a record accessor); the owner's is the check that matters.
         if (owner.getPosition() == null || !owner.getPosition().isValidPosition()) return out;
         if (syntheticEnum(owner, method.getSimpleName())) return out;
-        out.add(Names.methodId(owner, method.getSimpleName(), paramTypes(method)));
+        out.add(new Target(Names.methodId(owner, method.getSimpleName(), paramTypes(method)), "declared"));
         boolean open = owner.isInterface() || owner.getModifiers().contains(spoon.reflect.declaration.ModifierKind.ABSTRACT);
         if (!open) return out;
         String shape = method.getSimpleName() + "/" + method.getParameters().size();
         for (String subtype : index.subtypes().getOrDefault(Names.qualified(owner), java.util.Set.of())) {
             String id = index.methods().getOrDefault(subtype, java.util.Map.of()).get(shape);
-            if (id != null && !out.contains(id)) out.add(id);
+            if (id != null && out.stream().noneMatch(t -> t.id().equals(id))) out.add(new Target(id, "override"));
         }
         return out;
     }

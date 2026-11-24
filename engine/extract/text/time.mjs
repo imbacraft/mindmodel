@@ -40,19 +40,30 @@ export function humanSchedule(args) {
   return parts.join(', ') || args;
 }
 
-// Time windows and retry settings written inside a method (e.g. "older than 5 min").
-const WINDOW =
-  /(?:minus|plus)(Seconds|Minutes|Hours|Days|Weeks)\(\s*(\d+)|Duration\.of(Seconds|Minutes|Hours|Days)\(\s*(\d+)/g;
+// Time windows and retry settings written inside a method (e.g. "older than 5 min"): the moment arithmetic and the
+// `Duration.ofX(n)` construction, read from the call rows the method owns — not from its source lines.
+const WINDOW = /^(?:minus|plus)(Seconds|Minutes|Hours|Days|Weeks)$/;
+const DURATION = /^of(Seconds|Minutes|Hours|Days)$/;
 const UNIT = { Seconds: 's', Minutes: 'min', Hours: 'h', Days: 'd', Weeks: 'wk' };
-export const windowsIn = (lines, m) => [
-  ...new Set(
-    [
-      ...lines
-        .slice(m.start - 1, m.end)
-        .join('\n')
-        .matchAll(WINDOW),
-    ].map((x) => `${x[2] ?? x[4]} ${UNIT[x[1] ?? x[3]]}`),
-  ),
-];
+
+/** The unit one call writes a window in, or null: `minusHours(24)`, `Duration.ofDays(7)`. */
+function windowUnit(c) {
+  const minus = WINDOW.exec(c.name);
+  if (minus) return minus[1];
+  // `Duration.ofHours(48)` is a static call; an untyped receiver is still Duration's spelling, and dropping it would
+  // lose the window, so only a receiver that names another type rules it out.
+  const type = c.recvFqn ?? '';
+  return !type || /(^|\.)Duration$/.test(type) ? DURATION.exec(c.name)?.[1] ?? null : null;
+}
+
+export const windowsIn = (m) => {
+  const out = new Set();
+  for (const c of m.calls ?? []) {
+    const unit = windowUnit(c);
+    const amount = String(c.args?.[0] ?? '');
+    if (unit && /^\d+$/.test(amount)) out.add(`${amount} ${UNIT[unit]}`);
+  }
+  return [...out];
+};
 
 // --- Java: seams, lifecycles, schedules -----------------------------------------------

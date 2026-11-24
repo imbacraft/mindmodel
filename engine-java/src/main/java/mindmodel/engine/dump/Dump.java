@@ -17,12 +17,12 @@ import spoon.reflect.declaration.CtType;
 import mindmodel.engine.SourceModel;
 
 /**
- * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 2.
+ * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 3.
  * Deterministic by construction: rows are ordered by file, then source position, then name.
  */
 public final class Dump {
 
-    public static final int CONTRACT = 2;
+    public static final int CONTRACT = 3;
     public static final String ENGINE = "spoon-11.2.1";
 
     private Dump() {

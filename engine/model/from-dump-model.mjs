@@ -163,6 +163,9 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     if (row.via === 'methodRef') continue;
     const method = byId.get(row.method);
     if (!method || row.origin === 'error') continue;
+    // Contract 3 writes each target as `{id, kind}`: the declaration Spoon resolved, then its overrides. A call row
+    // from an older dump carries bare ids, read as declarations.
+    const targets = (row.targets ?? []).map((t) => (typeof t === 'string' ? { id: t, kind: 'declared' } : t));
     const call = {
       kind: 'call',
       name: row.name,
@@ -171,7 +174,14 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       args: (row.args ?? []).slice(0, 2).map((a) => (typeof a === 'string' ? a : a?.text ?? '')),
       recvFqn: row.recv?.type ?? null,
       recvHow: row.recv?.how ?? row.recv?.kind ?? null,
-      targets: row.targets ?? [],
+      // The receiver's written type arguments at this site, as the dump spells them: `["shop.Voucher"]` for a call
+      // made through `Base<Voucher>`, `["T"]` for one through a field declared `GenericRepo<T>`.
+      typeArgs: row.recv?.typeArgs ?? [],
+      targets: targets.map((t) => t.id),
+      // Which of the targets is the declaration and which an override: the walk's policy reads this, never the order.
+      targetKinds: new Map(targets.map((t) => [t.id, t.kind])),
+      // True only when the dump says the call reaches exactly one implementation of a bodiless declaration.
+      uniqueImpl: row.uniqueImpl === true,
       how: howOf(row),
       origin: row.origin,
     };
@@ -198,7 +208,9 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     if (sources.get(file)?.degraded) degraded.add(file);
   // Catalog selection reads which frameworks the build uses; that is the file's own imports, unchanged.
   const importsOf = new Map([...sources].map(([file, s]) => [file, { pkg: s.pkg ?? '', imports: s.imports ?? [] }]));
-  return { types, byFile, importsOf, external, implsOf, degraded, resolveIn, constants, resolveConst };
+  // `dump` rides on the model so an extractor can ask the query layer about code without a second plumbing path: the
+  // dump is the only reader of Java, and the model is built from it. Null when the caller had none (tests, fixtures).
+  return { types, byFile, importsOf, external, implsOf, degraded, resolveIn, constants, resolveConst, dump };
 }
 
 /**
@@ -220,7 +232,8 @@ function receiverOf(row) {
 // `direct` when the answer names one declaration of the receiver's own type, `impl` when it reaches an implementation
 // or several, `external` for a library, `unresolved` when the engine could not answer. The vocabulary the facts speak.
 function howOf(row) {
-  const targets = row.targets ?? [];
+  // Contract 3 targets are `{id, kind}`; an older dump writes the id alone.
+  const targets = (row.targets ?? []).map((t) => (typeof t === 'string' ? t : t?.id)).filter(Boolean);
   // `arity` is a member lookup that found exactly one member: it names a target just as the compiler does.
   if (row.origin === 'java' || row.origin === 'lombok' || row.origin === 'arity') {
     // A generated member (Lombok's builder step) has a receiver but no declaration to name: the chain typed it.
@@ -322,8 +335,9 @@ function resolver(sources, types, known = new Set()) {
   assert.equal(impl.methods[0].id, 'a.Impl#find(Long)');
   assert.deepStrictEqual(impl.methods[0].branches, [{ start: 5, end: 6, kind: 'if' }]);
   assert.deepStrictEqual(impl.methods[0].calls[0], {
-    kind: 'call', name: 'save', line: 5, args: [], recvFqn: 'a.Port', recvHow: 'field',
-    targets: ['a.Port#save()'], how: 'direct', origin: 'java',
+    kind: 'call', name: 'save', line: 5, args: [], recvFqn: 'a.Port', recvHow: 'field', typeArgs: [],
+    targets: ['a.Port#save()'], targetKinds: new Map([['a.Port#save()', 'declared']]), uniqueImpl: false,
+    how: 'direct', origin: 'java',
   });
   assert.deepStrictEqual(model.implsOf.get('a.Port'), ['a.Impl']);
   assert.equal(model.resolveIn('src/a/Impl.java', 'Port'), 'a.Port');

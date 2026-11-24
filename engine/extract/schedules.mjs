@@ -91,33 +91,82 @@ export function extractSchedules(model, selected = []) {
 }
 
 
-// Schedules and retries in plain words, moved unchanged from deep.mjs (slice 6, R2).
+
+// Schedules and retries in plain words (moved out of deep.mjs in slice 6, R2). Both come off the model: the method's
+// annotations (the dump's rows, with the argument list as the dump wrote it) and its own calls (for the time windows).
 import { humanMs, humanSchedule, windowsIn } from './text/time.mjs';
 
-const JOB = /^(Scheduled|Schedule)\b/;
+const JOB = new Set(['Scheduled', 'Schedule']);
+
 export function scheduleFacts({ files, cite }) {
   const schedules = [];
-  // Schedules and retries in plain words, with the time windows each job uses.
   for (const f of files)
     for (const m of f.methods ?? []) {
-      // The annotation is on the declaration, which the source lines already show: no annotation list to carry.
-      const header = f.lines.slice(m.start - 1, m.nameLine),
-        sch = header.find((l) => /@Schedul(e|ed)\b/.test(l));
-      if (sch) {
-        const w = windowsIn(f.lines, m);
+      const job = (m.ann ?? []).find((a) => JOB.has(a.name));
+      if (job) {
+        const w = windowsIn(m);
         schedules.push(
-          `${f.name}.${m.name} ${cite(f, m)}: ${humanSchedule(sch)}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
+          `${f.name}.${m.name} ${cite(f, m)}: ${humanSchedule(job.args ?? '')}${w.length ? ` · windows ${w.join(', ')}` : ''}`,
         );
       }
-      const retry = header.join(' ').match(/@Retryable\(([^@]*(@Backoff\([^)]*\))?[^)]*)\)/);
+      const retry = (m.ann ?? []).find((a) => a.name === 'Retryable');
       if (retry) {
-        const a = /maxAttempts\s*=\s*(\d+)/.exec(retry[1])?.[1],
-          d = /delay\s*=\s*(\d+)/.exec(retry[1])?.[1],
-          x = /multiplier\s*=\s*([\d.]+)/.exec(retry[1])?.[1];
+        const args = retry.args ?? '',
+          a = /maxAttempts\s*=\s*(\d+)/.exec(args)?.[1],
+          d = /delay\s*=\s*(\d+)/.exec(args)?.[1],
+          x = /multiplier\s*=\s*([\d.]+)/.exec(args)?.[1];
         schedules.push(
           `RETRY ${f.name}.${m.name} ${cite(f, m)}: ${a ?? 3} attempts${d ? `, first wait ${humanMs(Number(d))}` : ''}${x ? ` ×${x}` : ''}`,
         );
       }
     }
   return schedules;
+}
+{
+  // A job and a retry, from the model's annotation rows and the method's own calls — no source lines in play.
+  const files = [
+    {
+      name: 'Jobs',
+      p: 'src/a/Jobs.java',
+      methods: [
+        {
+          name: 'sweep',
+          nameLine: 10,
+          id: 'a.Jobs#sweep()',
+          ann: [
+            {
+              name: 'Scheduled',
+              fqn: 'org.springframework.scheduling.annotation.Scheduled',
+              args: 'cron = "0 */10 * * * *"',
+            },
+          ],
+          calls: [
+            { name: 'minusHours', line: 11, args: ['24'], recvFqn: 'java.time.LocalDateTime' },
+            { name: 'minusDays', line: 12, args: ['24'], recvFqn: 'java.time.LocalDateTime' },
+          ],
+        },
+        {
+          name: 'lookup',
+          nameLine: 20,
+          id: 'a.Jobs#lookup()',
+          ann: [
+            {
+              name: 'Retryable',
+              fqn: 'org.springframework.retry.annotation.Retryable',
+              args:
+                'retryFor = { java.io.IOException.class }, maxAttempts = 4, ' +
+                'backoff = @Backoff(delay = 5000, multiplier = 3)',
+            },
+          ],
+          calls: [],
+        },
+        { name: 'plain', nameLine: 30, id: 'a.Jobs#plain()', ann: [], calls: [] },
+      ],
+    },
+  ];
+  const cite = (f, m) => `${f.p}#${m.name}`;
+  assert.deepStrictEqual(scheduleFacts({ files, cite }), [
+    'Jobs.sweep src/a/Jobs.java#sweep: every 10 min · windows 24 h, 24 d',
+    'RETRY Jobs.lookup src/a/Jobs.java#lookup: 4 attempts, first wait 5 s ×3',
+  ]);
 }

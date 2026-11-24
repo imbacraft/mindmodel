@@ -302,10 +302,28 @@ export function buildFlows(
   // per-class answers (`call.targetsIn[ctx]`) say what the call reaches there. Entering a concrete class switches the
   // context; abstract parents keep it, because their code is the subclass's code.
   const targetsOf = (c, ctx) => (ctx && c.targetsIn?.[ctx]) || c.targets || [];
+  // Which of a call's targets a walk may follow, as an explicit policy each consumer names. The dump writes the
+  // declaration Spoon resolved and every override of it.
+  //   `overrides: 'all'`    — the declaration and every override with a body. This is what a worker or an entry can
+  //                          REACH: a fan-out dispatch (`AlertNotifyHandler#send` with eighteen implementations) is
+  //                          exactly the notification path, so its implementations are the worker's reach.
+  //   `overrides: 'unique'` — the ranked path a reader walks: the declaration always, an override only when the dump
+  //                          says it is the one implementation there is (`uniqueImpl`). With two implementations,
+  //                          which one runs is not a fact, so the path stops at the declaration.
+  // The two call sites below differ here on purpose: one constant hidden inside the walk would make the difference
+  // invisible to whoever reads either consumer.
+  const followTargets = (c, ctx, { overrides = 'unique' } = {}) => {
+    const all = targetsOf(c, ctx);
+    if (overrides === 'all' || all.length < 2 || c.uniqueImpl) return all;
+    const declared = all.filter((id) => (c.targetKinds?.get?.(id) ?? 'declared') === 'declared');
+    return declared.length ? declared : all;
+  };
   const ctxAfter = (nt, ctx) => (nt.kind === 'class' && !nt.abstract ? nt.fqn : ctx);
   const DEPTH = exactTargets ? FLOW_DEPTH : 3;
   // Collects, per method and context, the effect-bearing trails under it. Memoized: a shared service is walked once.
   const memo = new Map();
+  // The methods on the path being walked, with the bindings they were entered with: the cycle guard.
+  const visiting = new Set();
   // A write found through a class's type parameter (`GenericRepo<T>.save` in a generic base) names its entity only
   // where the base is bound; the concrete type is what the flow changes.
   const concrete = (eff, bind) => {
@@ -368,38 +386,48 @@ export function buildFlows(
     if (nm.hasBody !== false) return { t: nt, m: nm };
     return nt.kind === 'interface' || isAbstract(nt) ? soleImpl(nt, nm) : null;
   };
-  const trailsOf = (t, m, ctx, depth, bind, cond = false) => {
-    const key = `${ctx}|${m.id}|${depth}|${bindKey(bind)}|${cond ? 'c' : ''}`;
+  const trailsOf = (t, m, ctx, depth, bind, { overrides }, cond = false) => {
+    const key = `${ctx}|${m.id}|${depth}|${bindKey(bind)}|${cond ? 'c' : ''}|${overrides}`;
     if (memo.has(key)) return memo.get(key);
+    // A method already on the path being walked: following it again would come back to where the walk left, and a
+    // `super.publish` whose targets name the overriding method itself would never end. Pruned here, not memoized —
+    // another path may reach the same method with the same bindings and still deserve its trails.
+    const path = `${ctx}|${m.id}|${bindKey(bind)}`;
+    if (visiting.has(path)) return [];
     const out = [];
     memo.set(key, out); // inserted before the walk: a cyclic call graph terminates and yields what it found
-    // A status set in this method is an effect of reaching it, whether or not the method calls anything else.
-    for (const eff of statuses.get(m.id) ?? [])
-      out.push({ ids: [], hops: [], effects: [marked(eff, cond || insideBranch(m, eff.line))] });
-    for (const c of m.calls ?? []) {
-      if (c.kind === 'new' || NOISE.test(c.name)) continue;
-      const eff = concrete(effects.get(siteKey(m.id, c.line, c.name)), bind);
-      // The call site decides for itself: a call written inside an arm runs only when that arm runs.
-      const nextCond = cond || insideBranch(m, c.line);
-      if (eff) {
-        out.push({ ids: [], hops: [], effects: [marked(eff, nextCond)] });
-        continue;
+    visiting.add(path);
+    try {
+      // A status set in this method is an effect of reaching it, whether or not the method calls anything else.
+      for (const eff of statuses.get(m.id) ?? [])
+        out.push({ ids: [], hops: [], effects: [marked(eff, cond || insideBranch(m, eff.line))] });
+      for (const c of m.calls ?? []) {
+        if (c.kind === 'new' || NOISE.test(c.name)) continue;
+        const eff = concrete(effects.get(siteKey(m.id, c.line, c.name)), bind);
+        // The call site decides for itself: a call written inside an arm runs only when that arm runs.
+        const nextCond = cond || insideBranch(m, c.line);
+        if (eff) {
+          out.push({ ids: [], hops: [], effects: [marked(eff, nextCond)] });
+          continue;
+        }
+        for (const id of followTargets(c, ctx, { overrides })) {
+          const hit = bodyAt(id);
+          if (!hit) continue;
+          const { t: nt, m: nm } = hit;
+          // A super call to the same name continues this method in its parent: a pass-through, not a hop deeper. Only
+          // with exact targets, because an ambiguous super target would branch without ever using a depth step.
+          const step = exactTargets && c.recvHow === 'super' && nm.name === m.name ? 0 : 1;
+          if (depth < step) continue;
+          // The context only changes where the engine gave a per-class answer; without one, switching it per hop
+          // would split the memo for no gain.
+          const nextCtx = c.targetsIn?.[ctx] ? ctxAfter(nt, ctx) : ctx;
+          const nextBind = bindInto(bind, m.id.split('#')[0], nt);
+          for (const sub of trailsOf(nt, nm, nextCtx, depth - step, nextBind, { overrides }, nextCond))
+            out.push({ ids: [nm.id, ...sub.ids], hops: [`${nt.name}#${nm.name}`, ...sub.hops], effects: sub.effects });
+        }
       }
-      for (const id of targetsOf(c, ctx)) {
-        const hit = bodyAt(id);
-        if (!hit) continue;
-        const { t: nt, m: nm } = hit;
-        // A super call to the same name continues this method in its parent: a pass-through, not a hop deeper. Only
-        // with exact targets, because an ambiguous super target would branch without ever using a depth step.
-        const step = exactTargets && c.recvHow === 'super' && nm.name === m.name ? 0 : 1;
-        if (depth < step) continue;
-        // The context only changes where the engine gave a per-class answer; without one, switching it per hop
-        // would split the memo for no gain.
-        const nextCtx = c.targetsIn?.[ctx] ? ctxAfter(nt, ctx) : ctx;
-        const nextBind = bindInto(bind, m.id.split('#')[0], nt);
-        for (const sub of trailsOf(nt, nm, nextCtx, depth - step, nextBind, nextCond))
-          out.push({ ids: [nm.id, ...sub.ids], hops: [`${nt.name}#${nm.name}`, ...sub.hops], effects: sub.effects });
-      }
+    } finally {
+      visiting.delete(path);
     }
     return out;
   };
@@ -407,7 +435,9 @@ export function buildFlows(
   // Worker reachability: breadth-first with parent links, so the hop list is the path to an effect rather than every
   // method the loop touches. An executor call is not a wall: the calls inside the Runnable handed to it belong to the
   // same method and run in the worker, so they are walked too (hertzbeat's `pool.executeNotify(type, () -> send(...))`).
-  const workerReach = (t, m, ctx) => {
+  // The reach follows every override with a body (`overrides: 'all'`): what a worker can do is the fan-out itself,
+  // and the notification path is those eighteen handlers, not the one declaration none of them overrides.
+  const workerReach = (t, m, ctx, { overrides = 'all' } = {}) => {
     const parent = new Map([[m.id, null]]);
     const hops = [],
       found = [],
@@ -445,7 +475,7 @@ export function buildFlows(
         return [];
       }
       const out = [];
-      for (const id of targetsOf(c, ctx)) {
+      for (const id of followTargets(c, ctx, { overrides })) {
         if (parent.has(id)) continue;
         const [fqn] = id.split('#');
         const nt = model.types.get(fqn);
@@ -487,7 +517,7 @@ export function buildFlows(
     // The context is the concrete class the entry runs for; an inherited mapping runs the owner's method for it.
     const ctx = entryCtx ?? t.fqn;
     const codeOf = owner ?? t;
-    const trails = kind === 'worker' ? null : trailsOf(t, m, ctx, DEPTH, new Map());
+    const trails = kind === 'worker' ? null : trailsOf(t, m, ctx, DEPTH, new Map(), { overrides: 'unique' });
     if (kind !== 'worker' && !trails.length) continue; // no effect reachable: not a flow
     // One line per entry: the union of the effect-bearing trails, in discovery order, effects named at the end.
     let hops = [],
@@ -504,7 +534,7 @@ export function buildFlows(
         }
       }
     } else {
-      const r = workerReach(t, m, ctx);
+      const r = workerReach(t, m, ctx, { overrides: 'all' });
       hops = r.hops.slice(0, 20);
       found = r.effects;
       if (!found.length) continue; // a loop that reaches no effect is not a flow

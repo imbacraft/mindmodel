@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { queries } from '../model/query.mjs';
+import { targetIds } from '../model/targets.mjs';
 
 // Security, in plain terms. One fact per path prefix the application protects, with what the prefix allows:
 // anonymous, authenticated, or a role. Sources: Spring Security filter chains (each chain's `securityMatcher` is its
@@ -266,109 +268,275 @@ export function anonymousWrites(rules, endpoints, methodSecurity) {
   return warnings;
 }
 
-// Where the tenant comes from: the place a tenant value is *stored* by behaviour — a ThreadLocal `.set`, a request
-// attribute, RequestContextHolder, or a field of a @RequestScope bean — reached from a filter's doFilter / a
-// HandlerInterceptor#preHandle within two calls. No name lists: the store is what counts. The stored value is traced
-// back to a header read, a token claim or the path, with static final constants resolved.
-export function tenantSources(model, textOf, isTest = () => false) {
-  const facts = [];
-  const body = (t, m) => {
-    const text = textOf(t.file);
-    return text.split('\n').slice(m.start - 1, m.end).join('\n');
-  };
-  const lineAt = (t, m, offsetText, needle) => {
-    const start = m.start;
-    const idx = offsetText.indexOf(needle);
-    return idx < 0 ? start : start + offsetText.slice(0, idx).split('\n').length - 1;
-  };
-  // ThreadLocal fields per file, so `.set` on one is a store and `.set` on anything else is not.
-  const tlsOf = new Map();
-  for (const t of model.types.values()) {
-    if (isTest(t.file)) continue;
-    const names = [...textOf(t.file).matchAll(/ThreadLocal<[^>]*>\s+(\w+)/g)].map((x) => x[1]);
-    if (names.length) tlsOf.set(t.file, names);
-  }
-  const stores = (t, m) => {
-    const b = body(t, m);
-    const tls = tlsOf.get(t.file) ?? [];
-    const tl = tls.find((n) => new RegExp(`\\b${n}\\s*\\.\\s*set\\s*\\(`).test(b));
-    if (tl) return `thread-local:${tl}`;
-    if (/setAttribute\s*\(/.test(b)) return 'request-attribute';
-    if (/RequestContextHolder/.test(b)) return 'request-context';
-    if (/@RequestScope/.test(textOf(t.file)) && /this\.\w+\s*=/.test(b)) return 'request-scope-bean';
-    return null;
-  };
-  const byId = new Map();
-  for (const t of model.types.values()) for (const m of t.methods ?? []) byId.set(`${t.fqn}#${m.name}`, { t, m });
-  const writeKind = new Map();
-  for (const [id, { t, m }] of byId) {
-    const k = stores(t, m);
-    if (k) writeKind.set(id, k);
-  }
-  // A method that calls a writer one hop away is a writer too (the filter calls bindWorkspaceId on a holder class).
-  const callsWriter = (t, m) =>
-    writeKind.get(`${t.fqn}#${m.name}`) ?? (m.calls ?? []).map((c) => (c.targets ?? []).map((x) => writeKind.get(x.replace(/\(.*$/, ''))).find(Boolean)).find(Boolean);
-  // Entry points: the servlet filter and the interceptor hook (framework method names, not project conventions).
-  for (const t of model.types.values()) {
-    if (isTest(t.file)) continue;
-    for (const m of t.methods ?? []) {
-      if (!/^(doFilter|preHandle)$/.test(m.name)) continue;
-      // Reachable within two calls: the entry, its callees, and their callees (same class or a holder class).
-      const reach = [{ t, m }];
-      for (const c of m.calls ?? [])
-        for (const tg of c.targets ?? []) {
-          const hit = byId.get(tg.replace(/\(.*$/, ''));
-          if (hit) reach.push(hit);
-        }
-      for (const r of [...reach].slice(1))
-        for (const c of r.m.calls ?? [])
-          for (const tg of c.targets ?? []) {
-            const hit = byId.get(tg.replace(/\(.*$/, ''));
-            if (hit) reach.push(hit);
-          }
-      const writer = reach.find(({ t: wt, m: wm }) => callsWriter(wt, wm));
-      if (!writer) continue;
-      const kind = callsWriter(writer.t, writer.m) ?? 'store';
-      const storedField = String(kind).includes(':') ? String(kind).split(':')[1] : null;
-      const valueName = storedField ? storedField.toLowerCase().replace(/_id$|_/g, (m) => (m === '_id' ? 'Id' : ' ')).replace(/ (.)/g, (_, c) => c.toUpperCase()) : null;
-      const texts = reach.map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
-      // Origin: header (constants resolved), else token, else path — searched across the reachable bodies.
-      let origin = null;
-      const headers = [];
-      for (const x of texts) {
-        const consts = new Map([...textOf(x.t.file).matchAll(/(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]*)"/g)].map((z) => [z[1], z[2]]));
-        for (const hm of x.b.matchAll(/getHeader\s*\(\s*([^)]*)\)/g)) {
-          const lit = /^"([^"]+)"$/.exec(hm[1].trim());
-          const name = lit ? lit[1] : (hm[1].split(/[.,]/).map((z) => z.trim()).find((z) => consts.has(z)) ? consts.get(hm[1].split(/[.,]/).map((z) => z.trim()).find((z) => consts.has(z))) : null);
-          if (name) headers.push({ kind: 'header', name, cite: `${x.t.file}:${lineAt(x.t, x.m, x.b, hm[0])}` });
+// --- the dump door: shared by everything below ------------------------------------------------------------
+// The extractors read code only through `engine/model/query.mjs`. `model.dump` is the handle the model was built from
+// (one dump per scan); a test may hand the dump in instead. Without one every primitive answers `no-dump` and the
+// facts below come out empty with a reason — never filled in from source text.
+const simple = (name) => String(name ?? '').split('.').pop();
+const baseType = (text) => String(text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
+const simpleType = (text) => baseType(text).split('.').pop();
+// The entry methods this repo reads identity and context from: framework method names, not project conventions.
+const IDENTITY_ENTRY = /^(doFilter|doFilterInternal|preHandle)$/;
+// A tenant store is asked of `stores()`, the same definition security uses; the entry set is the doc's (doFilter and
+// preHandle), so a `doFilterInternal` filter stays a user source without becoming a tenant source, as before.
+const TENANT_ENTRY = /^(doFilter|preHandle)$/;
+
+/** The constant name an argument carries, or null: the dump folded it, so this never reads a written expression. */
+const nameOfValue = (value) =>
+  value && ['constant', 'literal', 'string'].includes(value.kind) && typeof value.value === 'string'
+    ? value.value
+    : null;
+
+/** Every value of one argument across its call sites, with the values the dump could not resolve kept apart. */
+const argValues = (q, call, i) => q.argValue(call, i);
+
+/** The one constant an argument resolves to, or null when the dump answers none (or several disagree). */
+const constantArg = (q, call, i) => {
+  const names = argValues(q, call, i).values.map((v) => nameOfValue(v.value)).filter(Boolean);
+  return names.length && new Set(names).size === 1 ? names[0] : null;
+};
+
+/** A project type's FQN from a type as written (a holder's element, an argument's created type), or null. */
+const projectType = (model, written) => {
+  const text = baseType(written);
+  if (!text) return null;
+  if (model.types?.has(text)) return text;
+  const hits = [...(model.types?.keys() ?? [])].filter((k) => simple(k) === simple(text));
+  return hits.length === 1 ? hits[0] : null;
+};
+
+/** A member's file and declaration line, so a store can be cited where it is written. */
+const memberAt = (db, id) => db?.members?.get(id) ?? null;
+const memberFile = (db, id) => memberAt(db, id)?.pos?.file ?? null;
+const memberLine = (db, id) => memberAt(db, id)?.pos?.line ?? null;
+
+// One call row by id: the loader indexes calls by owning method, and an argument names the call it came from.
+const CALLS = new WeakMap();
+const callById = (db, id) => {
+  if (!id) return null;
+  let byId = CALLS.get(db);
+  if (!byId) CALLS.set(db, (byId = new Map(db.calls.map((c) => [c.id, c]))));
+  return byId.get(id) ?? null;
+};
+
+/**
+ * A request read: a call to a library method of `HttpServletRequest`/`Cookie` (or `@CookieValue`/`@RequestHeader`,
+ * whose name sits on the parameter) whose name argument the dump resolved. A helper that compares its own parameter
+ * to a constant is followed with `comparedTo`: the name is the constant the caller passes.
+ */
+export function requestReads(entryId, q, db, model, depth = 2, methods = null) {
+  const reads = [];
+  const unresolved = [];
+  const reach = methods ?? q.reach(entryId, depth).methods;
+  const libraryCall = (c) => c.recv?.type && !db.types.has(c.recv.type);
+  const requestRecv = (c) =>
+    libraryCall(c) && ['HttpServletRequest', 'ServletRequest'].includes(simpleType(c.recv.type));
+  const cookieRecv = (c) => libraryCall(c) && simpleType(c.recv.type) === 'Cookie';
+  // A cookie is only read where one is in reach: `getName()` names it, `getValue()` reads it. Without that, a helper
+  // comparing its parameter to a constant is a host check, not a cookie name.
+  const cookieInReach = reach.some(({ id }) =>
+    db.callsOf(id).some((c) => ['getName', 'getValue'].includes(c.name) && cookieRecv(c)),
+  );
+  for (const { id } of reach) {
+    const member = memberAt(db, id);
+    const file = member?.pos?.file ?? member?.file ?? null;
+    if (!member) continue;
+    const calls = db.callsOf(id);
+    const cite = (c) => `${c.file}:${c.line}`;
+    // The cookie value read in this method, if any: the comparison names the cookie, `getValue()` reads it.
+    const valueRead = calls.find((c) => c.name === 'getValue' && cookieRecv(c)) ?? null;
+    for (const c of calls) {
+      // A header: `request.getHeader(NAME)`, the name a constant or a literal the dump folded.
+      if (c.name === 'getHeader' && requestRecv(c)) {
+        const name = constantArg(q, c, 0);
+        if (name) reads.push({ kind: 'header', name, value: c.id, cite: cite(c), call: c.id, method: id });
+        else {
+          const why = argValues(q, c, 0).unresolved[0]?.reason ?? 'no-constant';
+          unresolved.push({ ...siteOf(c), what: 'header', reason: why });
         }
       }
-      if (headers.length) origin = headers[0];
-      if (!origin && texts.some((x) => /getClaim\s*\(|claim\(|SubjectSum|resolveSubject|token/i.test(x.b)))
-        origin = { kind: 'token', name: valueName ?? 'token claim', cite: `${writer.t.file}:${writer.m.start}` };
-      if (!origin && texts.some((x) => /getRequestURI|getPathInfo|getServletPath/.test(x.b)))
-        origin = { kind: 'path', name: 'request path', cite: `${t.file}:${m.start}` };
+      // `WebUtils.getCookie(request, NAME)`: a library call whose last argument is the cookie's name.
+      if (c.name === 'getCookie' && libraryCall(c) && (c.args ?? []).length) {
+        const name = constantArg(q, c, (c.args ?? []).length - 1);
+        if (name)
+          reads.push({ kind: 'cookie', name, value: valueRead?.id ?? c.id, cite: cite(c), call: c.id, method: id });
+        else unresolved.push({ ...siteOf(c), what: 'cookie', reason: 'no-constant' });
+      }
+      // A cookie named at a comparison: `"actAs".equals(c.getName())` or `c.getName().equals("actAs")`.
+      if (['equals', 'equalsIgnoreCase', 'contentEquals'].includes(c.name)) {
+        const named = (c.args ?? []).some((a, i) => {
+          const inner = a?.kind === 'call' ? callById(db, a.call) : null;
+          return Boolean(inner && inner.name === 'getName' && cookieRecv(inner));
+        });
+        const chained = c.recv?.how === 'chain' && /getName\s*\(\s*\)/.test(String(c.recv.text ?? ''));
+        if (!named && !chained) continue;
+        // The name is the other side of the comparison: an argument that resolves, or a constant receiver.
+        const other = (c.args ?? []).map((_, i) => constantArg(q, c, i)).find(Boolean);
+        const name = other ?? (chained ? null : constantNameAt(db, id, c));
+        if (name)
+          reads.push({ kind: 'cookie', name, value: valueRead?.id ?? null, cite: cite(c), call: c.id, method: id });
+        else
+          // `"actAs".equals(c.getName())`: the name is the receiver, and the dump records a receiver's written text,
+          // not its value. Unresolved with that reason, never parsed out of the text.
+          unresolved.push({ ...siteOf(c), what: 'cookie-name', reason: 'receiver-is-not-a-value' });
+      }
+    }
+    // A helper that compares its own parameter to a constant: the cookie name is what the caller passes.
+    for (const [index, param] of (cookieInReach ? member.params ?? [] : []).entries()) {
+      if (!param.name) continue;
+      const found = q.comparedTo({ method: id, index }).comparisons;
+      for (const cmp of found) {
+        const row = callById(db, cmp.call);
+        if (!row) continue;
+        const name =
+          (row.args ?? []).map((_, i) => constantArg(q, row, i)).find(Boolean) ??
+          constantNameAt(db, member.owner, row);
+        if (name)
+          reads.push({
+            kind: 'cookie',
+            name,
+            value: valueRead?.id ?? null,
+            cite: `${row.file}:${row.line}`,
+            call: row.id,
+            method: id,
+            via: 'helper',
+          });
+      }
+      if (found.length && !reads.some((r) => r.method === id && r.kind === 'cookie'))
+        unresolved.push({ method: id, what: 'cookie-name', reason: 'helper-name-not-resolved' });
+    }
+    // `@CookieValue("x")` / `@RequestHeader("X")`: the annotation names the value the parameter carries.
+    for (const param of member.params ?? [])
+      for (const a of param.ann ?? []) {
+        const cookie = /(?:^|\.)CookieValue$/.test(a.name ?? '');
+        const kind = cookie ? 'cookie' : /(?:^|\.)RequestHeader$/.test(a.name ?? '') ? 'header' : null;
+        if (!kind) continue;
+        const name = annotationName(a);
+        if (name)
+          reads.push({
+            kind,
+            name,
+            value: param.name ?? null,
+            cite: `${file}:${a.line ?? member.pos?.line}`,
+            method: id,
+          });
+        else unresolved.push({ method: id, what: kind, reason: 'annotation-value-not-in-dump' });
+      }
+  }
+  return { reads, unresolved };
+}
+
+const siteOf = (c) => ({ method: c.method ?? null, call: c.id ?? null, file: c.file ?? null, line: c.line ?? null });
+
+/** A constant written as a call's receiver (`NAME.equals(x)`): the dump names the field, its row carries the value. */
+const constantNameAt = (db, owner, row) => {
+  const written = simpleType(row.recv?.text ?? '');
+  if (!written || !/^[A-Z]/.test(written)) return null;
+  const value = db.constant(owner, written);
+  return typeof value?.value === 'string' ? value.value : null;
+};
+
+/** The name an annotation argument carries: the resolved `value` when the dump has it, else its own written text. */
+export function annotationName(a) {
+  const resolved = a?.args?.value;
+  if (typeof resolved === 'string' && resolved) return resolved;
+  const raw = String(a?.raw ?? a?.args ?? '');
+  const named = /(?:^|,)\s*value\s*=\s*"([^"]*)"/.exec(raw)?.[1];
+  if (named) return named;
+  const first = /^\s*"([^"]*)"/.exec(raw)?.[1];
+  return first || null;
+}
+
+// Where the tenant comes from: a store an entry performs — `stores()`, one definition shared with security — and
+// the request value that feeds it. A claim read outranks a header read: a filter that reads a header *and* a claim
+// stores what the claim said, and the header is only checked against it. Then the path. Nothing is read from text.
+export function tenantSources(model, _textOf, isTest = () => false, db = null) {
+  const d = db ?? model?.dump ?? null;
+  const q = queries(d);
+  const facts = [];
+  for (const t of model.types?.values() ?? []) {
+    if (isTest(t.file)) continue;
+    for (const m of t.methods ?? []) {
+      if (!TENANT_ENTRY.test(m.name ?? '')) continue;
+      const id = m.id ?? `${t.fqn}#${m.name}`;
+      const { methods } = q.reach(id, 2);
+      // The tenant is *stored*: a holder write, a request attribute, the security context. A clear is not a store.
+      // A tenant is kept in a holder or a request attribute. The security context is the *caller*, not the tenant:
+      // `stores()` knows that store too, and counting it here would make every authenticated request a tenant source.
+      const stores = methods.flatMap(({ id: mid }) =>
+        q.stores(mid, 0).stores.filter((s) => s.op !== 'clear' && s.kind !== 'security-context'),
+      );
+      if (!stores.length) continue;
+      const writer = stores[0];
+      const storedBy =
+        writer.kind === 'request-attribute'
+          ? 'request-attribute'
+          : writer.kind === 'holder'
+            ? 'thread-local'
+            : 'security-context';
+      const fieldName = writer.field
+        ? String(writer.field).split('#').pop()
+        : writer.holder
+          ? simpleType(writer.holder)
+          : null;
+      const valueName = fieldName ? camelName(fieldName) : null;
+      const writerCite = `${memberFile(d, writer.method) ?? t.file}:${memberLine(d, writer.method) ?? m.start}`;
+      const reads = requestReads(id, q, d, model, 2, methods).reads;
+      const headers = reads.filter((r) => r.kind === 'header');
+      const claim = claimReadIn(methods, d);
+      const path = pathReadIn(methods, d);
+      const origin = claim
+        ? { kind: 'token', name: valueName ?? 'token claim', cite: writerCite }
+        : headers.length
+          ? headers[0]
+          : path
+            ? { kind: 'path', name: 'request path', cite: `${path.file}:${path.line}` }
+            : null;
       if (!origin) continue;
-      const all = headers.length ? headers : [origin];
-      for (const o of all) facts.push({
-        id: `tenant-source:${o.kind}:${o.name}@${m.name}`,
-        family: 'tenant-source',
-        confidence: origin.kind === 'token' || origin.kind === 'path' ? 'inferred' : 'resolved',
-        kind: o.kind,
-        name: o.name,
-        method: `${t.name}#${m.name}`,
-        storedBy: kind.split(':')[0],
-        evidence: [`${writer.t.file}:${writer.m.start}#${writer.m.name}`, o.cite],
-        why: [
-          `${writer.t.name}#${writer.m.name} stores the tenant into a ${kind.split(':')[0]}`,
-          `the value read here comes from ${o.kind} ${o.name} (${o.cite})`,
-        ],
-      });
+      const all = origin.kind === 'header' ? headers : [origin];
+      for (const o of all)
+        facts.push({
+          id: `tenant-source:${o.kind}:${o.name}@${m.name}`,
+          family: 'tenant-source',
+          confidence: o.kind === 'token' || o.kind === 'path' ? 'inferred' : 'resolved',
+          kind: o.kind,
+          name: o.name,
+          method: `${t.name}#${m.name}`,
+          storedBy,
+          evidence: [`${writerCite}#${String(writer.method).split('#').pop()}`, o.cite],
+          why: [
+            `${simple(String(writer.method).split('#')[0])}#${String(writer.method).split('#').pop()} ` +
+              `stores the tenant into a ${storedBy}`,
+            `the value read here comes from ${o.kind} ${o.name} (${o.cite})`,
+          ],
+        });
     }
   }
   const seen = new Set();
   return facts.filter((f) => !seen.has(`${f.kind}:${f.name}`) && seen.add(`${f.kind}:${f.name}`));
 }
+
+// `AUTHENTICATED_WORKSPACE_ID` -> `authenticatedWorkspaceId`: the field a value is stored in, named the way the code
+// names the value. A name the dump wrote, never a word list.
+const camelName = (field) =>
+  String(field)
+    .toLowerCase()
+    .replace(/_id$|_/g, (x) => (x === '_id' ? 'Id' : ' '))
+    .replace(/ (.)/g, (_, c) => c.toUpperCase());
+
+/** A call in the reach that reads a token claim: what makes the stored tenant a claim rather than a header. */
+const claimReadIn = (methods, db) => {
+  for (const { id } of methods)
+    for (const c of db.callsOf(id))
+      if (/claim/i.test(c.name ?? '') || /^(get|resolve|read|load|parse).*(Subject|Token)/i.test(c.name ?? ''))
+        return c;
+  return null;
+};
+const pathReadIn = (methods, db) => {
+  for (const { id } of methods)
+    for (const c of db.callsOf(id)) if (['getRequestURI', 'getServletPath', 'getPathInfo'].includes(c.name)) return c;
+  return null;
+};
 
 // --- Shiro, Jakarta EE, method-level checks, and the model in one fact -------------------------------
 
@@ -490,24 +658,11 @@ export function webXmlRules(text, file) {
   return rules;
 }
 
-// Authentication sources, found the same way as tenant sources: from a filter's entry, follow calls two deep, and ask
-// what a reached method *stores* (security context, request attribute, ThreadLocal). A filter that stores the caller
-// and reads an Authorization/token header is an API-token source. Sureness's configured processors come from catalog
-// data (`auth-type`), not from names.
-//
-// The caller's identity also arrives in cookies — one cookie switching to a system-user context, another naming the
-// clerk to act as. Cookies are read (and named) here next to headers, because a filter that trusts one is a user
-// source no matter how the value arrived.
-
-// A store of the caller for the user-source fact: any holder a filter fills, from the security context to a
-// ThreadLocal or a request attribute. A user source says where the caller comes from; the warning below is stricter
-// and needs a *security* holder.
-const STORES_CALLER =
-  /setAuthentication\s*\(|SecurityContextHolder|setAttribute\s*\(|\b[A-Z][A-Z0-9_]{2,}\s*\.\s*set\s*\(/;
+// --- identity: the caller the request says it is ----------------------------------------------------------
 
 // A verification call is a property of its receiver's *type*, never of a method or class name: `validate` on a
-// WorkspaceValidator checks a workspace, `decode` on a cache parses a cache key, and a filter named
-// *AuthenticationFilter may still trust whatever arrives.
+// WorkspaceValidator checks a workspace, `decode` on a cache parses a cache key, and a filter whose name says
+// *AuthenticationFilter may still trust whatever arrives. The type is the dump's receiver answer.
 const VERIFIER_TYPES = new Set([
   'org.springframework.security.authentication.AuthenticationManager',
   'org.springframework.security.authentication.ProviderManager',
@@ -522,355 +677,227 @@ const VERIFIER_TYPES = new Set([
 const VERIFIER_SIMPLE = new Set([...VERIFIER_TYPES].map((fqn) => fqn.split('.').pop()));
 // The app's own token service, also by type: a receiver the app declares whose type name ends in TokenService.
 const TOKEN_SERVICE = /TokenService$/;
-// The security holders themselves: the context a caller is made current in, and Spring Security's caller slots.
-const SECURITY_CONTEXT = 'org.springframework.security.core.context.SecurityContext';
+// The caller slots: a field, or a project method's parameter, that carries the authenticated caller itself.
 const CALLER_SIMPLE = new Set(['Authentication', 'Principal']);
 
-const baseType = (text) => String(text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
-const simpleType = (text) => baseType(text).split('.').pop();
+const isVerifierType = (type, model) => {
+  if (!type) return false;
+  const name = simpleType(type);
+  return (
+    VERIFIER_TYPES.has(type) ||
+    VERIFIER_SIMPLE.has(name) ||
+    (TOKEN_SERVICE.test(name) && (model.types?.has(type) || type === name))
+  );
+};
 
 // A value of a type the project declares — a User, a ResolvedTenantContext — is an identity once a holder keeps it.
 // A String, a primitive or a JDK type (an IP, a request id, an idempotency key) is request bookkeeping: that is the
 // whole distinction, and it is the value's type, never the holder's name.
-const PRIMITIVE = /^(?:void|boolean|byte|char|short|int|long|float|double)$/;
-const JDK_VALUE = new Set([
-  'String', 'Object', 'Integer', 'Long', 'Short', 'Byte', 'Boolean', 'Character', 'Double', 'Float', 'Number',
-  'UUID', 'URI', 'URL', 'Instant', 'LocalDate', 'LocalDateTime', 'Duration', 'BigDecimal', 'BigInteger',
-  'InetAddress', 'InetSocketAddress', 'Optional',
-]);
-const isProjectValueType = (model, file, written) => {
-  const text = baseType(written);
-  if (!text || PRIMITIVE.test(text)) return false;
-  const fqn = fqnOf(model, file, text);
-  if (fqn) return Boolean(model.types?.has(fqn));
-  // No import answered: a simple name the project declares is still the project's type.
-  const simple = text.split('.').pop();
-  if (JDK_VALUE.has(simple)) return false;
-  for (const key of model.types?.keys() ?? []) if (key.split('.').pop() === simple) return true;
-  return false;
-};
+const isIdentityType = (model, written) => Boolean(projectType(model, written));
 
-// The element type of `ThreadLocal<X>`, as written; null for any other field type.
-const threadLocalElement = (type) =>
-  /(?:^|\.)ThreadLocal\s*<(.*)>$/.exec(String(type ?? '').trim())?.[1]?.trim() ?? null;
-
-// A written type's FQN, from the file's imports. Null when the file does not name it: the caller of these helpers
-// still reads the written simple name, so an import that is missing never hides a type.
-const fqnOf = (model, file, written) => {
-  const text = baseType(written);
-  if (!text) return null;
-  return model.resolveIn?.(file, text) ?? null;
-};
-
-// The declared type of every name a method can hold: its parameters, its class's fields (the model resolved those),
-// and the locals its body declares. The dump carries no locals, and a local's type is written only in the source.
-const LOCAL_DECL = /(?:^|[;{(\s])([A-Z][\w.]*(?:\s*<[^;=(){}]*>)?)\s+([a-z_]\w*)\s*[=;,)]/g;
-function declaredTypes(t, m, b) {
-  const out = new Map();
-  for (const p of m.params ?? []) if (p.name) out.set(p.name, p.type ?? '');
-  for (const f of t.fields ?? []) if (f.name) out.set(f.name, f.typeFqn ?? f.type ?? '');
-  for (const d of b.matchAll(LOCAL_DECL)) if (!out.has(d[2])) out.set(d[2], d[1]);
-  return out;
+/**
+ * The stores a method performs: `stores()`'s own list, plus the store-shaped calls it could not tie to a receiver — a
+ * chained library call (`SecurityContextHolder.getContext().setAuthentication(x)`) arrives with no receiver type, so
+ * the dump calls it `receiver-untyped` instead of naming the holder. An unknown never clears a warning: those gaps are
+ * kept, marked `unresolved`, and only for the calls that store an identity.
+ */
+function identityStores(q, id, db) {
+  const { stores, unresolved } = q.stores(id, 0);
+  const kept = stores.filter((s) => s.op !== 'clear');
+  for (const gap of unresolved)
+    if (/%?(setAuthentication|setContext)$/.test(gap.name ?? '') && /receiver-untyped$/.test(gap.reason ?? ''))
+      kept.push({
+        kind: 'security-context',
+        holder: null,
+        how: gap.name,
+        unresolved: true,
+        method: gap.method,
+        call: gap.call,
+        file: gap.file,
+        line: gap.line,
+        args: callById(db, gap.call)?.args ?? [],
+      });
+  return kept;
 }
 
-// The type a call is made on: the receiver's compiler answer when the dump has one, else the declared type of the
-// receiver's name, as written.
-const receiverTypeOf = (c, declared, model, file) => {
-  const name = c.recv?.kind === 'name' ? c.recv.text : null;
-  const written = name ? declared.get(name) : null;
-  return c.recvFqn ?? (written ? fqnOf(model, file, written) : null) ?? (written ? baseType(written) : null);
+/** A store as one short phrase, for the `why` line a writer reads. */
+const storeLabel = (store, db) => {
+  const row = callById(db, store.call);
+  const recv = row?.recv?.type ? `${simpleType(row.recv.type)}.` : '';
+  return `${recv}${row?.name ?? store.kind}(${row?.args?.map((a) => a.text).join(', ') ?? ''})`;
 };
 
-const isVerifierType = (type, model) => {
-  if (!type) return false;
-  const simple = simpleType(type);
-  return (
-    VERIFIER_TYPES.has(type) ||
-    VERIFIER_SIMPLE.has(simple) ||
-    (TOKEN_SERVICE.test(simple) && (model.types?.has(type) || type === simple))
-  );
-};
-
-// A verification call in the entry method or within two hops of it, in the same file. This is what makes a cookie
-// read a fact about where the caller comes from instead of a warning about believing it.
-function verifiesIn(model, bodies, file) {
-  for (const x of bodies) {
-    if (x.t.file !== file) continue;
-    const declared = declaredTypes(x.t, x.m, x.b);
-    for (const c of x.m.calls ?? []) {
-      const type = receiverTypeOf(c, declared, model, x.t.file);
-      if (isVerifierType(type, model))
-        return { type, cite: `${x.t.file}:${c.line ?? x.m.start}` };
-    }
-  }
+/**
+ * The verification calls in a reach: a call whose receiver's type is a verifier. This is what makes a cookie read a
+ * fact about where the caller comes from instead of a warning about believing it — the receiver's type, never a name
+ * of the calling method.
+ */
+function verifiesIn(methods, db, model) {
+  for (const { id } of methods)
+    for (const c of db.callsOf(id))
+      if (isVerifierType(c.recv?.type, model)) return { type: c.recv.type, cite: `${c.file}:${c.line}` };
   return null;
 }
 
-// A security identity holder a method writes, with the text of the value it stores there. A caller slot counts: the
-// security context, an Authentication/Principal field, a project method called with a caller parameter. So does the
-// app's own context holder — a ThreadLocal (or a project method filling one) whose element type the project declares,
-// because storing a ResolvedTenantContext or a User there makes it the request's identity just the same. A
-// ThreadLocal of a String (an IP, a request id, a workspace id), a request attribute or a context holder of a JDK type
-// is a user-source fact and never a warning.
-function securitySinks(t, m, b, model, byId, textOf = null) {
+/**
+ * The identity sinks a reach performs, each with the value it stores: the security context made current, a holder of
+ * the project's own type (`ThreadLocal<User>`, `ThreadLocal<ResolvedTenantContext>`), a caller-typed field, or a
+ * project method handed the caller. A ThreadLocal<String> is a user source and never a sink: the element type decides.
+ */
+function securitySinks(entryId, q, db, model, holders) {
   const sinks = [];
-  const declared = declaredTypes(t, m, b);
-  const lineAt = (idx) => Math.max(1, m.start + b.slice(0, idx).split('\n').length - 1);
-  const argAt = (open) => {
-    const close = balanced(b, open);
-    return b.slice(open + 1, close < 0 ? b.length : close);
-  };
-  // SecurityContextHolder.getContext().setAuthentication(value) — the framework's own way to make a caller current.
-  for (const s of b.matchAll(/SecurityContextHolder\s*\.\s*getContext\s*\(\s*\)\s*\.\s*setAuthentication\s*\(/g))
-    sinks.push({
-      what: 'SecurityContextHolder.getContext().setAuthentication',
-      cite: `${t.file}:${lineAt(s.index)}`,
-      arg: argAt(s.index + s[0].length - 1),
-    });
-  // SecurityContext.setAuthentication(value): the same store through a SecurityContext the method holds.
-  for (const s of b.matchAll(/(\w+)\s*\.\s*setAuthentication\s*\(/g)) {
-    if (s[1] === 'SecurityContextHolder') continue;
-    const written = declared.get(s[1]) ?? '';
-    if (fqnOf(model, t.file, written) === SECURITY_CONTEXT || simpleType(written) === 'SecurityContext')
+  const { methods } = q.reach(entryId, 2);
+  for (const { id } of methods) {
+    const member = memberAt(db, id);
+    if (!member) continue;
+    const label = `${simple(member.owner)}#${member.name}`;
+    const params = member.params ?? [];
+    for (const store of identityStores(q, id, db)) {
+      const args = store.args ?? callById(db, store.call)?.args ?? [];
+      if (store.kind === 'security-context') {
+        const recv = callById(db, store.call)?.recv?.type;
+        sinks.push({
+          method: label,
+          what:
+            `${store.unresolved ? 'unresolved:' : ''}${simpleType(recv ?? 'SecurityContext')}.` +
+            `${store.how ?? 'setAuthentication'}`,
+          cite: `${store.file}:${store.line}`,
+          arg: args[0] ?? null,
+        });
+        continue;
+      }
+      if (store.kind !== 'holder') continue; // a request attribute is a user source, not a security sink
+      const holder = holders.find((h) => h.field === store.field);
+      if (!holder || !isIdentityType(model, holder.element)) continue;
+      // A setter that only forwards its own parameter is the caller's store one frame up: the call site carries it,
+      // and counting both would make two warnings for one store.
+      if (args[0]?.kind === 'param' && params[args[0].index]?.name === args[0].text) continue;
       sinks.push({
-        what: `${s[1]}.setAuthentication`,
-        cite: `${t.file}:${lineAt(s.index)}`,
-        arg: argAt(s.index + s[0].length - 1),
-      });
-  }
-  // A field of the caller type (`Authentication`, `Principal`) that the method assigns.
-  for (const f of t.fields ?? []) {
-    const fqn = f.typeFqn ?? fqnOf(model, t.file, f.type);
-    if (!CALLER_SIMPLE.has(simpleType(f.type ?? '')) && !CALLER_SIMPLE.has(simpleType(fqn ?? ''))) continue;
-    const a = new RegExp(`(?:this\\s*\\.\\s*)?\\b${f.name}\\s*=\\s*([^;]+)`).exec(b);
-    if (a)
-      sinks.push({
-        what: `field ${f.name} (${simpleType(f.type ?? fqn)})`,
-        cite: `${t.file}:${lineAt(a.index)}`,
-        arg: a[1],
-      });
-  }
-  // A context holder of the app's own: a ThreadLocal field whose element type the project declares (a
-  // ResolvedTenantContext, a User, a *Context object). Not Spring Security's, and still the request's identity. A
-  // ThreadLocal<String> (an IP, a request id, an idempotency key) is excluded by the type alone.
-  for (const f of t.fields ?? []) {
-    const element = threadLocalElement(f.type);
-    if (!element || !isProjectValueType(model, t.file, element)) continue;
-    const a = new RegExp(`\\b${f.name}\\s*\\.\\s*set\\s*\\(`).exec(b);
-    if (!a) continue;
-    const arg = argAt(a.index + a[0].length - 1);
-    // A setter that only forwards its own parameter is the caller's store one frame up: the call site below carries
-    // it, and counting both would make two warnings for one store.
-    if ((m.params ?? []).some((p) => p.name && p.name === arg.trim())) continue;
-    sinks.push({
-      what: `thread-local ${f.name} (${simpleType(element)})`,
-      cite: `${t.file}:${lineAt(a.index)}`,
-      arg,
-    });
-  }
-  // A call handing the value to a project method whose parameter is the caller: `void bind(Authentication caller)`.
-  // The same store one frame up when the parameter is a project type the method puts in a project-typed holder and the
-  // value is built here: `setResolvedContext(new ResolvedTenantContext(user))` is the filter storing the user, not
-  // merely reading it. A record the method looked up (`setTenant(tenant)`) is a tenant-source fact, not an identity.
-  for (const c of m.calls ?? [])
-    for (const hit of targetHits(model, t.file, c, byId)) {
-      const args = c.args ?? [];
-      const callerAt = (hit.m.params ?? []).findIndex((p) => {
-        const type = fqnOf(model, hit.t.file, p.type) ?? baseType(p.type);
-        return CALLER_SIMPLE.has(simpleType(type));
-      });
-      const slot = callerAt >= 0
-        ? { name: hit.m.params[callerAt].name, arg: args.join(', ') || null }
-        : projectHolderSlot(model, hit, args, b, textOf);
-      if (!slot) continue;
-      sinks.push({
-        what: `${hit.t.name}#${hit.m.name}(${slot.name})`,
-        cite: `${t.file}:${c.line ?? m.start}`,
-        arg: slot.arg,
+        method: label,
+        what: `thread-local ${String(store.field).split('#').pop()} (${simpleType(holder.element)})`,
+        cite: `${store.file}:${store.line}`,
+        arg: args[0] ?? null,
       });
     }
+    // A field of the caller type (`Authentication`, `Principal`) the method assigns: the dump's own field write.
+    for (const f of db.fields ?? [])
+      if (f.method === id && f.op === 'write' && f.field) {
+        const field = db.members.get(f.field);
+        if (!CALLER_SIMPLE.has(simpleType(field?.type ?? field?.typeFqn ?? ''))) continue;
+        sinks.push({
+          method: label,
+          what: `field ${String(f.field).split('#').pop()} (${simpleType(field?.type)})`,
+          cite: `${f.file}:${f.line}`,
+          arg: f.value ?? null,
+        });
+      }
+    // A call handing the value to a project method whose parameter is the caller, or whose own parameter it stores
+    // in a holder of a project type (`setResolvedContext(new ResolvedTenantContext(user))`).
+    for (const c of db.callsOf(id))
+      for (const target of targetIds(c)) {
+        const hit = memberAt(db, target);
+        if (!hit || hit.kind !== 'method') continue;
+        const callerAt = (hit.params ?? []).findIndex((p) => CALLER_SIMPLE.has(simpleType(p.type)));
+        if (callerAt >= 0) {
+          sinks.push({
+            method: label,
+            what: `${simple(hit.owner)}#${hit.name}(${hit.params[callerAt].name})`,
+            cite: `${c.file}:${c.line}`,
+            arg: c.args?.[callerAt] ?? null,
+            weak: true,
+          });
+          continue;
+        }
+        const slot = projectHolderSlot(hit, c, q, db, model);
+        if (slot)
+          sinks.push({
+            method: label,
+            what: `${simple(hit.owner)}#${hit.name}(${slot.name})`,
+            cite: `${c.file}:${c.line}`,
+            arg: slot.arg,
+            weak: true,
+          });
+      }
+  }
   return sinks;
 }
 
-// The project methods a call reaches. A static call (`TenantContext.setContext(...)`) names its type as the receiver:
-// when the dump or the fixture linker left the call without targets, the receiver's own type answers, as javac would.
-function targetHits(model, file, c, byId) {
-  const hits = [];
-  for (const tg of c.targets ?? []) {
-    const hit = byId.get(tg) ?? byId.get(String(tg).replace(/\(.*$/, ''));
-    if (hit) hits.push(hit);
-  }
-  if (hits.length) return hits;
-  const name = c.recv?.kind === 'name' ? c.recv.text : null;
-  if (!name || !/^[A-Z]/.test(name)) return hits;
-  const fqn = model.resolveIn?.(file, name) ?? null;
-  const hit = fqn && model.types?.has(fqn) ? byId.get(`${fqn}#${c.name}`) : null;
-  return hit ? [hit] : hits;
-}
-
-// The parameter of a project method that stands for an identity: a project-typed value the method stores in a
-// ThreadLocal holder of the project's own type (its parameter is the only thing it can be storing). Null when the
-// method is no such holder, or when the value at this call is not built here — `new UserContext(user)` is the
-// client's id becoming an identity; a `User` the method looked up by that id is the same thing one hop away only
-// when some holder holds it, which is what the type gate already decides.
-function projectHolderSlot(model, hit, args, callerBody, textOf) {
-  if (!textOf) return null;
-  const heldBody = String(textOf(hit.t.file) ?? '').split('\n').slice(hit.m.start - 1, hit.m.end).join('\n');
-  const holder = (hit.t.fields ?? []).find((f) => {
-    const element = threadLocalElement(f.type);
-    if (!element || !isProjectValueType(model, hit.t.file, element)) return false;
-    const set = new RegExp(`\\b${f.name}\\s*\\.\\s*set\\s*\\(([^)]*)\\)`).exec(heldBody);
-    // Only a setter that stores its own parameter: anything else is a store this method builds, found in its body.
-    return Boolean(set && (hit.m.params ?? []).some((p) => p.name && p.name === set[1].trim()));
-  });
-  if (!holder) return null;
-  for (const [i, p] of (hit.m.params ?? []).entries()) {
-    if (!isProjectValueType(model, hit.t.file, p.type)) continue;
-    const built = builtValue(args[i], callerBody, model, hit.t.file);
-    if (built) return { name: p.name, arg: built };
+/**
+ * The parameter of a project method that stands for an identity: it is stored into a holder of the project's own type,
+ * and the value at this call site is built here — `new UserContext(user)` is the client's id becoming an identity. A
+ * record the method looked up (`setTenant(tenant)`) is a tenant-source fact, not an identity.
+ */
+function projectHolderSlot(hit, call, q, db, model) {
+  const params = hit.params ?? [];
+  for (const store of q.stores(hit.id, 0).stores) {
+    if (store.kind !== 'holder' || store.op === 'clear') continue;
+    const holder = q.holders().holders.find((h) => h.field === store.field);
+    if (!holder || !isIdentityType(model, holder.element)) continue;
+    const args = callById(db, store.call)?.args ?? [];
+    if (args[0]?.kind !== 'param') continue; // the method builds its own value: found in its own body
+    const built = builtValue(q, call, args[0].index, db, model);
+    if (built) return { name: params[args[0].index]?.name ?? '_', arg: built };
   }
   return null;
 }
 
-// The project value a call passes: `new Context(user)`, or the construction the caller's own body assigns to the
-// name it passes (`ResolvedTenantContext ctx = new ResolvedTenantContext(user); setResolvedContext(ctx);`).
-const builtValue = (argText, callerBody, model, file) => {
-  const text = String(argText ?? '').trim();
-  const inline = /^new\s+([\w.]+)\s*\(/.exec(text);
-  if (inline) return isProjectValueType(model, file, inline[1]) ? text : null;
-  const name = /^(\w+)$/.exec(text)?.[1];
-  if (!name) return null;
-  const assigned = new RegExp(`\\b${name}\\s*=\\s*([^;]+)`).exec(String(callerBody ?? ''));
-  const made = assigned ? /^new\s+([\w.]+)\s*\(/.exec(assigned[1].trim()) : null;
-  return made && isProjectValueType(model, file, made[1]) ? assigned[1].trim() : null;
+/** The project value built at a call site: the dump says `new` and names the created type. */
+const builtValue = (q, call, i, db, model) => {
+  for (const { value } of q.argValue(call, i).values)
+    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.type)) return value;
+  return null;
 };
 
-// The value the client sent has to reach the holder. A read the code only compares, logs, or hands to a check and
-// nothing else does not become the caller. Followed one assignment deep (`user = users.loadByLogin(actor)`); when the
-// read's variable cannot be named — the servlet cookie loop compares a name, then takes getValue() — the read itself
-// is the source and the warning stands.
-function valueReaches(read, bodies, arg) {
-  const value = read.value;
-  if (!value || !arg) return true;
-  const mentions = (text, name) => new RegExp(`\\b${name}\\b`).test(text);
-  if (mentions(arg, value)) return true;
-  for (const name of new Set(String(arg).match(/\b[a-z_]\w*\b/g) ?? [])) {
-    if (name === value) continue;
-    for (const { b } of bodies)
-      for (const a of b.matchAll(new RegExp(`\\b${name}\\s*=\\s*([^;]*)`, 'g')))
-        if (mentions(a[1], value)) return true;
+/**
+ * The value the client sent has to reach the holder. Followed through what the dump records: the store's argument is
+ * the read's own call, or a local assigned from it, or a local assigned from a call that took it (one hop). A value
+ * the dump cannot place — a parameter of the sink's own method, or a value built inside a `new` whose arguments are
+ * not recorded — keeps the warning: an unknown never clears a warning.
+ */
+function valueReaches(read, value, q, db, weak = false, depth = 2) {
+  if (!value) return true;
+  const ids = new Set([read.call, read.value].filter(Boolean));
+  const isRead = (v) => Boolean(v) && ((v.kind === 'call' && ids.has(v.call)) || (v.kind === 'local' && ids.has(v.from)));
+  if (isRead(value)) return true;
+  if (value.kind === 'param') return !weak;
+  // A local assigned in more than one place has no `from` in the dump (`actor = null; ... actor = c.getValue();`).
+  // The servlet cookie loop is that shape. A *weak* sink — a project method merely handed the caller — does not warn
+  // on it: the weakest sink warns only on what the dump can show reaching it, or every filter that re-stores the
+  // caller already authenticated would be flagged.
+  if (value.kind === 'local' && !value.from) return !weak;
+  // A value built inline (`new UserContext(user)`): the dump names the created type, not its arguments, so what was
+  // passed to the constructor is not in it. Unplaceable, and the warning stands.
+  if (value.kind === 'new') return true;
+  if (value.kind === 'local' && value.from && depth > 0) {
+    const row = callById(db, value.from);
+    if (!row) return false;
+    for (let i = 0; i < (row.args ?? []).length; i++)
+      for (const v of q.argValue(row, i).values)
+        if (isRead(v.value) || valueReaches(read, v.value, q, db, weak, depth - 1)) return true;
+    return false;
   }
   return false;
 }
 
-// `static final String NAME = "value"` per file: a cookie or header name is usually one of these.
-const constantMap = (text) =>
-  new Map(
-    [...text.matchAll(/(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]*)"/g)].map((z) => [z[1], z[2]]),
-  );
-
-// The name in a read's argument list: a literal, or a constant of the same file (qualified or imported statically).
-const nameOf = (expr, consts) => {
-  const lit = /^\s*"([^"]+)"\s*$/.exec(String(expr ?? '').trim())?.[1];
-  if (lit) return lit;
-  const ref = String(expr ?? '')
-    .split(/[.,]/)
-    .map((x) => x.trim())
-    .reverse()
-    .find((z) => consts.has(z));
-  return ref ? consts.get(ref) : null;
-};
-
-// Cookie reads: `"actAs".equals(cookie.getName())`, `cookie.getName().equals("actAs")`, and
-// `WebUtils.getCookie(request, "actAs")`. The servlet loop names its cookie at the comparison, not at getCookies().
-const COOKIE_READ = new RegExp(
-  [
-    '"([^"]+)"\\s*\\.\\s*equals(?:IgnoreCase)?\\s*\\(\\s*\\w+\\s*\\.\\s*getName\\s*\\(\\s*\\)\\s*\\)',
-    '(\\w+)\\s*\\.\\s*getName\\s*\\(\\s*\\)\\s*\\.\\s*equals(?:IgnoreCase)?\\s*\\(\\s*"([^"]+)"\\s*\\)',
-    'getCookie\\s*\\(\\s*[^,]+,\\s*([^)]+)\\)',
-  ].join('|'),
-  'g',
-);
-
-// Every value a filter reads off the request as a possible identity, with the line it is read on and the name it
-// lands in (the variable a later store can be followed to).
-function requestReads(x, consts) {
-  const out = [];
-  const lineOf = (needle, idx) => x.m.start + x.b.slice(0, idx).split('\n').length - 1;
-  const assignedTo = (idx) => /(\w+)\s*=\s*[^;=]*$/.exec(x.b.slice(Math.max(0, idx - 200), idx))?.[1] ?? null;
-  for (const m of x.b.matchAll(/getHeader\s*\(\s*([^)]*)\)/g)) {
-    // A header name that does not resolve (`HttpHeaders.AUTHORIZATION`) is reported as written: the reader still has to
-    // see which header the filter reads, and the old fact did the same.
-    const name = nameOf(m[1], consts) ?? String(m[1]).replace(/["']/g, '').trim();
-    if (name)
-      out.push({
-        kind: 'header',
-        name,
-        value: assignedTo(m.index),
-        cite: `${x.t.file}:${Math.max(1, lineOf(m[0], m.index))}`,
-      });
-  }
-  const cookieValue = /\b(\w+)\s*=\s*\w+\s*\.\s*getValue\s*\(\s*\)/.exec(x.b)?.[1] ?? null;
-  for (const m of x.b.matchAll(COOKIE_READ)) {
-    const name = m[1] ?? m[3] ?? nameOf(m[4], consts);
-    const cite = `${x.t.file}:${Math.max(1, lineOf(m[0], m.index))}`;
-    out.push({ kind: 'cookie', name: name ?? 'unnamed cookie', value: cookieValue, cite });
-  }
-  // @CookieValue is a cookie read the model resolves: the name is in the annotation.
-  for (const p of x.m.params ?? [])
-    for (const a of p.ann ?? [])
-      if (/(?:^|\.)CookieValue$/.test(a.fqn ?? '')) {
-        const name = nameOf(a.args, consts);
-        if (name) out.push({ kind: 'cookie', name, value: p.name ?? null, cite: `${x.t.file}:${a.line ?? x.m.nameLine}` });
-      }
-  return out;
-}
-
-// Project methods by id and by `Type#name`, which is how a call's targets are written.
-function methodIndex(model) {
-  const byId = new Map();
-  for (const t of model.types.values())
-    for (const m of t.methods ?? []) {
-      const entry = { t, m };
-      byId.set(m.id ?? `${t.fqn}#${m.name}`, entry);
-      byId.set(`${t.fqn}#${m.name}`, entry);
-    }
-  return byId;
-}
-
-// The entry method, its callees and their callees (same class or a holder class), each once.
-function reachOf(t, m, byId) {
-  const reach = [{ t, m }];
-  const seen = new Set([`${t.fqn}#${m.name}`]);
-  const follow = (from) => {
-    for (const c of from.m.calls ?? [])
-      for (const tg of c.targets ?? []) {
-        const hit = byId.get(tg) ?? byId.get(tg.replace(/\(.*$/, ''));
-        const key = hit ? `${hit.t.fqn}#${hit.m.name}` : null;
-        if (!hit || seen.has(key)) continue;
-        seen.add(key);
-        reach.push(hit);
-      }
-  };
-  follow({ m });
-  for (const r of [...reach].slice(1)) follow(r);
-  return reach;
-}
-
-export function authSources(model, textOf, isTest = () => false) {
+// A user source says where the caller comes from: the cookie or header a filter reads and stores. The stored caller is
+// whatever makes it current — `stores()`, the same definition tenancy uses.
+export function authSources(model, _textOf, isTest = () => false, db = null) {
   const facts = [];
-  const byId = methodIndex(model);
-  const body = (t, m) => textOf(t.file).split('\n').slice(m.start - 1, m.end).join('\n');
-  for (const t of model.types.values()) {
+  const d = db ?? model?.dump ?? null;
+  if (!d) return facts;
+  const q = queries(d);
+  for (const t of model.types?.values() ?? []) {
     if (isTest(t.file)) continue;
     for (const m of t.methods ?? []) {
-      if (!/^(doFilter|doFilterInternal|preHandle)$/.test(m.name)) continue;
-      const bodies = reachOf(t, m, byId).map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
-      const stores = bodies.find((x) => STORES_CALLER.test(x.b));
-      if (!stores) continue;
-      const reads = bodies.flatMap((x) => requestReads(x, constantMap(textOf(x.t.file))));
+      if (!IDENTITY_ENTRY.test(m.name ?? '')) continue;
+      const id = m.id ?? `${t.fqn}#${m.name}`;
+      const { methods } = q.reach(id, 2);
+      const stores = methods.flatMap(({ id: mid }) => identityStores(q, mid, d));
+      if (!stores.length) continue;
+      const { reads } = requestReads(id, q, d, model, 2, methods);
       // The same verification the warning uses: the receiver's type, never the method's name.
-      const verified = Boolean(verifiesIn(model, bodies, t.file));
+      const verified = Boolean(verifiesIn(methods, d, model));
+      const store = storeLabel(stores[0], d);
       const cookie = reads.find((r) => r.kind === 'cookie');
       if (cookie) {
         // The unverified state belongs in the kind: it is the one field of a user source the digest keeps, and a
@@ -885,7 +912,7 @@ export function authSources(model, textOf, isTest = () => false) {
           verified,
           evidence: [`${cookie.cite}#${m.name}`],
           why: [
-            `${t.name}#${m.name} reads cookie ${cookie.name} and stores the caller (${stores.b.trim().slice(0, 60)})`,
+            `${t.name}#${m.name} reads cookie ${cookie.name} and stores the caller (${store})`,
             verified
               ? 'a verification call runs before the caller is stored'
               : 'nothing verifies the cookie: the caller asserts its own identity',
@@ -905,9 +932,7 @@ export function authSources(model, textOf, isTest = () => false) {
         method: `${t.name}#${m.name}`,
         name: headerLine.name,
         evidence: [`${headerLine.cite}#${m.name}`],
-        why: [
-          `${t.name}#${m.name} reads the ${headerLine.name} header and stores the caller (${stores.b.trim().slice(0, 60)})`,
-        ],
+        why: [`${t.name}#${m.name} reads the ${headerLine.name} header and stores the caller (${store})`],
       });
     }
   }
@@ -916,37 +941,33 @@ export function authSources(model, textOf, isTest = () => false) {
 
 // The caller the code believes because the request said so. Two conditions, both required: the value reaches a
 // *security* identity holder (the security context, an Authentication/Principal slot, or a holder of the app's own
-// whose type the project declares), and no verification call is reachable in the same method (same file, two hops)
-// from a receiver of a security-library or token-service type. Anything less certain stays a user source — a
-// ThreadLocal of an IP, a request id or a workspace id is not a caller.
+// whose type the project declares), and no verification call is reachable in the same reach. Anything less certain
+// stays a user source — a ThreadLocal of an IP, a request id or a workspace id is not a caller.
 // One warning per (method, holder): every source that reaches that holder is listed in the one entry.
-export function identityWarnings(model, textOf, isTest = () => false) {
+export function identityWarnings(model, _textOf, isTest = () => false, db = null) {
   const warnings = [];
-  const byId = methodIndex(model);
-  const body = (t, m) => textOf(t.file).split('\n').slice(m.start - 1, m.end).join('\n');
-  for (const t of model.types.values()) {
+  const d = db ?? model?.dump ?? null;
+  if (!d) return warnings;
+  const q = queries(d);
+  const holders = q.holders().holders;
+  for (const t of model.types?.values() ?? []) {
     if (isTest(t.file)) continue;
     for (const m of t.methods ?? []) {
-      if (!/^(doFilter|doFilterInternal|preHandle)$/.test(m.name)) continue;
-      const bodies = reachOf(t, m, byId).map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
+      if (!IDENTITY_ENTRY.test(m.name ?? '')) continue;
+      const id = m.id ?? `${t.fqn}#${m.name}`;
+      const { methods } = q.reach(id, 2);
       // The sink decides first: without a security holder there is no warning to make, whatever is read.
-      const holders = new Map();
-      for (const x of bodies)
-        for (const sink of securitySinks(x.t, x.m, x.b, model, byId, textOf)) {
-          const key = `${x.t.name}#${x.m.name}`;
-          if (!holders.has(key)) holders.set(key, { x, sinks: [] });
-          holders.get(key).sinks.push(sink);
-        }
-      if (!holders.size) continue;
-      if (verifiesIn(model, bodies, t.file)) continue;
+      const sinks = securitySinks(id, q, d, model, holders);
+      if (!sinks.length) continue;
+      if (verifiesIn(methods, d, model)) continue;
       // One entry per value the client can send, not per place it was read.
       const reads = [
-        ...new Map(
-          bodies.flatMap((x) => requestReads(x, constantMap(textOf(x.t.file)))).map((r) => [`${r.kind}:${r.name}`, r]),
-        ).values(),
+        ...new Map(requestReads(id, q, d, model, 2, methods).reads.map((r) => [`${r.kind}:${r.name}`, r])).values(),
       ];
-      for (const [key, { x, sinks }] of holders) {
-        const used = reads.filter((r) => sinks.some((s) => valueReaches(r, bodies, s.arg)));
+      const byHolder = new Map();
+      for (const s of sinks) byHolder.set(s.method, [...(byHolder.get(s.method) ?? []), s]);
+      for (const [key, group] of byHolder) {
+        const used = reads.filter((r) => group.some((s) => valueReaches(r, s.arg, q, d, Boolean(s.weak))));
         if (!used.length) continue;
         warnings.push({
           id: `security-warning:client-asserted-identity@${t.name}:${key}`,
@@ -956,10 +977,10 @@ export function identityWarnings(model, textOf, isTest = () => false) {
           method: `${t.name}#${m.name}`,
           source: used.map((r) => `${r.kind}:${r.name}`).join(', '),
           holder: key,
-          evidence: [...used.map((r) => r.cite), `${x.t.file}:${x.m.start}#${x.m.name}`],
+          evidence: [...used.map((r) => r.cite), group[0].cite],
           why: [
             `${t.name}#${m.name} takes the caller from ${used.map((r) => `${r.kind} ${r.name} (${r.cite})`).join(', ')}`,
-            `${key} stores it as the caller (${[...new Set(sinks.map((s) => s.what))].join(', ')}) with no verification ` +
+            `${key} stores it as the caller (${[...new Set(group.map((s) => s.what))].join(', ')}) with no verification ` +
               'call: any client can claim that identity',
           ],
         });
@@ -970,47 +991,41 @@ export function identityWarnings(model, textOf, isTest = () => false) {
 }
 
 {
-  // Type reading: a local's type comes from the source, a verification call from its receiver's type, and a read that
-  // never reaches the holder is not a caller.
+  // The type gates, and the value walk, on values the dump would write. `==` comparisons are not in the dump and a
+  // `new` keeps no argument ids: both are reported as gaps, never guessed.
   const model = {
     types: new Map([
-      ['shop.Svc', { fqn: 'shop.Svc', file: 'x', methods: [], fields: [] }],
-      ['shop.JwtTokenService', { fqn: 'shop.JwtTokenService', file: 'x', methods: [], fields: [] }],
-      ['shop.TwoFactorService', { fqn: 'shop.TwoFactorService', file: 'x', methods: [], fields: [] }],
+      ['shop.User', { fqn: 'shop.User' }],
+      ['shop.UserContext', { fqn: 'shop.UserContext' }],
+      ['shop.JwtTokenService', { fqn: 'shop.JwtTokenService' }],
+      ['shop.TwoFactorService', { fqn: 'shop.TwoFactorService' }],
     ]),
-    resolveIn: () => null,
   };
-  const t = { fqn: 'shop.F', name: 'F', file: 'src/F.java', fields: [] };
-  const m = { name: 'doFilterInternal', start: 1, end: 4, params: [], calls: [] };
-  const b = ['SecurityContext context = SecurityContextHolder.getContext();', 'context.setAuthentication(user);'].join('\n');
-  assert.deepStrictEqual([...declaredTypes(t, m, b)], [['context', 'SecurityContext']]);
-  assert.deepStrictEqual(securitySinks(t, m, b, model, new Map()).map((s) => s.what), ['context.setAuthentication']);
-  assert.deepStrictEqual(
-    securitySinks(t, m, 'ThreadLocal<String> ID = new ThreadLocal<>();\nID.set(id);', model, new Map()),
-    [],
-  );
+  assert.ok(isIdentityType(model, 'UserContext'), 'a project type is an identity value');
+  assert.ok(isIdentityType(model, 'shop.UserContext'), 'written or qualified');
+  assert.ok(!isIdentityType(model, 'String'), 'a String is bookkeeping');
+  assert.ok(!isIdentityType(model, 'long'), 'a primitive is bookkeeping');
   assert.ok(isVerifierType('org.springframework.security.oauth2.jwt.JwtDecoder', model));
   assert.ok(isVerifierType('java.security.MessageDigest', model));
   assert.ok(isVerifierType('shop.JwtTokenService', model));
   assert.ok(!isVerifierType('shop.TwoFactorService', model));
   assert.ok(!isVerifierType('java.lang.String', model));
-  // The value's type decides an identity holder: a project type is one, a String or a JDK type is not.
-  assert.equal(threadLocalElement('ThreadLocal<User>'), 'User');
-  assert.equal(threadLocalElement('ThreadLocal<Map<String, Object>>'), 'Map<String, Object>');
-  assert.equal(threadLocalElement('String'), null);
-  assert.ok(isProjectValueType(model, 'x', 'Svc'));
-  assert.ok(!isProjectValueType(model, 'x', 'String'));
-  assert.ok(!isProjectValueType(model, 'x', 'long'));
-  assert.ok(
-    valueReaches({ kind: 'cookie', name: 'actAs', value: 'actor' }, [{ b: 'User u = users.loadByLogin(actor);' }], 'u'),
-  );
-  assert.ok(
-    !valueReaches(
-      { kind: 'header', name: 'T', value: 'token' },
-      [{ b: 'TfaToken t = tfa.fetch(user, token);\nAuthentication updated = addAuthority(authentication);' }],
-      'updated',
-    ),
-  );
+  assert.equal(simpleType('java.util.Map<String, Object>'), 'Map');
+  assert.equal(annotationName({ raw: 'value = "X-Tenant", required = false' }), 'X-Tenant');
+  assert.equal(annotationName({ raw: '"actAs"' }), 'actAs');
+  assert.equal(annotationName({ raw: '' }), null);
+  // The value walk: a read assigned to a local that the store is handed reaches it; an unrelated local does not.
+  const calls = [
+    { id: 'a.F#go()@4:9', method: 'a.F#go()', name: 'getHeader', file: 'a/F.java', line: 4, args: [] },
+    { id: 'a.F#go()@8:9', method: 'a.F#go()', name: 'store', file: 'a/F.java', line: 8, args: [] },
+  ];
+  const db = { calls, members: new Map(), types: new Map() };
+  const q = { argValue: (call, i) => ({ values: [], unresolved: [] }) };
+  const read = { kind: 'header', name: 'X-Api-Key', call: 'a.F#go()@4:9' };
+  assert.ok(valueReaches(read, { kind: 'local', from: 'a.F#go()@4:9' }, q, db), 'the local is assigned from the read');
+  assert.ok(!valueReaches(read, { kind: 'local', from: 'a.F#go()@5:9' }, q, db), 'an unrelated local does not reach');
+  assert.ok(valueReaches(read, { kind: 'param', index: 0 }, q, db), 'a value the dump cannot place keeps the warning');
+  assert.ok(valueReaches(read, null, q, db), 'a store whose argument was not recorded keeps the warning');
 }
 
 // The model in one fact: prefixes and their access, where the user and the tenant come from, and what a developer

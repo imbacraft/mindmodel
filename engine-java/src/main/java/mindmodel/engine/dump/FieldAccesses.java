@@ -29,7 +29,8 @@ final class FieldAccesses {
     }
 
     /** One access with the value it carried, already resolved. */
-    record Row(String method, String field, boolean isStatic, String op, Positions.Pos pos, Refs.Ref value) {
+    record Row(String method, String field, boolean isStatic, String op, Positions.Pos pos, Refs.Ref value,
+               List<String> typeArgs) {
     }
 
     /** Collects the accesses of one body into `rows`; `methodId` is the member the body belongs to. */
@@ -42,7 +43,10 @@ final class FieldAccesses {
             String op = access instanceof CtFieldWrite<?> ? "write" : "read";
             // A write says what the method put there; a read says which field it read.
             Refs.Ref value = access instanceof CtFieldWrite<?> write ? refs.of(valueOf(write)) : refs.of(access);
-            rows.add(new Row(methodId, field, isStatic(ref), op, pos, value));
+            // The field's declared type's arguments: `GenericRepo<T>` is [T], and a reader that binds the parameter
+            // knows what the field holds at that site.
+            rows.add(new Row(methodId, field, isStatic(ref), op, pos, value,
+                    Refs.typeArgs(ref == null ? null : ref.getType())));
         }
     }
 
@@ -107,6 +111,9 @@ final class FieldAccesses {
         else g.writeStringField("field", row.field());
         g.writeBooleanField("static", row.isStatic());
         g.writeStringField("op", row.op());
+        g.writeArrayFieldStart("typeArgs");
+        for (String argument : row.typeArgs()) g.writeString(argument);
+        g.writeEndArray();
         g.writeStringField("file", row.pos().file());
         g.writeNumberField("line", row.pos().line());
         g.writeNumberField("col", row.pos().col());

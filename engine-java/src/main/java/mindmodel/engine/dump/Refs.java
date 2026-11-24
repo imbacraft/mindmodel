@@ -1,6 +1,7 @@
 package mindmodel.engine.dump;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -17,7 +18,6 @@ import spoon.reflect.code.CtLiteral;
 import spoon.reflect.code.CtLocalVariable;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.declaration.CtElement;
-import spoon.reflect.declaration.CtEnumValue;
 import spoon.reflect.declaration.CtField;
 import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtType;
@@ -95,8 +95,14 @@ final class Refs {
                     null);
         }
         if (expression instanceof CtConditional<?> conditional) {
-            // `a ? b : c` is structure: two branches, each in this same shape.
-            return new Ref(text, "conditional", typeOf(expression), null, null, null, null, null, null, null, false, null,
+            // `a ? b : c` is structure: two branches, each in this same shape. Spoon leaves the expression's own type
+            // off when it is inferred from the branches, so two branches of one type name it.
+            String type = typeOf(expression);
+            if (type == null) {
+                String either = typeOf(conditional.getThenExpression());
+                if (either != null && either.equals(typeOf(conditional.getElseExpression()))) type = either;
+            }
+            return new Ref(text, "conditional", type, null, null, null, null, null, null, null, false, null,
                     of(conditional.getThenExpression()), of(conditional.getElseExpression()));
         }
         if (expression instanceof CtVariableRead<?> read) return read(read, text);
@@ -106,6 +112,7 @@ final class Refs {
     /** A name read: a parameter, a local, a field, a constant. Its declaration is the fact; without one it is unresolved. */
     private Ref read(CtVariableRead<?> read, String text) {
         CtElement declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
+        CtFieldReference<?> asField = read.getVariable() instanceof CtFieldReference<?> field ? field : null;
         if (declaration instanceof CtParameter<?> parameter) {
             var owner = parameter.getParent(spoon.reflect.declaration.CtExecutable.class);
             int index = owner == null ? -1 : owner.getParameters().indexOf(parameter);
@@ -120,25 +127,35 @@ final class Refs {
             return new Ref(text, "local", typeOf(read), null, null, null, null, null, from, null, false, null, null,
                     null);
         }
-        if (declaration instanceof CtField<?> field) {
-            CtFieldReference<?> ref = read.getVariable() instanceof CtFieldReference<?> asField ? asField : null;
-            String id = fieldId(ref);
-            // An enum constant is a constant by construction; any other field only when a compiler could fold it.
-            Values.Value folded;
-            if (field instanceof CtEnumValue<?> value)
-                folded = new Values.Value("enum",
-                        Names.qualified(value.getDeclaringType()) + "." + value.getSimpleName());
-            else if (field.getModifiers().contains(spoon.reflect.declaration.ModifierKind.FINAL)
-                    && field.getDefaultExpression() != null)
-                folded = Values.of(field.getDefaultExpression());
-            else folded = null;
-            // A constant is one whose value the compiler could write down; anything else is a field read.
+        // A constant is one whose value the compiler could write down; anything else is a field read.
+        if (declaration instanceof CtField<?>) {
+            String id = fieldId(asField);
+            Values.Value folded = Values.of(read);
             return new Ref(text, folded != null ? "constant" : "field", typeOf(read),
                     id == null ? "no-declaring-type" : null, folded == null ? null : folded.kind(),
                     folded == null ? null : folded.value(), id, null, null, null, false, null, null, null);
         }
+        // A static member of a type declared outside this checkout (`OrderState.CANCELLED`, `REVISION_PENDING` named by
+        // a static import): there is no declaration here, but the source names both the type and the field — the read is
+        // on a type access, and Java writes a type's name with a capital. An owner written lowercase is a variable whose
+        // declaration is missing (`mystery.port`), which stays unresolved. The reason says the declaration is elsewhere.
+        if (asField != null && asField.getDeclaringType() != null
+                && read instanceof spoon.reflect.code.CtFieldAccess<?> access
+                && access.getTarget() instanceof spoon.reflect.code.CtTypeAccess<?>
+                && isTypeName(asField.getDeclaringType().getSimpleName())) {
+            String owner = Names.qualified(asField.getDeclaringType());
+            String fieldName = asField.getSimpleName();
+            if (owner != null && !owner.isEmpty() && fieldName != null && !fieldName.isEmpty())
+                return new Ref(text, "field", owner, "declaration-outside-dump", null, null,
+                        owner + "#" + fieldName, null, null, null, false, null, null, null);
+        }
         return new Ref(text, "unresolved", null, "no-declaration", null, null, null, null, null, null, false, null, null,
                 null);
+    }
+
+    /** Java writes a type's name with a capital: the one convention that tells a type access from a missing variable. */
+    private static boolean isTypeName(String simple) {
+        return simple != null && !simple.isEmpty() && Character.isUpperCase(simple.charAt(0));
     }
 
     /** The row a value came from, when that row is a call site or a field. Anything else names no row. */
@@ -172,6 +189,34 @@ final class Refs {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /**
+     * The type arguments of a written type, as names: a project or library type qualified, a type parameter by the
+     * letter its author wrote, a wildcard as {@code ?}. Order is the source's. Empty when the type takes none.
+     */
+    static List<String> typeArgs(CtTypeReference<?> type) {
+        List<String> out = new ArrayList<>();
+        if (type == null) return out;
+        try {
+            for (CtTypeReference<?> argument : type.getActualTypeArguments()) out.add(typeName(argument));
+        } catch (RuntimeException e) {
+            return new ArrayList<>();
+        }
+        return out;
+    }
+
+    /** One type argument as written: `Voucher`, `T`, `? extends Number`. */
+    static String typeName(CtTypeReference<?> type) {
+        if (type == null) return "?";
+        if (type instanceof CtTypeParameterReference parameter) return parameter.getSimpleName();
+        if (type instanceof spoon.reflect.reference.CtWildcardReference wildcard) {
+            CtTypeReference<?> bound = wildcard.getBoundingType();
+            if (bound == null || "Object".equals(bound.getSimpleName())) return "?";
+            return (wildcard.isUpper() ? "? extends " : "? super ") + Names.qualified(bound);
+        }
+        String qualified = Names.qualified(type);
+        return qualified == null || qualified.isEmpty() ? "?" : qualified;
     }
 
     /** Writes one reference into the object the caller has started; every field it knows, nothing it does not. */

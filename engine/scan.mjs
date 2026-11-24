@@ -758,6 +758,9 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       .map((j) => j.p),
   );
   const deep = javaFacts({
+    // Statuses are read from the dump's typed arguments and returns: the source text is not consulted.
+    dump,
+    model,
     java: appTypes.map(asEntry),
     repoEntity,
     EXT,

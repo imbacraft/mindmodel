@@ -2,12 +2,14 @@
 // Spring Security Authentication/Principal slot. A ThreadLocal of a String — an IP, a request id, a workspace id — is
 // where the caller comes from, a user source; believing it is not a security decision. And a verification call on the
 // right receiver type (JwtDecoder, AuthenticationManager, the app's own *TokenService) means the value was checked.
+//
+// Every fixture below runs through the real engine: the Java is dumped by the jar, the model is built from that dump,
+// and the extractor reads only the dump. A fixture the dump cannot answer stays unresolved and is asserted as such.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { index } from './fixtures/syntax-java.mjs';
-import { buildModel } from './fixtures/model-from-source.mjs';
-import { linkCallsTyped } from '../engine/model/link-for-tests.mjs';
-import { authSources, identityWarnings, securityModel } from '../engine/extract/security.mjs';
+import { NO_ENGINE, dumpOf } from './fixtures/dump-run.mjs';
+import { authSources, identityWarnings, requestReads, securityModel } from '../engine/extract/security.mjs';
+import { queries } from '../engine/model/query.mjs';
 
 const L = (...x) => x.join('\n');
 
@@ -25,6 +27,15 @@ const USER = {
     '  }',
     '}',
   ),
+  'src/main/java/shop/TfaService.java': L(
+    'package shop;',
+    'public class TfaService {',
+    '  public TfaToken fetchFor(Object user, String token) {',
+    '    return new TfaToken();',
+    '  }',
+    '}',
+  ),
+  'src/main/java/shop/TfaToken.java': L('package shop;', 'public class TfaToken {', '  public boolean isValid() {', '    return true;', '  }', '}'),
 };
 
 const IMPORTS = [
@@ -48,7 +59,7 @@ const TRUSTING = L(
   '  public void doFilterInternal(HttpServletRequest request) {',
   '    String actor = null;',
   '    for (Cookie c : request.getCookies()) {',
-  '      if ("actAs".equals(c.getName())) {',
+  '      if (c.getName().equals("actAs")) {',
   '        actor = c.getValue();',
   '      }',
   '    }',
@@ -66,17 +77,17 @@ const VERIFYING = L(
   ...IMPORTS,
   'import org.springframework.security.oauth2.jwt.Jwt;',
   'import org.springframework.security.oauth2.jwt.JwtDecoder;',
-  'public class ActAsFilter {',
+  'public class VerifiedFilter {',
   '  private final JwtDecoder jwtDecoder;',
   '  private final UserService users;',
-  '  public ActAsFilter(JwtDecoder jwtDecoder, UserService users) {',
+  '  public VerifiedFilter(JwtDecoder jwtDecoder, UserService users) {',
   '    this.jwtDecoder = jwtDecoder;',
   '    this.users = users;',
   '  }',
   '  public void doFilterInternal(HttpServletRequest request) {',
   '    String token = null;',
   '    for (Cookie c : request.getCookies()) {',
-  '      if ("actAs".equals(c.getName())) {',
+  '      if (c.getName().equals("actAs")) {',
   '        token = c.getValue();',
   '      }',
   '    }',
@@ -91,9 +102,9 @@ const VERIFYING = L(
 const TWO_SOURCES = L(
   'package shop;',
   ...IMPORTS,
-  'public class ActAsFilter {',
+  'public class TwoHeaderFilter {',
   '  private final UserService users;',
-  '  public ActAsFilter(UserService users) {',
+  '  public TwoHeaderFilter(UserService users) {',
   '    this.users = users;',
   '  }',
   '  public void doFilterInternal(HttpServletRequest request) {',
@@ -124,16 +135,16 @@ const LOCAL_STRING = L(
 const LOCAL_COOKIE = L(
   'package shop;',
   ...IMPORTS,
-  'public class ActAsFilter {',
+  'public class LocalCookieFilter {',
   '  private static final ThreadLocal<User> ACTOR = new ThreadLocal<>();',
   '  private final UserService users;',
-  '  public ActAsFilter(UserService users) {',
+  '  public LocalCookieFilter(UserService users) {',
   '    this.users = users;',
   '  }',
   '  public void doFilterInternal(HttpServletRequest request) {',
   '    String actor = null;',
   '    for (Cookie c : request.getCookies()) {',
-  '      if ("actAs".equals(c.getName())) {',
+  '      if (c.getName().equals("actAs")) {',
   '        actor = c.getValue();',
   '      }',
   '    }',
@@ -200,15 +211,15 @@ const TENANT_CONTEXT = {
 const PROJECT_CONTEXT_FILTER = L(
   'package shop;',
   ...IMPORTS,
-  'public class ActAsFilter {',
+  'public class ContextFilter {',
   '  private final UserService users;',
-  '  public ActAsFilter(UserService users) {',
+  '  public ContextFilter(UserService users) {',
   '    this.users = users;',
   '  }',
   '  public void doFilterInternal(HttpServletRequest request) {',
   '    String actor = null;',
   '    for (Cookie c : request.getCookies()) {',
-  '      if ("actAs".equals(c.getName())) {',
+  '      if (c.getName().equals("actAs")) {',
   '        actor = c.getValue();',
   '      }',
   '    }',
@@ -238,12 +249,67 @@ const STRING_CONTEXT = {
 const STRING_CONTEXT_FILTER = L(
   'package shop;',
   ...IMPORTS,
-  'public class ActAsFilter {',
+  'public class StringContextFilter {',
   '  private final UserService users;',
-  '  private final RequestContext context;',
-  '  public ActAsFilter(UserService users, RequestContext context) {',
+  '  public StringContextFilter(UserService users) {',
   '    this.users = users;',
-  '    this.context = context;',
+  '  }',
+  '  public void doFilterInternal(HttpServletRequest request) {',
+  '    String actor = null;',
+  '    for (Cookie c : request.getCookies()) {',
+  '      if (c.getName().equals("actAs")) {',
+  '        actor = c.getValue();',
+  '      }',
+  '    }',
+  '    User user = users.loadByLogin(actor);',
+  '    RequestContext.setCurrent(user.getLogin());',
+  '  }',
+  '}',
+);
+
+// The name read through a helper: the filter asks `isActAs(c.getName())` and the helper compares its own parameter to
+// a constant. The dump resolves the name through the helper (`comparedTo`), not by reading the helper's body.
+const HELPER_NAMED = {
+  'src/main/java/shop/CookieNames.java': L(
+    'package shop;',
+    'public class CookieNames {',
+    '  private static final String ACT_AS = "actAs";',
+    '  public static boolean isActAs(String name) {',
+    '    return ACT_AS.equals(name);',
+    '  }',
+    '}',
+  ),
+  'src/main/java/shop/HelperFilter.java': L(
+    'package shop;',
+    ...IMPORTS,
+    'public class HelperFilter {',
+    '  private final UserService users;',
+    '  public HelperFilter(UserService users) {',
+    '    this.users = users;',
+    '  }',
+    '  public void doFilterInternal(HttpServletRequest request) {',
+    '    String actor = null;',
+    '    for (Cookie c : request.getCookies()) {',
+    '      if (CookieNames.isActAs(c.getName())) {',
+    '        actor = c.getValue();',
+    '      }',
+    '    }',
+    '    User user = users.loadByLogin(actor);',
+    '    SecurityContextHolder.getContext().setAuthentication(user);',
+    '  }',
+    '}',
+  ),
+};
+
+// The name as a literal *receiver* (`"actAs".equals(c.getName())`): the dump records a receiver's written text, not
+// its value, so the read is unresolved with that reason — the one cookie shape this layer cannot name.
+const RECEIVER_NAME = L(
+  'package shop;',
+  ...IMPORTS,
+  'public class ReceiverFilter {',
+  '  private final UserService users;',
+  '  public ReceiverFilter(UserService users) {',
+  '    this.users = users;',
   '  }',
   '  public void doFilterInternal(HttpServletRequest request) {',
   '    String actor = null;',
@@ -253,39 +319,19 @@ const STRING_CONTEXT_FILTER = L(
   '      }',
   '    }',
   '    User user = users.loadByLogin(actor);',
-  '    context.setCurrent(user.getLogin());',
+  '    SecurityContextHolder.getContext().setAuthentication(user);',
   '  }',
   '}',
 );
 
-function build(filter, cls = 'ActAsFilter', extra = {}) {
-  const files = {
-    ...USER,
-    'src/main/java/shop/TfaService.java': L(
-      'package shop;',
-      'public class TfaService {',
-      '  public TfaToken fetchFor(Object user, String token) {',
-      '    return new TfaToken();',
-      '  }',
-      '}',
-    ),
-    'src/main/java/shop/TfaToken.java': L('package shop;', 'public class TfaToken {', '  public boolean isValid() {', '    return true;', '  }', '}'),
-    ...extra,
-    [`src/main/java/shop/${cls}.java`]: filter,
-  };
-  const model = buildModel(Object.entries(files).map(([p, text]) => ({ p, text, ix: index(text) })));
-  linkCallsTyped(model);
-  const textOf = (rel) => files[rel];
-  return {
-    model,
-    textOf,
-    sources: authSources(model, textOf),
-    warnings: identityWarnings(model, textOf),
-  };
+/** One dump for one fixture; the extractors read it through the model it produced. */
+function build(cls, filter, extra = {}) {
+  const { db, model } = dumpOf({ ...USER, ...extra, [`src/main/java/shop/${cls}.java`]: filter });
+  return { db, model, sources: authSources(model), warnings: identityWarnings(model) };
 }
 
-test('a cookie that becomes the caller through SecurityContextHolder gets one warning citing it', () => {
-  const { sources, warnings } = build(TRUSTING);
+test('a cookie that becomes the caller through SecurityContextHolder gets one warning citing it', { skip: NO_ENGINE }, () => {
+  const { sources, warnings } = build('ActAsFilter', TRUSTING);
   assert.equal(warnings.length, 1, `one warning: ${JSON.stringify(warnings.map((w) => w.id))}`);
   const w = warnings[0];
   assert.equal(w.family, 'security-warning');
@@ -293,11 +339,8 @@ test('a cookie that becomes the caller through SecurityContextHolder gets one wa
   assert.equal(w.method, 'ActAsFilter#doFilterInternal');
   assert.equal(w.source, 'cookie:actAs');
   assert.equal(w.holder, 'ActAsFilter#doFilterInternal');
-  assert.ok(
-    w.evidence.some((e) => e.startsWith('src/main/java/shop/ActAsFilter.java:')),
-    `the warning cites the filter: ${w.evidence.join(', ')}`,
-  );
-  assert.match(w.why[1], /context\.setAuthentication/);
+  assert.ok(w.evidence.some((e) => e.startsWith('src/main/java/shop/ActAsFilter.java:')), `cites the filter: ${w.evidence.join(', ')}`);
+  assert.match(w.why[1], /SecurityContext\.setAuthentication/);
   // The cookie is a user source, named, and its unverified state is what the digest keeps.
   const cookie = sources.find((s) => s.name === 'actAs');
   assert.ok(cookie, `the cookie is a user source: ${sources.map((s) => s.kind).join(', ')}`);
@@ -305,8 +348,8 @@ test('a cookie that becomes the caller through SecurityContextHolder gets one wa
   assert.match(cookie.evidence[0], /ActAsFilter\.java:\d+#doFilterInternal/);
 });
 
-test('a JwtDecoder decoding the cookie first is a verified user source with no warning', () => {
-  const { sources, warnings } = build(VERIFYING);
+test('a JwtDecoder decoding the cookie first is a verified user source with no warning', { skip: NO_ENGINE }, () => {
+  const { sources, warnings } = build('VerifiedFilter', VERIFYING);
   assert.deepEqual(warnings, []);
   const cookie = sources.find((s) => s.name === 'actAs');
   assert.ok(cookie, `the cookie is still a user source: ${sources.map((s) => s.kind).join(', ')}`);
@@ -314,72 +357,80 @@ test('a JwtDecoder decoding the cookie first is a verified user source with no w
   assert.equal(cookie.verified, true);
 });
 
-test('two client-sent values into one holder are one warning listing both sources', () => {
-  const { warnings } = build(TWO_SOURCES);
+test('two client-sent values into one holder are one warning listing both sources', { skip: NO_ENGINE }, () => {
+  const { warnings } = build('TwoHeaderFilter', TWO_SOURCES);
   assert.equal(warnings.length, 1, `one entry per (method, holder): ${JSON.stringify(warnings.map((w) => w.id))}`);
   assert.equal(warnings[0].source, 'header:X-Act-As, header:X-Api-Key');
   assert.equal(new Set(warnings[0].evidence).size, 3, 'both reads are cited, next to the holder');
 });
 
-test('a header into a plain ThreadLocal of a String is a user source and no warning', () => {
-  const { sources, warnings } = build(LOCAL_STRING);
+test('a header into a plain ThreadLocal of a String is a user source and no warning', { skip: NO_ENGINE }, () => {
+  const { sources, warnings } = build('ApiKeyContextFilter', LOCAL_STRING);
   assert.deepEqual(warnings, [], 'a String ThreadLocal is not a security holder');
   const source = sources.find((s) => s.name === 'X-Api-Key');
   assert.ok(source, `the read is still a user source: ${sources.map((s) => s.kind).join(', ')}`);
   assert.equal(source.kind, 'API token');
 });
 
-test('a cookie into a ThreadLocal of the user is a warning: the app holder stores a project type', () => {
-  const { sources, warnings } = build(LOCAL_COOKIE);
+test('a cookie into a ThreadLocal of the user is a warning: the app holder stores a project type', { skip: NO_ENGINE }, () => {
+  const { sources, warnings } = build('LocalCookieFilter', LOCAL_COOKIE);
   assert.equal(warnings.length, 1, `a project-typed ThreadLocal is an identity sink: ${JSON.stringify(warnings)}`);
-  assert.equal(warnings[0].method, 'ActAsFilter#doFilterInternal');
+  assert.equal(warnings[0].method, 'LocalCookieFilter#doFilterInternal');
   assert.equal(warnings[0].source, 'cookie:actAs');
   assert.match(warnings[0].why[1], /thread-local ACTOR \(User\)/);
   assert.equal(sources.find((s) => s.name === 'actAs')?.kind, 'cookie actAs (unverified)');
 });
 
-test('a cookie made the caller through the app\'s own context holder is one warning', () => {
-  const { warnings } = build(PROJECT_CONTEXT_FILTER, 'ActAsFilter', TENANT_CONTEXT);
+test("a cookie made the caller through the app's own context holder is one warning", { skip: NO_ENGINE }, () => {
+  const { warnings } = build('ContextFilter', PROJECT_CONTEXT_FILTER, TENANT_CONTEXT);
   assert.equal(warnings.length, 1, `one warning: ${JSON.stringify(warnings.map((w) => w.id))}`);
   const w = warnings[0];
   assert.equal(w.kind, 'client-asserted-identity');
-  assert.equal(w.method, 'ActAsFilter#doFilterInternal');
+  assert.equal(w.method, 'ContextFilter#doFilterInternal');
   assert.equal(w.source, 'cookie:actAs');
   assert.match(w.why[1], /TenantContext#setContext\(ctx\)/, 'the store is the holder setter, not a name');
-  // The holder is a static utility class: the call names its type as the receiver, and the sink is still the filter's.
-  assert.ok(
-    w.evidence.some((e) => e.startsWith('src/main/java/shop/ActAsFilter.java:')),
-    `the warning cites the filter: ${w.evidence.join(', ')}`,
-  );
+  assert.ok(w.evidence.some((e) => e.startsWith('src/main/java/shop/ContextFilter.java:')), `cites the filter: ${w.evidence.join(', ')}`);
 });
 
-test('the same holder of a String is a user source and no warning', () => {
-  const { sources, warnings } = build(STRING_CONTEXT_FILTER, 'ActAsFilter', STRING_CONTEXT);
+test('the same holder of a String is a user source and no warning', { skip: NO_ENGINE }, () => {
+  const { sources, warnings } = build('StringContextFilter', STRING_CONTEXT_FILTER, STRING_CONTEXT);
   assert.deepEqual(warnings, [], 'a ThreadLocal<String> is not an identity holder');
   const source = sources.find((s) => s.name === 'actAs');
   assert.ok(source, `the read is still a user source: ${sources.map((s) => s.kind).join(', ')}`);
   assert.equal(source.kind, 'cookie actAs (unverified)');
 });
 
-test('a header that is only checked, never stored, is a user source and no warning', () => {
-  const { sources, warnings } = build(CHECKED_ONLY, 'TwoFactorFilter');
+test('a header that is only checked, never stored, is a user source and no warning', { skip: NO_ENGINE }, () => {
+  const { sources, warnings } = build('TwoFactorFilter', CHECKED_ONLY);
   assert.deepEqual(warnings, [], 'the token is checked; the caller stored is the one already authenticated');
-  assert.ok(
-    sources.some((s) => s.name === 'X-Tfa-Token'),
-    `the read is still a user source: ${sources.map((s) => s.kind).join(', ')}`,
-  );
+  assert.ok(sources.some((s) => s.name === 'X-Tfa-Token'), `the read is still a user source: ${sources.map((s) => s.kind).join(', ')}`);
 });
 
-test('the security model carries the unverified caller into the digest rules', () => {
-  const { model, textOf, sources } = build(LOCAL_COOKIE);
+test('a cookie name compared inside a helper is resolved through the helper', { skip: NO_ENGINE }, () => {
+  const { sources } = build('HelperFilter', HELPER_NAMED['src/main/java/shop/HelperFilter.java'], { 'src/main/java/shop/CookieNames.java': HELPER_NAMED['src/main/java/shop/CookieNames.java'] });
+  const cookie = sources.find((s) => s.kind.startsWith('cookie'));
+  assert.ok(cookie, `the helper's cookie is a user source: ${sources.map((s) => s.kind).join(', ')}`);
+  assert.equal(cookie.name, 'actAs', 'the constant the helper compares against names the cookie');
+});
+
+test('a literal receiver is not in the dump: the read is unresolved, and says why', { skip: NO_ENGINE }, () => {
+  const { db, model } = dumpOf({ ...USER, 'src/main/java/shop/ReceiverFilter.java': RECEIVER_NAME });
+  const id = 'shop.ReceiverFilter#doFilterInternal(HttpServletRequest)';
+  const { reads, unresolved } = requestReads(id, queries(db), db, model);
+  assert.deepEqual(reads.filter((r) => r.kind === 'cookie'), [], 'no cookie is named');
+  assert.ok(unresolved.some((u) => u.reason === 'receiver-is-not-a-value'), JSON.stringify(unresolved));
+  // Nothing is invented from it: no source, and no warning either.
+  assert.deepEqual(authSources(model), []);
+  assert.deepEqual(identityWarnings(model), []);
+});
+
+test('the security model carries the unverified caller into the digest rules', { skip: NO_ENGINE }, () => {
+  const { sources } = build('LocalCookieFilter', LOCAL_COOKIE);
   const userSources = sources.map((s) => ({ kind: s.kind, cites: s.evidence, why: s.why?.[0] }));
   const security = securityModel({ rules: [], endpoints: [], userSources });
   assert.match(security.developerRule[0].text, /identity comes from cookie actAs, stored with no verification call/);
-  assert.match(security.developerRule[0].text, /ActAsFilter\.java:\d+/);
+  assert.match(security.developerRule[0].text, /LocalCookieFilter\.java:\d+/);
   // A verified source produces no such line.
-  const verified = build(VERIFYING).sources.map((s) => ({ kind: s.kind, cites: s.evidence, why: s.why?.[0] }));
+  const verified = build('VerifiedFilter', VERIFYING).sources.map((s) => ({ kind: s.kind, cites: s.evidence, why: s.why?.[0] }));
   assert.deepEqual(securityModel({ rules: [], endpoints: [], userSources: verified }).developerRule, []);
-  // Nothing here depends on a model type name: the source is the store the filter performs.
-  assert.ok(model.types.get('shop.ActAsFilter'));
-  assert.ok(textOf('src/main/java/shop/ActAsFilter.java').includes('ACTOR.set(user)'));
 });

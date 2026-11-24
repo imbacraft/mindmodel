@@ -3,8 +3,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
+import { declaredId, overrideIds, targetIds, uniqueImplOf } from './model/targets.mjs';
 
-export const CONTRACT = 2;
+export const CONTRACT = 3;
 
 function rows(file) {
   return fs
@@ -60,7 +61,7 @@ export function open(dir) {
       list.push(c);
       target.set(k, list);
     }
-    for (const t of c.targets ?? []) callers.set(t, [...(callers.get(t) ?? []), c]);
+    for (const t of targetIds(c)) callers.set(t, [...(callers.get(t) ?? []), c]);
   }
   // Field reads and writes by field, so "which methods write this holder" is a lookup, not a scan.
   const byField = new Map();
@@ -121,6 +122,16 @@ export function open(dir) {
     grep,
     /** The arguments of one call row, typed: `[{text, kind, ...}]`, in source order. */
     argsOf: (callId) => byCallId.get(callId)?.args ?? [],
+    /** The type arguments a site's receiver is written with: `["shop.Voucher"]` for `Base<Voucher>.publish`. */
+    typeArgsOf: (site) => (typeof site === 'string' ? byCallId.get(site) : site)?.recv?.typeArgs ?? [],
+    /** The method ids one call row reaches: the declaration, then its overrides. */
+    targetsOf: (call) => targetIds(typeof call === 'string' ? byCallId.get(call) : call),
+    /** The overrides of the declaration a call resolved to; empty when Spoon found no open declaration. */
+    overridesOf: (call) => overrideIds(typeof call === 'string' ? byCallId.get(call) : call),
+    /** The declaration of a call, or null when it resolved to nothing. */
+    declaredOf: (call) => declaredId(typeof call === 'string' ? byCallId.get(call) : call),
+    /** True when the declaration has no body and exactly one implementation here — the only case to follow. */
+    uniqueImpl: (call) => uniqueImplOf(typeof call === 'string' ? byCallId.get(call) : call),
     /** Every read and write of one field (`owner#name`), in file and source order. */
     fieldAccessOf: (fieldId) => byField.get(fieldId) ?? [],
     /** The methods that write one field: the same rows, writes only. */
@@ -175,20 +186,38 @@ export function open(dir) {
   ]);
   w('calls.ndjson', [
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:9', file: 'a/Impl.java', line: 2, col: 9, name: 'find', argc: 1,
-      recv: { type: 'a.Port', kind: 'field' }, targets: ['a.Port#find(Long)', 'a.Impl#find(Long)'], origin: 'java',
+      recv: { type: 'a.Port', typeArgs: [], kind: 'field' },
+      targets: [{ id: 'a.Port#find(Long)', kind: 'declared' }, { id: 'a.Impl#find(Long)', kind: 'override' }],
+      uniqueImpl: true, origin: 'java',
       args: [{ text: 'PATH', kind: 'constant', value: '/x', valueKind: 'string', type: 'java.lang.String' }] },
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:25', file: 'a/Impl.java', line: 2, col: 25, name: 'save', argc: 0,
-      recv: { type: null, kind: 'implicit' }, targets: [], origin: 'unresolved', reason: 'no-callee',
-      args: [{ text: 'x', kind: 'unresolved', type: null, reason: 'no-declaration' }] },
+      recv: { type: null, typeArgs: [], kind: 'implicit' }, targets: [], uniqueImpl: false, origin: 'unresolved',
+      reason: 'no-callee', args: [{ text: 'x', kind: 'unresolved', type: null, reason: 'no-declaration' }] },
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:30', file: 'a/Impl.java', line: 2, col: 30, name: 'getPath',
-      via: 'methodRef', argc: 0, recv: { type: 'a.Impl', kind: 'instance' }, targets: ['a.Impl#path()'], origin: 'java', args: [] },
+      via: 'methodRef', argc: 0, recv: { type: 'a.Impl', typeArgs: ['java.lang.String'], kind: 'instance' },
+      targets: [{ id: 'a.Impl#path()', kind: 'declared' }], uniqueImpl: false, origin: 'java', args: [] },
+    // Two overrides of one port: the declaration is a fact, which implementation runs is not.
+    { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:40', file: 'a/Impl.java', line: 2, col: 40, name: 'save', argc: 1,
+      recv: { type: 'a.Port', typeArgs: [], kind: 'field' },
+      targets: [
+        { id: 'a.Port#save(Long)', kind: 'declared' },
+        { id: 'a.Impl#save(Long)', kind: 'override' },
+        { id: 'a.Impl2#save(Long)', kind: 'override' },
+      ],
+      uniqueImpl: false, origin: 'java', args: [] },
   ]);
   w('fields.ndjson', [
-    { method: 'a.Impl#find(Long)', field: 'a.Impl#PATH', static: true, op: 'read', file: 'a/Impl.java', line: 2, col: 9,
+    { method: 'a.Impl#find(Long)', field: 'a.Impl#PATH', static: true, op: 'read', typeArgs: [], file: 'a/Impl.java', line: 2, col: 9,
       value: { text: 'PATH', kind: 'constant', type: 'java.lang.String', value: '/x', valueKind: 'string', field: 'a.Impl#PATH' } },
-    { method: 'a.Impl#find(Long)', field: 'a.Impl#name', static: false, op: 'write', file: 'a/Impl.java', line: 2, col: 20,
+    { method: 'a.Impl#find(Long)', field: 'a.Impl#name', static: false, op: 'write', typeArgs: [], file: 'a/Impl.java', line: 2, col: 20,
       value: { text: 'name', kind: 'param', type: 'java.lang.String', index: 0 } },
-    { method: 'a.Impl#find(Long)', field: null, static: false, op: 'read', file: 'a/Impl.java', line: 2, col: 31,
+    // A field of a generic type, and a write of a static member whose type the dump never declares: the read is typed
+    // and named, and the reason says the declaration is elsewhere.
+    { method: 'a.Impl#find(Long)', field: 'a.Impl#holder', static: false, op: 'write', typeArgs: ['a.Order'],
+      file: 'a/Impl.java', line: 2, col: 26,
+      value: { text: 'Outside.PAID', kind: 'field', type: 'a.Outside', field: 'a.Outside#PAID',
+        reason: 'declaration-outside-dump' } },
+    { method: 'a.Impl#find(Long)', field: null, static: false, op: 'read', typeArgs: [], file: 'a/Impl.java', line: 2, col: 31,
       origin: 'unresolved', reason: 'no-declaring-type',
       value: { text: 'mystery.x', kind: 'unresolved', type: null, reason: 'no-declaration' } },
   ]);
@@ -217,9 +246,26 @@ export function open(dir) {
   assert.equal(d.returnsOf('a.Impl#find(Long)')[1].arms[1].value.kind, 'unresolved');
   assert.deepEqual(d.returnsOf('a.Port#find(Long)'), [], 'a method with no body returns nothing it wrote');
   assert.deepEqual(d.methodRefsIn('a.Impl#find(Long)').map((c) => c.name), ['getPath']);
-  assert.deepEqual(d.callsOf('a.Impl#find(Long)').map((c) => c.name), ['find', 'save'], 'a method reference is not a call');
+  assert.deepEqual(d.callsOf('a.Impl#find(Long)').map((c) => c.name), ['find', 'save', 'save'],
+    'a method reference is not a call; two call sites on one line are two rows');
   assert.deepEqual(d.imports('a/Impl.java').map((i) => i.name), ['java.util.List']);
   assert.equal(d.imports('a/Unknown.java'), null, 'an unreadable header is an unknown, not an empty list');
+  // Contract 3: the receiver's type arguments, the declaration told apart from its overrides, and the value of a field
+  // write typed like an argument.
+  assert.deepEqual(d.typeArgsOf('a.Impl#find(Long)@2:9'), [], 'a receiver with no type arguments says none');
+  assert.deepEqual(d.typeArgsOf('a.Impl#find(Long)@2:30'), ['java.lang.String']);
+  assert.deepEqual(d.targetsOf('a.Impl#find(Long)@2:9'),
+    ['a.Port#find(Long)', 'a.Impl#find(Long)'], 'the declaration first, then its overrides');
+  assert.deepEqual(d.overridesOf('a.Impl#find(Long)@2:9'), ['a.Impl#find(Long)']);
+  assert.equal(d.declaredOf('a.Impl#find(Long)@2:9'), 'a.Port#find(Long)');
+  assert.equal(d.uniqueImpl('a.Impl#find(Long)@2:9'), true, 'one override and no declaration body');
+  assert.equal(d.uniqueImpl('a.Impl#find(Long)@2:40'), false, 'two overrides are not one implementation');
+  assert.deepEqual(d.overridesOf('a.Impl#find(Long)@2:40'), ['a.Impl#save(Long)', 'a.Impl2#save(Long)']);
+  assert.deepEqual(d.targetsOf('a.Impl#find(Long)@2:25'), [], 'a call that resolved to nothing reaches nothing');
+  assert.deepEqual(d.fieldAccessOf('a.Impl#holder').map((f) => f.typeArgs), [['a.Order']], 'a generic field row');
+  assert.deepEqual(d.writersOf('a.Impl#holder')[0].value.kind, 'field', 'a read outside the dump is still typed');
+  assert.equal(d.writersOf('a.Impl#holder')[0].value.field, 'a.Outside#PAID');
+  assert.equal(d.writersOf('a.Impl#holder')[0].value.reason, 'declaration-outside-dump');
   assert.equal(d.grep('impl').length, 2);
   assert.equal(d.membersOf('a.Port').length, 1);
   assert.throws(() => {

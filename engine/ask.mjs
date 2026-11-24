@@ -5,6 +5,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { open } from './dump.mjs';
+import { targetIds } from './model/targets.mjs';
 
 const LIMIT = 40;
 const pos = (p) => (p ? `${p.file}:${p.line}` : '?');
@@ -53,7 +54,7 @@ if (!isMain) {
       const list = (command === 'calls' ? d.callsOf(arg(0)) : d.callersOf(arg(0))).slice(0, LIMIT);
       push(`${list.length} ${command} of ${arg(0)}`);
       for (const c of list)
-        push(`  ${c.file}:${c.line}:${c.col} ${c.name}/${c.argc} recv=${c.recv.type ?? '?'} -> ${c.targets.join(', ') || `- ${c.origin}${c.reason ? ` (${c.reason})` : ''}`}`);
+        push(`  ${c.file}:${c.line}:${c.col} ${c.name}/${c.argc} recv=${c.recv.type ?? '?'} -> ${targetIds(c).join(', ') || `- ${c.origin}${c.reason ? ` (${c.reason})` : ''}`}`);
       break;
     }
     case 'impls': {

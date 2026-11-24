@@ -22,35 +22,13 @@ export const ALLOWLIST = new Map([
   ['engine/scan.mjs:scan', 'reads every .java into javaAll[].text and slices lines out of it (mains, views, sources)'],
   ['engine/syntax/imports.mjs:sourceFacts', 'tree-sitter package and import reader; deleted in Phase 3.5'],
 
-  // Phase 3.3 (boot).
-  ['engine/extract/boot.mjs:deployables', 'main() and @ComponentScan by regex on file text'],
+  // Phase 3.2 (lifecycle) is ported: one lifecycle per (entity, status enum) from the dump's typed arguments,
+  // returns and field accesses. No entry here reads Java text any more.
 
-  // Phase 3.2 (lifecycle): the per-line pass and the helpers that read a method body as text.
-  ['engine/extract/lifecycle.mjs:callArgs', 'splits one source line into its calls'],
-  ['engine/extract/lifecycle.mjs:chosenByMethod', 'switch arms and return statements read from the method lines'],
-  ['engine/extract/lifecycle.mjs:chosenInline', 'a `? :` status choice read from the statement text'],
-  ['engine/extract/lifecycle.mjs:javaFacts', 'splits every file into its lines for the passes below'],
-  ['engine/extract/lifecycle.mjs:lifecycleFacts', 'the per-line status pass over the file lines'],
-  ['engine/extract/lifecycle.mjs:namesItsOwnBody', 'looks for a `{` in the method lines'],
-  ['engine/extract/lifecycle.mjs:returnTypeOf', 'the declaration line, read when the dump has no return type'],
-  ['engine/extract/lifecycle.mjs:setByArgument', "reads the callee's body to see whether it writes the argument"],
-  ['engine/extract/schedules.mjs:scheduleFacts', 'annotations and time windows read from the file lines'],
-  ['engine/extract/text/time.mjs:windowsIn', 'time windows read from the method lines'],
-
-  // Phase 3.1 (identity and context) and 3.4 (Spring/Shiro code rules).
-  ['engine/extract/security.mjs:authSources', 'reads method bodies through textOf to follow a filter to its store'],
-  ['engine/extract/security.mjs:builtValue', "regexes the caller's body for the construction assigned to a name"],
-  ['engine/extract/security.mjs:constantMap', 'scans file text for static final String constants'],
-  ['engine/extract/security.mjs:declaredTypes', "locals' declared types read from the body (the dump has no locals)"],
-  ['engine/extract/security.mjs:identityWarnings', 'reads method bodies through textOf for identity warnings'],
-  ['engine/extract/security.mjs:projectHolderSlot', "reads the holder's body through textOf to find the setter"],
-  ['engine/extract/security.mjs:requestReads', 'cookie and header reads matched against the method body'],
-  ['engine/extract/security.mjs:securitySinks', 'sinks, arguments and set sites read from the body text'],
+  // Phase 3.1 (identity and context) is done: security's identity pass, its tenant sources and tenancy's store
+  // detection read the dump through engine/model/query.mjs. Phase 3.4 still owns the two config rules below.
   ['engine/extract/security.mjs:shiroCodeRules', "Shiro path definitions read from the config class's text"],
   ['engine/extract/security.mjs:springChains', "the HttpSecurity DSL read from the config class's text"],
-  ['engine/extract/security.mjs:tenantSources', 'reads bodies through textOf to find where the tenant comes from'],
-  ['engine/extract/security.mjs:valueReaches', 'follows an assignment through the body text'],
-  ['engine/extract/security.mjs:verifiesIn', "reads the bodies of the entry method's reach"],
 
   // The system scan (engine/system.mjs) reads the .java of every service; it is not in the doc's table.
   ['engine/system.mjs:channelName', 'resolves a channel expression against the class text'],
@@ -63,11 +41,13 @@ export const ALLOWLIST = new Map([
 ]);
 
 // The doc's table (docs/one-engine.md, Phase 0 step 2) is not the whole list. Found here and missing there:
-// `engine/system.mjs` in full (7 functions: the system scan reads every service's .java),
-// `schedules.mjs:scheduleFacts`, `text/time.mjs:windowsIn`, `security.mjs:builtValue` and `constantMap`,
-// `lifecycle.mjs:lifecycleFacts`. Listed there but not offenders: `tenancy.mjs` store detection (dump calls and
-// receiver types, no source text) and `lifecycle.mjs:outsideEnums` (only `f.ix`, the tree-sitter index);
+// `engine/system.mjs` in full (7 functions: the system scan reads every service's .java). Listed there but not
+// offenders: `tenancy.mjs` store detection and security's identity pass (`authSources`, `requestReads`,
+// `securitySinks`, `tenantSources`, `verifiesIn`, … use dump rows and query primitives only, no source text);
 // `boot.mjs:124` is `eeBoot` reading a pom.xml profile, not Java.
+// Ported and gone from the table: `boot.mjs:deployables` (the dump's `isMain` and annotation rows),
+// `schedules.mjs:scheduleFacts` (the model's annotations and calls), `text/time.mjs:windowsIn` (call rows) and
+// `lifecycle.mjs` (the dump's typed arguments, returns and field accesses).
 
 const TEXT_OPS = 'matchAll|match|split|replace|trim|includes|indexOf|slice|test|exec|length';
 
