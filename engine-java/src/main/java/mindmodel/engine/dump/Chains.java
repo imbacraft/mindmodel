@@ -1,5 +1,8 @@
 package mindmodel.engine.dump;
 
+import java.util.Map;
+import java.util.Set;
+
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtTypeAccess;
@@ -8,15 +11,23 @@ import spoon.reflect.reference.CtTypeReference;
 
 /**
  * The receiver type of an expression, chains included: `jmsContext.createProducer().send(...)` needs the return type of a
- * library call to know what `send` is called on. A project declaration answers first; the library table answers second;
+ * library call to know what `send` is called on, and `booking.toBuilder().guestName(x).build()` needs the same for the
+ * members Lombok writes. A project declaration answers first, the Lombok synthesis second, the library table third;
  * anything else is unknown and stays unknown.
  */
 final class Chains {
 
-    private Chains() {
+    /** `owner#name/argc -> return type` for generated members; `owner#name` is the arity-blind fallback. */
+    private final Map<String, String> generated;
+    /** Builder types the synthesis invents (`Foo.Builder`): not declared, and not a library either. */
+    private final Set<String> builders;
+
+    Chains(Map<String, String> generated, Set<String> builders) {
+        this.generated = generated;
+        this.builders = builders;
     }
 
-    static String receiver(CtExpression<?> expression) {
+    String receiver(CtExpression<?> expression) {
         if (expression == null) return null;
         if (expression instanceof CtInvocation<?> call) return result(call);
         if (expression instanceof CtTypeAccess<?> access) return Names.qualified(access.getAccessedType());
@@ -29,8 +40,13 @@ final class Chains {
         return type == null ? null : LibraryTypes.raw(Names.qualified(type));
     }
 
-    /** The raw type an invocation evaluates to, or null when neither the declaration nor the table can say. */
-    static String result(CtInvocation<?> call) {
+    /** A builder type the synthesis invented, rather than something the source declares. */
+    boolean isBuilder(String fqn) {
+        return fqn != null && builders.contains(fqn);
+    }
+
+    /** The raw type an invocation evaluates to, or null when no source of truth can say. */
+    String result(CtInvocation<?> call) {
         var ref = call.getExecutable();
         var declaration = ref == null ? null : ref.getDeclaration();
         if (declaration instanceof CtMethod<?> method && method.getDeclaringType() != null)
@@ -38,6 +54,11 @@ final class Chains {
         String owner = ref == null || ref.getDeclaringType() == null ? null : Names.qualified(ref.getDeclaringType());
         if (owner == null && ref != null) owner = receiver(call.getTarget());
         if (owner == null || ref == null) return null;
-        return LibraryTypes.returnType(owner, ref.getSimpleName(), call.getArguments().size());
+        int argc = call.getArguments().size();
+        String fromLibrary = LibraryTypes.returnType(owner, ref.getSimpleName(), argc);
+        if (fromLibrary != null) return fromLibrary;
+        String fromLombok = generated.get(owner + "#" + ref.getSimpleName() + "/" + argc);
+        if (fromLombok == null) fromLombok = generated.get(owner + "#" + ref.getSimpleName());
+        return LibraryTypes.raw(fromLombok);
     }
 }

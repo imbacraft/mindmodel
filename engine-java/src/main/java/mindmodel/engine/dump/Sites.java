@@ -114,15 +114,26 @@ public final class Sites {
     public static void write(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth, Path root,
             Path out) throws IOException {
         Index index = index(types, synth);
+        // What Lombok writes, in the two shapes a chain needs: a member's return type, and the builder types it invents.
+        java.util.Map<String, String> generatedTypes = new java.util.HashMap<>();
+        java.util.Set<String> builders = new java.util.HashSet<>();
+        for (var entry : synth.entrySet())
+            for (Lombok.Item item : entry.getValue()) {
+                String type = item.typeFqn() != null ? item.typeFqn() : item.type();
+                if ("method".equals(item.kind())) generatedTypes.put(item.owner() + "#" + item.name() + "/" + item.params().size(), type);
+                else if ("field".equals(item.kind())) generatedTypes.put(item.owner() + "#" + item.name(), type);
+                if (type != null && type.endsWith(".Builder")) builders.add(type);
+            }
+        Chains chains = new Chains(generatedTypes, builders);
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> type : types) {
                 for (CtExecutable<?> executable : executables(type))
-                    writeCalls(w, type, executable, methodIdOf(type, executable), index, root);
+                    writeCalls(w, type, executable, methodIdOf(type, executable), index, root, chains);
                 // A method of an anonymous class is body work of the member that writes it, filed under the type.
                 for (spoon.reflect.declaration.CtTypeMember member : type.getTypeMembers())
                     if (member instanceof CtExecutable<?> body)
                         for (CtMethod<?> inner : Anonymous.methods(body))
-                            writeCalls(w, type, inner, Anonymous.id(type, inner, root), index, root);
+                            writeCalls(w, type, inner, Anonymous.id(type, inner, root), index, root, chains);
             }
         }
     }
@@ -141,7 +152,7 @@ public final class Sites {
     }
 
     private static void row(JsonGenerator g, CtType<?> type, CtExecutable<?> owner, String methodId,
-            CtInvocation<?> call, Positions.Pos pos, Index index, Path root) throws IOException {
+            CtInvocation<?> call, Positions.Pos pos, Index index, Path root, Chains chains) throws IOException {
         CtExecutableReference<?> ref = call.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
         int argc = call.getArguments().size();
@@ -150,7 +161,7 @@ public final class Sites {
         String fieldType = targetText != null && targetText.matches("[A-Za-z_$][\\w$]*")
                 ? index.generatedFields().get(Names.qualified(type) + "#" + targetText) : null;
         // The receiver, chains included: a library call's return type is the only way to type what follows it.
-        String receiverName = call.getTarget() == null ? null : Chains.receiver(call.getTarget());
+        String receiverName = call.getTarget() == null ? null : chains.receiver(call.getTarget());
         if (receiverName == null && fieldType == null && ref != null && ref.getDeclaringType() != null)
             receiverName = Names.qualified(ref.getDeclaringType());
         // A call written without a receiver resolves against the class it is written in (or what that class inherits).
@@ -200,7 +211,9 @@ public final class Sites {
         g.writeEndArray();
 
         boolean receiverDeclared = receiverName != null && index.declared().contains(receiverName);
-        boolean invented = receiverName != null && fieldType == null && !receiverDeclared && samePackage(receiverName, type);
+        boolean builderReceiver = chains.isBuilder(receiverName);
+        boolean invented = receiverName != null && fieldType == null && !receiverDeclared && !builderReceiver
+                && samePackage(receiverName, type);
         // `arity` is a member lookup by name and count inside a project type, not a compiler answer: it says so.
         boolean compiler = ref != null && ref.getDeclaration() instanceof CtMethod<?> declaredMethod
                 && declaredMethod.getDeclaringType() != null
@@ -211,11 +224,13 @@ public final class Sites {
                 && (declaredCall.getDeclaringType() == null
                         || !index.declared().contains(Names.qualified(declaredCall.getDeclaringType())));
         g.writeStringField("origin", !targets.isEmpty() ? generated ? "lombok" : compiler ? "java" : "arity"
+                : builderReceiver ? "lombok"
                 : invented ? "unresolved"
                 : generatedField || libraryTarget ? "library"
                 : receiverName == null || receiverDeclared ? "unresolved" : "library");
         if (targets.isEmpty())
-            g.writeStringField("reason", invented ? "unresolved-name"
+            g.writeStringField("reason", builderReceiver ? "lombok-builder"
+                    : invented ? "unresolved-name"
                     : receiverName == null ? "no-callee"
                     : receiverDeclared ? "no-declaration-here" : "library-signature");
     }
@@ -238,14 +253,14 @@ public final class Sites {
     }
 
     private static void writeCalls(Ndjson w, CtType<?> type, CtExecutable<?> executable, String methodId, Index index,
-            Path root) throws IOException {
+            Path root, Chains chains) throws IOException {
         for (CtInvocation<?> call : executable.getElements(
                 new spoon.reflect.visitor.filter.TypeFilter<>(CtInvocation.class))) {
             // Spoon inserts an implicit super() with no source position; it is not a call anyone wrote.
             Positions.Pos pos = Positions.of(call, root);
             if (pos == null) continue;
             try {
-                w.row(g -> row(g, type, executable, methodId, call, pos, index, root));
+                w.row(g -> row(g, type, executable, methodId, call, pos, index, root, chains));
             } catch (RuntimeException e) {
                 // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
                 w.row(g -> errorRow(g, type, executable, call, pos, e));

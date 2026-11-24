@@ -176,11 +176,13 @@
   "line": 164,
   "call": "alertIds",
   "recv": "call",
-  "recvFqn": null,
+  "recvFqn": "org.apache.hertzbeat.ai.gateway.contract.AgentIncidentScope",
   "recvHow": "chain",
-  "how": "unresolved",
-  "targets": [],
-  "note": "target.getIncident() is a library call: without a classpath the chain has no receiver, so the site stays unresolved (documented gap)"
+  "how": "direct",
+  "targets": [
+   "org.apache.hertzbeat.ai.gateway.contract.AgentIncidentScope#alertIds()"
+  ],
+  "note": "the chain now types target.getIncident() and finds the record accessor; the earlier note recorded the gap"
  },
  {
   "file": "hertzbeat-ai-gateway/src/main/java/org/apache/hertzbeat/ai/gateway/application/AgentLogTargetCanonicalizationAdapter.java",

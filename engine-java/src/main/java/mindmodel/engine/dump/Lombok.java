@@ -29,8 +29,8 @@ public final class Lombok {
     }
 
     /** One generated member, written exactly like a declared one. */
-    public record Item(String owner, String kind, String name, String id, String type, List<String> params,
-            Set<ModifierKind> modifiers, Positions.Pos pos, String from) {
+    public record Item(String owner, String kind, String name, String id, String type, String typeFqn,
+            List<String> params, Set<ModifierKind> modifiers, Positions.Pos pos, String from) {
     }
 
     private static final Set<String> LOGGERS = Set.of("Slf4j", "Log4j2", "Log", "CommonsLog", "JBossLog", "XSlf4j");
@@ -135,16 +135,47 @@ public final class Lombok {
     private static void item(String owner, String kind, String name, String type, List<String> params,
             Set<ModifierKind> modifiers, CtElement posOf, String from, Path root, List<Item> items) {
         String id = owner + "#" + name + "(" + String.join(",", params) + ")";
-        items.add(new Item(owner, kind, name, id, type, params, modifiers, Positions.of(posOf, root), from));
+        items.add(new Item(owner, kind, name, id, type, qualified(posOf, type), params, modifiers,
+                Positions.of(posOf, root), from));
     }
 
-    /** True when the element carries lombok's annotation of that simple name (unresolved counts: noClasspath). */
+    /**
+     * True when the element carries lombok's annotation of that simple name. Without a classpath Spoon cannot resolve
+     * an annotation imported through a wildcard (`import lombok.*`), and gives it the annotated type's own package;
+     * the file's imports are then the evidence, and they are as good as the annotation's own name.
+     */
+    /** The generated member's type as the compiler names it, for chain typing; the written text stays `type`. */
+    private static String qualified(CtElement element, String written) {
+        if (written == null || written.isEmpty()) return null;
+        // Already the compiler's spelling: a builder type, the owner it builds, a fully qualified type.
+        if (written.indexOf('.') >= 0) return written;
+        // A getter's type is the field's type, written as the author wrote it here.
+        if (element instanceof CtField<?> field && field.getType() != null
+                && written.equals(Names.typeText(field.getType())))
+            return field.getType().getQualifiedName();
+        // Anything else (`String`, `int`) is left as written; the reader resolves java.lang and drops primitives.
+        return written;
+    }
+
     private static boolean has(CtElement element, String simpleName) {
         for (CtAnnotation<?> a : element.getAnnotations()) {
             if (!a.getAnnotationType().getSimpleName().equals(simpleName)) continue;
             String pkg = a.getAnnotationType().getPackage() == null ? ""
                     : a.getAnnotationType().getPackage().getQualifiedName();
             if (pkg.isEmpty() || pkg.startsWith("lombok")) return true;
+            if (importsLombok(element, simpleName)) return true;
+        }
+        return false;
+    }
+
+    /** `import lombok.Data;` or `import lombok.*;` in the file that declares the element. */
+    private static boolean importsLombok(CtElement element, String simpleName) {
+        var position = element.getPosition();
+        if (position == null || position.getCompilationUnit() == null) return false;
+        for (var imported : position.getCompilationUnit().getImports()) {
+            // A wildcard import (`lombok.*`) carries no reference at all in no-classpath mode; its text does.
+            String text = imported.toString().replace("import ", "").replace("static ", "").replace(";", "").trim();
+            if (text.equals("lombok.*") || text.equals("lombok." + simpleName)) return true;
         }
         return false;
     }

@@ -211,10 +211,14 @@ function receiverOf(row) {
 // or several, `external` for a library, `unresolved` when the engine could not answer. The vocabulary the facts speak.
 function howOf(row) {
   const targets = row.targets ?? [];
-  if (row.origin === 'java' || row.origin === 'lombok')
+  // `arity` is a member lookup that found exactly one member: it names a target just as the compiler does.
+  if (row.origin === 'java' || row.origin === 'lombok' || row.origin === 'arity') {
+    // A generated member (Lombok's builder step) has a receiver but no declaration to name: the chain typed it.
+    if (!targets.length) return row.reason === 'lombok-builder' ? 'generated' : 'unresolved';
     return targets.length > 1 || (targets.length === 1 && targets[0].split('#')[0] !== row.recv?.type)
       ? 'impl'
       : 'direct';
+  }
   return row.origin === 'library' ? 'external' : 'unresolved';
 }
 
