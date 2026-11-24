@@ -12,19 +12,7 @@
 
 **P1a. No filler.** Every item touches the core of the app. **Budgets are ceilings, never targets**: never add an item to reach a count. A weak or rare item is worse than a missing one: it teaches the reader the map holds noise.
 
-**P2. One idea per section.** Each section answers one question. If two sections say the same thing, one is wrong.
-
-| Section | The one question it answers |
-|---|---|
-| Overview | What is it for, what is it deliberately not, where does it start? |
-| People & outside systems | Who does it serve, ranked, and what outside systems does it call? |
-| Core concepts | Which few things is everything else about, and how do they relate? |
-| Regions | How is the code laid out, and where does each capability live? |
-| State & source of truth | Where does each concept's truth live, and who may change it? |
-| How a request travels | What happens to *every* API call, whatever the feature? |
-| What runs on its own | What happens with no request at all? |
-| Rules | What must you never get wrong? |
-| Stories | How do the main flows run, end to end? |
+**P2. One idea per section.** Each section answers one question, stated by its `**Goal:**` line in `rules/sections.md`. If two sections say the same thing, one is wrong.
 
 **P3. Every claim is traced to code, once per claim block.** A block (rule, region part, concept card, story step) carries one or two citations: `path`, `path:line`, `path:start-end`, optionally `#symbol`, checked against the cited lines. Never one per sentence; a block stating unrelated things cites each part once. A bare `#name` over same-named methods is ambiguous (the validator lists the candidates): cite by range or arity (`#save/2`). An untraceable claim is dropped, or marked *inferred* in stories only.
 
@@ -81,7 +69,7 @@ One heading per section. Read **only** the section you are drafting, when you st
 Run this on the whole draft before rendering. Every "no" is fixed or explicitly justified.
 
 **Distinctness**
-- [ ] Each section answers only its own question (P2 table).
+- [ ] Each section answers only its own question (P2; the Goal line of its rule).
 - [ ] The core sentence and the region sentence carry different ideas: how things relate vs. how code is laid out.
 - [ ] No region card restates a concept card's lifecycle.
 - [ ] The state section names who writes each concept; region cards don't repeat it.
