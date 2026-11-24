@@ -1,6 +1,6 @@
 # mindmodel: system generation rules (draft)
 
-**What this is:** the instructions for producing a **system mindmodel**: one page with what a developer must carry in their head to work in a system of many services. The single-app rules (`generation-rules.md`) still apply inside each service; this page is about what happens **between** them.
+**What this is:** the instructions for producing a **system mindmodel**: one page with what a developer must carry in their head to work in a system of many services. The single-app rules (`core.md` principles; per-section rules in `sections.md`) still apply inside each service; this page is about what happens **between** them.
 **Status:** 0.2. Examples use an invented order platform ("Shopline"); they illustrate, they are not templates.
 
 ---

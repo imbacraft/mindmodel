@@ -12,7 +12,7 @@ import { budgetLine } from '../engine/scan.mjs';
 const REPO = path.resolve(import.meta.dirname, '..');
 const schema = JSON.parse(fs.readFileSync(path.join(REPO, 'schema', 'mindmodel.schema.json'), 'utf8'));
 const validateSource = fs.readFileSync(path.join(REPO, 'engine', 'validate.mjs'), 'utf8');
-const rules = fs.readFileSync(path.join(REPO, 'rules', 'generation-rules.md'), 'utf8');
+const rules = fs.readFileSync(path.join(REPO, 'rules', 'core.md'), 'utf8');
 
 const budget = (name) => +new RegExp(`${name}: (\\d+)`).exec(validateSource)?.[1];
 // The tier boundaries, in one place: 50/150/400 endpoints and the four ceilings.
@@ -87,10 +87,27 @@ test('the rules’ tier table and the validator agree, cell by cell', () => {
   }
 });
 
-test('P8 states the tiers the code enforces', () => {
-  const m = /≤ 50 → ([\d,]+) words · ≤ 150 → ([\d,]+) · ≤ 400 → ([\d,]+) · > 400 → ([\d,]+)/.exec(rules);
-  assert.ok(m, 'P8 must state the four tiers in the validator’s form');
-  assert.deepStrictEqual(m.slice(1).map((x) => +x.replace(/,/g, '')), [2200, 2800, 3600, 4200]);
+test('P8 points at Part 7, which states the tiers the code enforces — once', () => {
+  // The numbers live in the Part 7 table alone: P8 names the tiers and points there, so the two cannot drift apart.
+  const p8 = /\*\*P8\.[^\n]*/.exec(rules)?.[0];
+  assert.ok(p8, 'the rules must carry P8');
+  assert.match(p8, /Part 7/, 'P8 must point at Part 7 for the numbers');
+  assert.doesNotMatch(p8, /2,?200/, 'P8 must not restate the ceilings: Part 7 holds them');
+  // The endpoint bands, from the one table that states them.
+  const bands = /\| Section \| Tier 1 \(≤ (\d+) endpoints\) \| Tier 2 \(≤ (\d+)\) \| Tier 3 \(≤ (\d+)\) \| Tier 4 \(> (\d+)\) \|/
+    .exec(rules);
+  assert.ok(bands, 'the Part 7 table must state the endpoint bands');
+  assert.deepStrictEqual(bands.slice(1).map(Number), [50, 150, 400, 400]);
+  const coreRow = part7Table().find((r) => r[0] === 'core');
+  assert.deepStrictEqual(coreRow.slice(1, 5).map((c) => +c), [2200, 2800, 3600, 4200]);
+});
+
+test('the always-read core keeps its own budget: ≤ 180 lines and ≤ 5,000 tokens', () => {
+  // The split exists because this file is read on every writer call: growing it again is a cost regression.
+  const lines = rules.split('\n').length - (rules.endsWith('\n') ? 1 : 0);
+  assert.ok(lines <= 180, `rules/core.md is ${lines} lines: the always-read file must stay ≤ 180`);
+  assert.ok(rules.length / 4 <= 5000, `rules/core.md is ~${Math.round(rules.length / 4)} tokens: must stay ≤ 5,000`);
+  assert.ok(fs.existsSync(path.join(REPO, 'rules', 'sections.md')), 'the on-demand section rules must exist');
 });
 
 test('the digest prints the tier, the core ceiling and both flat caps', () => {

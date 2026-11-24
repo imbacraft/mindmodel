@@ -72,7 +72,7 @@ v1 is tuned for **Java backends on Spring or Jakarta EE** (JAX-RS, EJB, CDI, JMS
 ## How it works
 1. **Pre-flight** (`engine/preflight.mjs`): checks the code is a clean, current state. Uncommitted changes, being behind the remote, a detached HEAD or a non-default branch make it ask you to confirm before continuing.
 2. **Scan** (`engine/scan.mjs`, no AI): collects the mechanical facts (entities and their relations, endpoints, the frontend↔backend API join, security, scheduled/async work, external SDKs, docs, git history) and computes what used to need reading: how to boot the app, transaction seams, every place each status is set, schedules in plain words, and flow skeletons per entry point. Everything goes into `mindmodel/.work/facts.json` plus a compact digest of fixed size, whatever the size of the app.
-3. **Write** (one Claude subagent): follows [`rules/generation-rules.md`](rules/generation-rules.md) to choose what is essential, reading only the code that needs judgment.
+3. **Write** (one Claude subagent): follows [`rules/core.md`](rules/core.md) for the principles, process and budgets, and [`rules/sections.md`](rules/sections.md) one section at a time, to choose what is essential, reading only the code that needs judgment.
 4. **Validate** (`engine/validate.mjs`): schema, size budgets, and every citation (files, line ranges, and `#symbol` checks); fills in exact line ranges and computes the activity badges.
 5. **Render** (`engine/render.mjs`): a fixed template turns `mindmodel.json` into one self-contained HTML file.
 

@@ -11,7 +11,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 You produce `<folder>/mindmodel-system/system-map.json`: what a developer must carry in their head to work in a system of many services. Your task message gives the folder, the plugin root and the focus services, if any.
 
 ## Inputs, in this order
-1. **The system rules** (`<plugin>/rules/system-rules.md`). Read them fully once; they are the authority. The single-app principles they reference are in `<plugin>/rules/generation-rules.md` Part 1 (read only Part 1).
+1. **The system rules** (`<plugin>/rules/system-rules.md`). Read them fully once; they are the authority. The single-app principles they reference are in `<plugin>/rules/core.md` Part 1 (read that file; the per-section rules in `<plugin>/rules/sections.md` are not needed here).
 2. **The JSON shape:** run `node <plugin>/engine/shape.mjs system`. Don't read the schema file.
 3. **The system digest** (`<folder>/mindmodel-system/.work/system.md`): services, messaging channels (producers → consumers), REST calls between services, dependence. **These edges are proven; build on them.**
 4. **Per-service digests** (`<folder>/mindmodel-system/.work/services/<name>.md`): entities, lifecycles, seams and flow skeletons inside each service. Paths in them are relative to that service's directory (listed in system.md): **prefix the service directory** when you cite.

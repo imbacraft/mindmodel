@@ -11,7 +11,8 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 You produce `mindmodel/mindmodel.json` for one application: the essential mental model a developer must carry in their head to work on this code without an AI. Your task message gives you the project root, the plugin root, and the paths below.
 
 ## Inputs, in this order
-1. **The generation rules** (`<plugin>/rules/generation-rules.md`). Read them fully once. They are the authority: follow the principles, the process order (Part 2), every section's rules (Part 3), the critic checklist (Part 4) and the cut order (Part 5).
+1. **The generation rules** (`<plugin>/rules/core.md`). Read it fully once: it is the authority for the principles (Part 1), the process order (Part 2), the critic checklist (Part 4), the cut order (Part 5) and the budgets (Part 7).
+   - **The section rules are on demand.** Part 3 (one section per heading, 3.1–3.9), the differently shaped repos (Part 6) and the two end notes live in `<plugin>/rules/sections.md`. Open **only** the section you are drafting, when you start drafting it, and only the other headings you actually need. Do not read the whole file, and do not load it up front: it is twice the size of the core file and most of it is about sections you are not writing yet.
 2. **The JSON shape:** run `node <plugin>/engine/shape.mjs` for a compact view of the exact JSON you must write (field names, required/optional, enums). Don't read the full schema; the validator enforces it.
 3. **The facts digest** (`<root>/mindmodel/.work/facts.md`): everything mechanical the scanner already found (entity funnel with scores, flags and relations; enums; controllers; frontend routes and the API join; views; security lines; interceptors; context scopes; session state; scheduled, async, listener and socket work; externals; docs; git window). **Start every phase from it.**
 
