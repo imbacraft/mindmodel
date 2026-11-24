@@ -90,9 +90,13 @@ public final class Anns {
     }
 
     @SuppressWarnings("unchecked")
-    private static void writeRaw(JsonGenerator g, Object value) throws IOException {
+    static void writeRaw(JsonGenerator g, Object value) throws IOException {
         if (value == null) {
             g.writeNull();
+        } else if (value instanceof Values.Value folded) {
+            // A nested value (an annotation's member, an array element) is the same `{kind, value}` shape, never a
+            // record's toString: the dump writes data, and a reader may rely on the shape.
+            writeValue(g, folded);
         } else if (value instanceof String s) {
             g.writeString(s);
         } else if (value instanceof Boolean b) {
@@ -110,13 +114,7 @@ public final class Anns {
             g.writeStartObject();
             for (Map.Entry<String, Object> e : ((Map<String, Object>) map).entrySet()) {
                 g.writeFieldName(e.getKey());
-                if (e.getValue() instanceof Map<?, ?> nested && nested.get("kind") != null) {
-                    g.writeStartObject();
-                    g.writeStringField("kind", String.valueOf(nested.get("kind")));
-                    g.writeFieldName("value");
-                    writeRaw(g, nested.get("value"));
-                    g.writeEndObject();
-                } else writeRaw(g, e.getValue());
+                writeRaw(g, e.getValue());
             }
             g.writeEndObject();
         } else {

@@ -6,8 +6,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
+import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtExecutable;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
@@ -15,9 +17,14 @@ import spoon.reflect.reference.CtExecutableReference;
 import spoon.reflect.reference.CtTypeReference;
 
 /**
- * calls.ndjson: every call site inside a dumped type's body, with the receiver's static type and the declaration it
- * resolves to. A target is only written when the declaration is in this checkout; a library call is named as such,
- * never guessed. Anonymous and local class bodies are inside their enclosing method's span, so their calls belong to it.
+ * calls.ndjson: every call site and method reference inside a dumped type's body, with the receiver's static type and
+ * the declaration it resolves to. A target is only written when the declaration is in this checkout; a library call is
+ * named as such, never guessed. Anonymous and local class bodies are inside their enclosing method's span, so their
+ * calls belong to it.
+ *
+ * Each row carries an {@code id}: an argument that is a call names that row, so the argument graph is a lookup.
+ * {@code inLambda} marks a site inside a lambda (it may run later, or never); {@code via: methodRef} marks a method
+ * reference, whose {@code argc} is the referenced method's parameter count.
  */
 public final class Sites {
 
@@ -123,8 +130,12 @@ public final class Sites {
         return new Index(declared, subtypes, supertypes, methods, generated, generatedFields, arity);
     }
 
-    public static void write(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth, Path root,
-            Path out) throws IOException {
+    /**
+     * Writes calls.ndjson and hands the rest of each body to the sections that read it: the returns to the member rows,
+     * the field accesses to fields.ndjson. One walk per body feeds all three.
+     */
+    static Written write(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth, Path root,
+            Path out, CallIds ids, Refs refs) throws IOException {
         Index index = index(types, synth);
         // What Lombok writes, in the two shapes a chain needs: a member's return type, and the builder types it invents.
         java.util.Map<String, String> generatedTypes = new java.util.HashMap<>();
@@ -145,16 +156,62 @@ public final class Sites {
                     generatedTypes.putIfAbsent(entry.getKey() + "#" + named.getKey(), named.getValue().get(0));
         }
         Chains chains = new Chains(generatedTypes, builders);
+        java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns = new java.util.IdentityHashMap<>();
+        List<FieldAccesses.Row> fields = FieldAccesses.rows();
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> type : types) {
                 for (CtExecutable<?> executable : executables(type))
-                    writeCalls(w, type, executable, methodIdOf(type, executable), index, root, chains);
+                    writeBody(w, type, executable, methodIdOf(type, executable), root, index, chains, ids, refs,
+                            returns, fields);
                 // A method of an anonymous class is body work of the member that writes it, filed under the type.
                 for (spoon.reflect.declaration.CtTypeMember member : type.getTypeMembers())
                     if (member instanceof CtExecutable<?> body)
                         for (CtMethod<?> inner : Anonymous.methods(body))
-                            writeCalls(w, type, inner, Anonymous.id(type, inner, root), index, root, chains);
+                            writeBody(w, type, inner, Anonymous.id(type, inner, root), root, index, chains, ids, refs,
+                                    returns, fields);
             }
+        }
+        return new Written(returns, fields);
+    }
+
+    /** What one dump knows beyond its sections: each body's returns, and every field read and write. */
+    record Written(java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccesses.Row> fields) {
+    }
+
+    /** A site with the position it was read at, so the position is computed once. */
+    private record Site(CtElement element, Positions.Pos pos) {
+    }
+
+    private static void writeBody(Ndjson w, CtType<?> type, CtExecutable<?> executable, String methodId, Path root,
+            Index index, Chains chains, CallIds ids, Refs refs,
+            java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccesses.Row> fields)
+            throws IOException {
+        Walk.Body body = Walk.scan(executable);
+        // The body's own writes first: a returned local can still name the value it was assigned.
+        refs.scope(body.writes());
+        // Ids for the whole body before its rows: a row's argument may name a call written after it.
+        List<Site> sites = new ArrayList<>();
+        for (CtElement element : body.sites()) {
+            // Spoon inserts an implicit super() with no source position; it is not a call anyone wrote.
+            Positions.Pos pos = Positions.of(element, root);
+            if (pos == null) continue;
+            ids.assign(element, methodId, pos);
+            sites.add(new Site(element, pos));
+        }
+        for (Site site : sites) writeSite(w, type, site.element(), site.pos(), methodId, index, chains, ids, refs);
+        returns.put(executable, Returns.plan(executable, body, refs));
+        FieldAccesses.collect(fields, body, methodId, root, refs);
+    }
+
+    private static void writeSite(Ndjson w, CtType<?> type, CtElement site, Positions.Pos pos, String methodId,
+            Index index, Chains chains, CallIds ids, Refs refs) throws IOException {
+        try {
+            if (site instanceof CtInvocation<?> call) w.row(g -> row(g, type, methodId, call, pos, index, chains, ids, refs));
+            else if (site instanceof CtExecutableReferenceExpression<?, ?> ref)
+                w.row(g -> methodRefRow(g, type, methodId, ref, pos, index, chains, ids));
+        } catch (RuntimeException e) {
+            // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
+            w.row(g -> errorRow(g, methodId, site, pos, e));
         }
     }
 
@@ -163,7 +220,7 @@ public final class Sites {
         return owner.isEnum() && ("values".equals(name) || "valueOf".equals(name));
     }
 
-    private static List<CtExecutable<?>> executables(CtType<?> type) {
+    static List<CtExecutable<?>> executables(CtType<?> type) {
         List<CtExecutable<?>> out = new ArrayList<>();
         for (var member : type.getTypeMembers())
             if (member instanceof spoon.reflect.declaration.CtConstructor<?> ctor) out.add(ctor);
@@ -171,12 +228,12 @@ public final class Sites {
         return out;
     }
 
-    private static void row(JsonGenerator g, CtType<?> type, CtExecutable<?> owner, String methodId,
-            CtInvocation<?> call, Positions.Pos pos, Index index, Path root, Chains chains) throws IOException {
+    private static void row(JsonGenerator g, CtType<?> type, String methodId, CtInvocation<?> call, Positions.Pos pos,
+            Index index, Chains chains, CallIds ids, Refs refs) throws IOException {
         CtExecutableReference<?> ref = call.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
         int argc = call.getArguments().size();
-        String targetText = safeText(call.getTarget());
+        String targetText = Refs.textOf(call.getTarget());
         // Lombok's `log` is a field nobody declared: the target is a bare name, and the synthesis knows its type.
         String fieldType = targetText != null && targetText.matches("[A-Za-z_$][\\w$]*")
                 ? index.generatedFields().get(Names.qualified(type) + "#" + targetText) : null;
@@ -205,32 +262,33 @@ public final class Sites {
         }
 
         g.writeStringField("method", methodId);
-        g.writeStringField("file", pos == null ? "" : pos.file());
-        g.writeNumberField("line", pos == null ? 0 : pos.line());
-        g.writeNumberField("col", pos == null ? 0 : pos.col());
+        g.writeStringField("id", ids.id(call));
+        g.writeStringField("file", pos.file());
+        g.writeNumberField("line", pos.line());
+        g.writeNumberField("col", pos.col());
         g.writeStringField("name", name);
         g.writeNumberField("argc", argc);
         g.writeObjectFieldStart("recv");
         if (receiverName == null) g.writeNullField("type");
         else g.writeStringField("type", receiverName);
         g.writeStringField("kind", kind(call));
-        g.writeStringField("how", how(call));
+        g.writeStringField("how", how(call.getTarget()));
         // The receiver as written (`cargoRepository`, `this.x`, `a.b()`), which is how a reader names the site.
-        String wrote = targetText == null ? null : targetText.length() > 80 ? targetText.substring(0, 80) : targetText;
-        if (wrote == null) g.writeNullField("text");
-        else g.writeStringField("text", wrote);
+        if (targetText == null) g.writeNullField("text");
+        else g.writeStringField("text", targetText);
         g.writeEndObject();
         g.writeArrayFieldStart("targets");
         for (String target : targets) g.writeString(target);
         g.writeEndArray();
-        // The arguments as written (first two, shortened): a fact quotes what a call was given, not what it returns.
+        // Every argument, as data: `text` is for display, `kind` and its fields are the fact.
         g.writeArrayFieldStart("args");
-        java.util.List<CtExpression<?>> arguments = call.getArguments();
-        for (int i = 0; i < Math.min(2, arguments.size()); i++) {
-            String text = safeText(arguments.get(i));
-            g.writeString(text == null ? "" : text.length() > 80 ? text.substring(0, 80) : text);
+        for (CtExpression<?> argument : call.getArguments()) {
+            g.writeStartObject();
+            Refs.write(g, refs.of(argument));
+            g.writeEndObject();
         }
         g.writeEndArray();
+        if (call.getParent(spoon.reflect.code.CtLambda.class) != null) g.writeBooleanField("inLambda", true);
 
         boolean receiverDeclared = receiverName != null && index.declared().contains(receiverName);
         boolean builderReceiver = chains.isBuilder(receiverName);
@@ -257,6 +315,54 @@ public final class Sites {
                     : receiverDeclared ? "no-declaration-here" : "library-signature");
     }
 
+    /**
+     * A method reference (`Cookie::getValue`, `cookie::getValue`) as a call row: the same receiver type and target as a
+     * call would have, with `via: methodRef` and the referenced method's arity. It has no arguments of its own.
+     */
+    private static void methodRefRow(JsonGenerator g, CtType<?> type, String methodId,
+            CtExecutableReferenceExpression<?, ?> expression, Positions.Pos pos, Index index, Chains chains,
+            CallIds ids) throws IOException {
+        CtExecutableReference<?> ref = expression.getExecutable();
+        String name = ref == null ? "?" : ref.getSimpleName();
+        var declaration = ref == null ? null : ref.getDeclaration();
+        int argc = declaration instanceof CtMethod<?> method ? method.getParameters().size() : 0;
+        CtExpression<?> target = expression.getTarget();
+        String receiverName = target == null ? null : chains.receiver(target);
+        if (receiverName == null && ref != null && ref.getDeclaringType() != null)
+            receiverName = Names.qualified(ref.getDeclaringType());
+        if (receiverName == null) receiverName = Names.qualified(type);
+        List<String> targets = targets(ref, index, receiverName, name, argc);
+
+        g.writeStringField("method", methodId);
+        g.writeStringField("id", ids.id(expression));
+        g.writeStringField("file", pos.file());
+        g.writeNumberField("line", pos.line());
+        g.writeNumberField("col", pos.col());
+        g.writeStringField("name", name);
+        g.writeStringField("via", "methodRef");
+        g.writeNumberField("argc", argc);
+        g.writeObjectFieldStart("recv");
+        g.writeStringField("type", receiverName);
+        g.writeStringField("kind", ref != null && ref.isStatic() ? "static" : "instance");
+        g.writeStringField("how", target == null ? "static" : how(target));
+        String text = Refs.textOf(expression);
+        if (text == null) g.writeNullField("text");
+        else g.writeStringField("text", text);
+        g.writeEndObject();
+        g.writeArrayFieldStart("targets");
+        for (String targetId : targets) g.writeString(targetId);
+        g.writeEndArray();
+        g.writeArrayFieldStart("args");
+        g.writeEndArray();
+        if (expression.getParent(spoon.reflect.code.CtLambda.class) != null)
+            g.writeBooleanField("inLambda", true);
+        boolean receiverDeclared = index.declared().contains(receiverName);
+        g.writeStringField("origin", !targets.isEmpty() ? "java"
+                : receiverDeclared ? "unresolved" : "library");
+        if (targets.isEmpty())
+            g.writeStringField("reason", receiverDeclared ? "no-declaration-here" : "library-signature");
+    }
+
     /** The receiver and the type it is declared with share a package: a name Spoon invented, not a library type. */
     private static boolean samePackage(String fqn, CtType<?> type) {
         if (type.getPackage() == null) return false;
@@ -264,59 +370,38 @@ public final class Sites {
         return dot > 0 && type.getPackage().getQualifiedName().equals(fqn.substring(0, dot));
     }
 
-    /** Printing an expression Spoon cannot resolve can throw; a name we cannot read is simply absent. */
-    private static String safeText(CtExpression<?> expression) {
-        if (expression == null) return null;
-        try {
-            return expression.toString();
-        } catch (RuntimeException ignored) {
-            return null;
-        }
-    }
-
-    private static void writeCalls(Ndjson w, CtType<?> type, CtExecutable<?> executable, String methodId, Index index,
-            Path root, Chains chains) throws IOException {
-        for (CtInvocation<?> call : executable.getElements(
-                new spoon.reflect.visitor.filter.TypeFilter<>(CtInvocation.class))) {
-            // Spoon inserts an implicit super() with no source position; it is not a call anyone wrote.
-            Positions.Pos pos = Positions.of(call, root);
-            if (pos == null) continue;
-            try {
-                w.row(g -> row(g, type, executable, methodId, call, pos, index, root, chains));
-            } catch (RuntimeException e) {
-                // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
-                w.row(g -> errorRow(g, type, executable, call, pos, e));
-            }
-        }
-    }
-
-    /** A constructor is named after its type in every id the model uses; Spoon's own simple name is `<init>`. */
-    private static String methodIdOf(CtType<?> type, CtExecutable<?> owner) {
+    static String methodIdOf(CtType<?> type, CtExecutable<?> owner) {
         String name = owner instanceof spoon.reflect.declaration.CtConstructor<?>
                 ? type.getSimpleName() : owner.getSimpleName();
         return Names.methodId(type, name, paramTypes(owner));
     }
 
     /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
-    private static void errorRow(JsonGenerator g, CtType<?> type, CtExecutable<?> owner, CtInvocation<?> call,
-            Positions.Pos pos, RuntimeException e) throws IOException {
+    private static void errorRow(JsonGenerator g, String methodId, CtElement site, Positions.Pos pos, RuntimeException e)
+            throws IOException {
         String name = "?";
         try {
-            name = call.getExecutable() == null ? "?" : call.getExecutable().getSimpleName();
+            CtExecutableReference<?> ref = site instanceof CtInvocation<?> call ? call.getExecutable()
+                    : site instanceof CtExecutableReferenceExpression<?, ?> expression ? expression.getExecutable()
+                    : null;
+            name = ref == null ? "?" : ref.getSimpleName();
         } catch (RuntimeException ignored) {
             // the name is worth having but not worth failing for
         }
-        g.writeStringField("method", methodIdOf(type, owner));
+        g.writeStringField("method", methodId);
+        g.writeNullField("id");
         g.writeStringField("file", pos.file());
         g.writeNumberField("line", pos.line());
         g.writeNumberField("col", pos.col());
         g.writeStringField("name", name);
-        g.writeNumberField("argc", call.getArguments().size());
+        g.writeNumberField("argc", site instanceof CtInvocation<?> call ? call.getArguments().size() : 0);
         g.writeObjectFieldStart("recv");
         g.writeNullField("type");
         g.writeStringField("kind", "unknown");
         g.writeEndObject();
         g.writeArrayFieldStart("targets");
+        g.writeEndArray();
+        g.writeArrayFieldStart("args");
         g.writeEndArray();
         g.writeStringField("origin", "error");
         g.writeStringField("reason", e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -326,13 +411,12 @@ public final class Sites {
      * How the receiver was reached, in the vocabulary the facts already speak: a field, a parameter, a local, a chain, a
      * static type, `super`, `this`, or nothing written at all (implicit).
      */
-    private static String how(CtInvocation<?> call) {
-        CtExpression<?> target = call.getTarget();
-        if (call.getTarget() == null) return "implicit";
+    private static String how(CtExpression<?> target) {
+        if (target == null) return "implicit";
         if (target instanceof spoon.reflect.code.CtTypeAccess<?>) return "static";
         if (target instanceof spoon.reflect.code.CtSuperAccess<?>) return "super";
         if (target instanceof spoon.reflect.code.CtThisAccess<?>) return "this";
-        if (target instanceof spoon.reflect.code.CtInvocation<?>) return "chain";
+        if (target instanceof CtInvocation<?>) return "chain";
         if (target instanceof spoon.reflect.code.CtVariableRead<?> read) {
             var declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
             if (declaration instanceof spoon.reflect.declaration.CtField<?>) return "field";
@@ -353,7 +437,6 @@ public final class Sites {
         return "instance";
     }
 
-    /** The declaration's id, when it is a declaration in this checkout (a real position); null otherwise. */
     /**
      * The declaration, then every implementation of it: a call through an interface reaches each subclass method with
      * the same name and arity, which is the graph a flow has to walk.

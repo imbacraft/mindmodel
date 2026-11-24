@@ -93,7 +93,7 @@ fs.mkdirSync(DUMP, { recursive: true });
 const ndjson = (rows) => rows.map((r) => `${JSON.stringify(r)}\n`).join('');
 fs.writeFileSync(
   path.join(DUMP, 'meta.json'),
-  JSON.stringify({ contract: 1, engine: 'fixture', counts: { types: 1 } }),
+  JSON.stringify({ contract: 2, engine: 'fixture', counts: { types: 1 } }),
 );
 fs.writeFileSync(
   path.join(DUMP, 'types.ndjson'),

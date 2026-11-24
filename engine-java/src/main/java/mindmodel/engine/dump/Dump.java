@@ -17,12 +17,12 @@ import spoon.reflect.declaration.CtType;
 import mindmodel.engine.SourceModel;
 
 /**
- * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 1.
+ * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 2.
  * Deterministic by construction: rows are ordered by file, then source position, then name.
  */
 public final class Dump {
 
-    public static final int CONTRACT = 1;
+    public static final int CONTRACT = 2;
     public static final String ENGINE = "spoon-11.2.1";
 
     private Dump() {
@@ -51,8 +51,12 @@ public final class Dump {
         for (Row r : rows) types.add(r.type());
         java.util.Map<String, List<Lombok.Item>> synth = Lombok.synthesize(types, root);
         Types.write(types, root, outDir.resolve("types.ndjson"));
-        Members.write(types, synth, root, outDir.resolve("members.ndjson"));
-        Sites.write(types, synth, root, outDir.resolve("calls.ndjson"));
+        // One walk per body: the call rows carry the ids the other sections name, so calls are written first.
+        CallIds ids = new CallIds();
+        Refs refs = new Refs(ids);
+        Sites.Written written = Sites.write(types, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
+        Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns());
+        FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
         int failed = Files.write(inputs, types, problems(model, root), root, outDir.resolve("files.ndjson"));
         meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"));
     }

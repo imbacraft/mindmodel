@@ -38,8 +38,8 @@ function dumpInto(dir) {
   walk(path.join(fixture, 'src'));
   fs.writeFileSync(list, files.sort().join('\n') + '\n');
   const out = path.join(dir, 'dump');
-  execFileSync('java', ['-jar', jar, 'dump', '--contract', '1', fixture, list, out], { stdio: ['ignore', 'ignore', 'pipe'] });
-  return { out, types: read(out, 'types.ndjson'), members: read(out, 'members.ndjson'), files: read(out, 'files.ndjson'), meta: JSON.parse(fs.readFileSync(path.join(out, 'meta.json'), 'utf8')) };
+  execFileSync('java', ['-jar', jar, 'dump', '--contract', '2', fixture, list, out], { stdio: ['ignore', 'ignore', 'pipe'] });
+  return { out, types: read(out, 'types.ndjson'), members: read(out, 'members.ndjson'), files: read(out, 'files.ndjson'), fields: read(out, 'fields.ndjson'), calls: read(out, 'calls.ndjson'), meta: JSON.parse(fs.readFileSync(path.join(out, 'meta.json'), 'utf8')) };
 }
 
 test('dump: the fixture contract', { skip }, () => {
@@ -134,7 +134,7 @@ test('dump: the fixture contract', { skip }, () => {
 
   // The loader the rest of Node will use: queries only, no analysis, every answer carrying its position.
   const db = open(d.out);
-  assert.equal(db.meta.contract, 1);
+  assert.equal(db.meta.contract, 2);
   assert.equal(db.type('orders.OrderController').kind, 'class');
   assert.deepEqual(db.implsOf('orders.Port'), ['orders.PortImpl']);
   const manyCalls = db.callsOf('orders.OrderController#many(String[])');
@@ -148,9 +148,118 @@ test('dump: the fixture contract', { skip }, () => {
   assert.ok(db.grep('Order').length > 0);
   assert.deepEqual(db.atLine('src/orders/Order.java', 17).map((c) => c.name), ['info']);
 
-  // Determinism: a second run is byte-identical except the timestamp.
+  // ---------------------------------------------------------------------------------------------------------------
+  // Contract 2. 1a: every argument, typed. `text` is for display; `kind` and its fields are the fact.
+
+  const args = d.calls.filter((c) => c.name === 'take' && c.file.endsWith('contract/Args.java')).flatMap((c) => c.args);
+  const arg = (text) => args.find((a) => a.text === text);
+  for (const kind of ['literal', 'constant', 'param', 'local', 'field', 'call', 'lambda', 'methodRef', 'new', 'conditional', 'unresolved'])
+    assert.ok(args.some((a) => a.kind === kind), `an argument of kind ${kind}`);
+  // `text` is the expression as written, cut at 80: display only, never a fact.
+  assert.deepStrictEqual(arg('NAME'), {
+    text: 'NAME', kind: 'constant', type: 'java.lang.String',
+    valueKind: 'string', value: 'name', field: 'contract.Args#NAME',
+  });
+  assert.deepStrictEqual(arg('input'), { text: 'input', kind: 'param', type: 'java.lang.String', index: 0 });
+  assert.equal(arg('count').index, 1, 'a second parameter keeps its index');
+  assert.equal(arg('local').from, 'contract.Args#run(String,int)@10:24', 'a local names the call it was assigned from');
+  assert.equal(arg('state').field, 'contract.Args#state');
+  assert.ok(arg('sink.name()').call.startsWith('contract.Args#run(String,int)@'), 'a call argument names its row');
+  assert.equal(arg('new Sink()').created, 'contract.Sink');
+  assert.equal(arg('input == null ? NAME : state').then.kind, 'constant');
+  assert.deepStrictEqual(arg('mystery.port'), {
+    text: 'mystery.port', kind: 'unresolved', type: null, reason: 'no-declaration',
+  });
+  assert.equal(db.argsOf(arg('sink.name()').call).length, 0, 'argsOf answers the call an argument names');
+
+  // 1b: lambdas and method references are rows of their own, and say when they may not run.
+  const refs = d.calls.filter((c) => c.via === 'methodRef');
+  assert.ok(refs.some((r) => r.name === 'helper' && r.targets.includes('contract.Lambdas#helper()')));
+  assert.ok(refs.some((r) => r.name === 'name' && r.targets.includes('contract.Sink#name()')), 'a type-qualified reference resolves');
+  const libraryRef = refs.find((r) => r.name === 'trim');
+  assert.equal(libraryRef.targets.length, 0);
+  assert.equal(libraryRef.origin, 'library');
+  assert.equal(libraryRef.reason, 'library-signature', 'a reference Spoon cannot target says why');
+  const inLambda = d.calls.find((c) => c.inLambda && c.file.endsWith('contract/Lambdas.java'));
+  assert.equal(inLambda.name, 'take');
+  assert.equal(inLambda.method, 'contract.Lambdas#run()', 'a call inside a lambda still belongs to the method');
+  assert.deepStrictEqual(db.methodRefsIn('contract.Lambdas#run()').map((r) => r.name).sort(), ['helper', 'name', 'trim']);
+  assert.ok(!db.callsOf('contract.Lambdas#run()').some((c) => c.via === 'methodRef'), 'a reference is not a call');
+
+  // 1c: field reads and writes, with the value in the same shape as an argument.
+  const access = (field, op) => d.fields.find((f) => f.field === field && (!op || f.op === op));
+  const write = access('contract.Fields#name', 'write');
+  assert.equal(write.method, 'contract.Fields#write(String)');
+  assert.equal(write.static, false);
+  assert.deepStrictEqual(write.value, { text: 'value', kind: 'param', type: 'java.lang.String', index: 0 });
+  assert.equal(access('contract.Fields#name', 'read').method, 'contract.Fields#read()');
+  const holder = access('contract.Fields#HOLDER', 'read');
+  assert.equal(holder.static, true, 'the static holder is marked static');
+  assert.equal(holder.value.type, 'java.lang.ThreadLocal', 'a read says what was read');
+  assert.deepStrictEqual(db.writersOf('contract.Fields#name').map((f) => f.method), ['contract.Fields#write(String)']);
+  const unknownField = d.fields.find((f) => f.field === null && f.op === 'read' && f.file.endsWith('contract/Fields.java'));
+  assert.equal(unknownField.origin, 'unresolved');
+  assert.equal(unknownField.reason, 'no-declaring-type', 'a field nobody declared has no invented owner');
+  assert.deepStrictEqual(unknownField.value, { text: 'stranger.qty', kind: 'unresolved', type: null, reason: 'no-declaration' });
+
+  // 1d: returns, and the arms of the switch a method hands on.
+  const returns = (id) => db.returnsOf(id);
+  assert.equal(returns('contract.Returns#literal()')[0].value.kind, 'literal');
+  assert.equal(returns('contract.Returns#constant()')[0].value.value, 'new');
+  assert.equal(returns('contract.Returns#param(String)')[0].value.index, 0);
+  assert.equal(returns('contract.Returns#conditional(State)')[0].value.kind, 'conditional');
+  assert.equal(returns('contract.Returns#conditional(State)')[0].value.otherwise.value, 'done');
+  const chosen = returns('contract.Returns#chosen(State)')[0];
+  assert.equal(chosen.kind, 'switch');
+  assert.equal(chosen.form, 'statement');
+  assert.equal(chosen.target, 'code', 'the switch fills one local, and the dump says which');
+  assert.deepStrictEqual(chosen.arms.map((a) => a.labels), [['NEW'], []], 'an arm names its labels as written');
+  assert.deepStrictEqual(chosen.arms.map((a) => a.default), [false, true]);
+  assert.deepStrictEqual(chosen.arms.map((a) => a.value.value), ['new', 'done']);
+  const assigned = returns('contract.Returns#assigned(State)')[0];
+  assert.equal(assigned.form, 'expression');
+  assert.equal(assigned.target, 'code');
+  const handed = returns('contract.Returns#fromSwitch(State)')[0];
+  assert.equal(handed.kind, 'switch', 'a returned switch keeps its arms');
+  assert.equal(handed.target, undefined);
+  assert.deepStrictEqual(handed.arms.map((a) => a.value.value), ['orders.State.DONE', 'orders.State.NEW']);
+  assert.deepStrictEqual(returns('contract.Returns#unknown()')[0].value, {
+    text: 'mystery.value', kind: 'unresolved', type: null, reason: 'no-declaration',
+  });
+  assert.deepStrictEqual(returns('contract.Args#run(String,int)'), [], 'a void method returns nothing');
+
+  // 1e: the file's own header, imports included, sorted, with the wildcard and static flags.
+  const importsOf = (file) => d.files.find((f) => f.path.endsWith(file));
+  assert.deepStrictEqual(importsOf('contract/Imports.java').imports, [
+    { name: 'java.util', wildcard: true, static: false },
+    { name: 'java.util.Collections.emptyList', wildcard: false, static: true },
+    { name: 'java.util.List', wildcard: false, static: false },
+  ]);
+  assert.equal(importsOf('contract/Imports.java').importsOrigin, 'spoon', 'Spoon and the header agree here');
+  assert.equal(importsOf('contract/Args.java').imports.length, 0);
+  const brokenImports = importsOf('broken/Broken.java');
+  assert.deepStrictEqual(brokenImports.imports.map((i) => i.name), ['java.util.Collections.emptyList', 'java.util.List'],
+    'a file JDT could not parse still gets the imports its header writes');
+  assert.equal(brokenImports.importsOrigin, 'spoon', 'a unit Spoon did parse answers, even for a file JDT rejected');
+  // Spoon drops an import it cannot resolve without a classpath; the file's own header still says it.
+  const lombokFile = importsOf('orders/Order.java');
+  assert.equal(lombokFile.importsOrigin, 'header');
+  assert.deepStrictEqual(lombokFile.imports.map((i) => i.name),
+    ['java.math.BigDecimal', 'lombok.Data', 'lombok.extern.slf4j.Slf4j']);
+  assert.deepStrictEqual(db.imports('src/contract/Imports.java').map((i) => i.name),
+    ['java.util', 'java.util.Collections.emptyList', 'java.util.List']);
+  assert.equal(db.imports('src/contract/NoSuchFile.java'), null, 'a file the dump never saw answers nothing');
+  assert.equal(importsOf('contract/Imports.java').package, 'contract');
+
+  // 1f: the entry point is a shape of the method, and nothing else is called one.
+  const entry = d.members.find((m) => m.id === 'contract.Entry#main(String[])');
+  assert.equal(entry.isMain, true);
+  assert.equal(d.members.filter((m) => m.kind === 'method' && m.isMain).length, 1, 'one entry point in the fixture');
+  assert.equal(d.members.find((m) => m.id === 'contract.Entry#run()').isMain, false);
+
+  // A dump written twice is byte-identical, every section included.
   const again = dumpInto(tmp());
-  for (const name of ['types.ndjson', 'members.ndjson', 'files.ndjson']) {
+  for (const name of ['types.ndjson', 'members.ndjson', 'files.ndjson', 'fields.ndjson', 'calls.ndjson']) {
     assert.equal(fs.readFileSync(path.join(d.out, name), 'utf8'), fs.readFileSync(path.join(again.out, name), 'utf8'), name);
   }
 });

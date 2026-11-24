@@ -49,8 +49,11 @@ public final class Values {
         if (expression instanceof CtLiteral<?> literal) return literal(literal.getValue());
         if (expression instanceof CtNewArray<?> array) return array(array);
         if (expression instanceof CtAnnotation<?> nested) {
-            return new Value("annotation", Map.of("name", Names.qualified(nested.getAnnotationType()),
-                    "args", annotationArgs(nested)));
+            // An ordered map: `Map.of` iterates in a salted order, and the dump must be byte-identical across runs.
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("name", Names.qualified(nested.getAnnotationType()));
+            value.put("args", annotationArgs(nested));
+            return new Value("annotation", value);
         }
         if (expression instanceof CtTypeAccess<?> access) return classLiteral(access.getAccessedType());
         // A field read, a static access and an annotation member all come through the variable reference.

@@ -119,8 +119,10 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
           ann: annOf(member, at.line, (name) => resolveIn(t.file, name)),
           synthetic: member.generated,
         });
+        // Only a scalar has a string spelling: an array or annotation constant stringifies to "[object Object]",
+        // which an extractor would then read as a name.
         const value = member.value?.value;
-        if (member.value && member.value.kind !== 'unresolved')
+        if (member.value && member.value.kind !== 'unresolved' && typeof value !== 'object')
           constants.set(`${t.fqn}.${member.name}`, String(value));
         continue;
       }
@@ -157,13 +159,16 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   const byId = new Map();
   for (const t of types.values()) for (const m of t.methods) byId.set(m.id, m);
   for (const row of dump.calls) {
+    // Contract 2 writes a method reference as a call row of its own; nothing reads it as a call yet.
+    if (row.via === 'methodRef') continue;
     const method = byId.get(row.method);
     if (!method || row.origin === 'error') continue;
     const call = {
       kind: 'call',
       name: row.name,
       line: row.line,
-      args: row.args ?? [],
+      // Contract 2 arguments are typed objects; the extractors still read the written text of the first two.
+      args: (row.args ?? []).slice(0, 2).map((a) => (typeof a === 'string' ? a : a?.text ?? '')),
       recvFqn: row.recv?.type ?? null,
       recvHow: row.recv?.how ?? row.recv?.kind ?? null,
       targets: row.targets ?? [],

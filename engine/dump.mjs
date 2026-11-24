@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 
-export const CONTRACT = 1;
+export const CONTRACT = 2;
 
 function rows(file) {
   return fs
@@ -29,6 +29,9 @@ export function open(dir) {
   const types = rows(path.join(dir, 'types.ndjson'));
   const members = rows(path.join(dir, 'members.ndjson'));
   const calls = fs.existsSync(path.join(dir, 'calls.ndjson')) ? rows(path.join(dir, 'calls.ndjson')) : [];
+  // Contract 2 sections: absent in an older dump, empty rather than fatal, because the indexes below answer [] then.
+  const fields = fs.existsSync(path.join(dir, 'fields.ndjson')) ? rows(path.join(dir, 'fields.ndjson')) : [];
+  const files = fs.existsSync(path.join(dir, 'files.ndjson')) ? rows(path.join(dir, 'files.ndjson')) : [];
 
   const byFqn = new Map(types.map((t) => [t.fqn, t]));
   const byId = new Map();
@@ -40,21 +43,34 @@ export function open(dir) {
     byOwner.set(m.owner, list);
   }
   const byMethod = new Map();
+  const byMethodRef = new Map();
   const callers = new Map();
   const byLine = new Map();
   const bySite = new Map();
+  const byCallId = new Map();
   for (const c of calls) {
-    for (const [map, k] of [
-      [byMethod, c.method],
+    if (c.id) byCallId.set(c.id, c);
+    const map = c.via === 'methodRef' ? byMethodRef : byMethod;
+    for (const [target, k] of [
+      [map, c.method],
       [byLine, key(c.file, c.line)],
       [bySite, key(c.file, `${c.line}:${c.col}`)],
     ]) {
-      const list = map.get(k) ?? [];
+      const list = target.get(k) ?? [];
       list.push(c);
-      map.set(k, list);
+      target.set(k, list);
     }
     for (const t of c.targets ?? []) callers.set(t, [...(callers.get(t) ?? []), c]);
   }
+  // Field reads and writes by field, so "which methods write this holder" is a lookup, not a scan.
+  const byField = new Map();
+  for (const f of fields) {
+    if (!f.field) continue;
+    const list = byField.get(f.field) ?? [];
+    list.push(f);
+    byField.set(f.field, list);
+  }
+  const byFile = new Map(files.map((f) => [f.path, f]));
   const subtypes = new Map();
   for (const t of types)
     for (const s of t.supertypes ?? []) subtypes.set(s.fqn, [...(subtypes.get(s.fqn) ?? []), t.fqn]);
@@ -91,6 +107,8 @@ export function open(dir) {
     types: byFqn,
     members: byId,
     calls,
+    fields,
+    files: byFile,
     type: (fqn) => byFqn.get(fqn) ?? null,
     membersOf: (fqn) => byOwner.get(fqn) ?? [],
     callsOf: (methodId) => byMethod.get(methodId) ?? [],
@@ -101,6 +119,22 @@ export function open(dir) {
     atSite: (file, line, col) => bySite.get(key(file, `${line}:${col}`)) ?? [],
     annotation,
     grep,
+    /** The arguments of one call row, typed: `[{text, kind, ...}]`, in source order. */
+    argsOf: (callId) => byCallId.get(callId)?.args ?? [],
+    /** Every read and write of one field (`owner#name`), in file and source order. */
+    fieldAccessOf: (fieldId) => byField.get(fieldId) ?? [],
+    /** The methods that write one field: the same rows, writes only. */
+    writersOf: (fieldId) => (byField.get(fieldId) ?? []).filter((f) => f.op === 'write'),
+    /** What one method returns, and the arms of any switch whose result it hands on. */
+    returnsOf: (methodId) => byId.get(methodId)?.returned ?? [],
+    /** The method references written inside one method. */
+    methodRefsIn: (methodId) => byMethodRef.get(methodId) ?? [],
+    /** A file's imports as written, or null when the dump could not read its header (never an empty-list guess). */
+    imports: (file) => {
+      const row = byFile.get(file);
+      if (!row || row.importsOrigin === 'unresolved') return null;
+      return row.imports ?? [];
+    },
     /** The literal value of a final field, `{kind, value}` or null. */
     constant: (fqn, name) => byOwner.get(fqn)?.find((m) => m.kind === 'field' && m.name === name)?.value ?? null,
     simple,
@@ -123,16 +157,44 @@ export function open(dir) {
     { kind: 'method', owner: 'a.Port', name: 'find', id: 'a.Port#find(Long)', params: [{ type: 'Long' }], returns: 'Order', ann: [],
       pos: { file: 'a/Port.java', line: 2, col: 5, endLine: 2, endCol: 20 } },
     { kind: 'method', owner: 'a.Impl', name: 'find', id: 'a.Impl#find(Long)', params: [{ type: 'Long' }], returns: 'Order',
+      isMain: false,
       ann: [{ name: 'org.springframework.transaction.annotation.Transactional', args: { value: { kind: 'string', value: 'x' } } }],
+      // One switch whose result the method hands on, one plain return, one value the engine could not describe.
+      returned: [
+        { kind: 'return', line: 2, col: 5, value: { text: 'PATH', kind: 'constant', type: 'java.lang.String', value: '/x' } },
+        { kind: 'switch', line: 3, col: 5, form: 'expression', target: 'code',
+          on: { text: 'status', kind: 'param', type: 'java.lang.String', index: 0 },
+          arms: [
+            { labels: ['NEW'], default: false, value: { text: 'A', kind: 'literal', type: 'java.lang.String', value: 'A' } },
+            { labels: [], default: true, value: { text: 'mystery.x', kind: 'unresolved', type: null, reason: 'no-declaration' } },
+          ] },
+      ],
       pos: { file: 'a/Impl.java', line: 2, col: 5, endLine: 2, endCol: 20 } },
     { kind: 'field', owner: 'a.Impl', name: 'PATH', type: 'String', modifiers: ['static', 'final'], value: { kind: 'string', value: '/x' },
       ann: [], pos: { file: 'a/Impl.java', line: 1, col: 30, endLine: 1, endCol: 60 } },
   ]);
   w('calls.ndjson', [
-    { method: 'a.Impl#find(Long)', file: 'a/Impl.java', line: 2, col: 9, name: 'find', argc: 1, recv: { type: 'a.Port', kind: 'field' },
-      targets: ['a.Port#find(Long)', 'a.Impl#find(Long)'], origin: 'java' },
-    { method: 'a.Impl#find(Long)', file: 'a/Impl.java', line: 2, col: 25, name: 'save', argc: 0, recv: { type: null, kind: 'implicit' },
-      targets: [], origin: 'unresolved', reason: 'no-callee' },
+    { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:9', file: 'a/Impl.java', line: 2, col: 9, name: 'find', argc: 1,
+      recv: { type: 'a.Port', kind: 'field' }, targets: ['a.Port#find(Long)', 'a.Impl#find(Long)'], origin: 'java',
+      args: [{ text: 'PATH', kind: 'constant', value: '/x', valueKind: 'string', type: 'java.lang.String' }] },
+    { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:25', file: 'a/Impl.java', line: 2, col: 25, name: 'save', argc: 0,
+      recv: { type: null, kind: 'implicit' }, targets: [], origin: 'unresolved', reason: 'no-callee',
+      args: [{ text: 'x', kind: 'unresolved', type: null, reason: 'no-declaration' }] },
+    { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:30', file: 'a/Impl.java', line: 2, col: 30, name: 'getPath',
+      via: 'methodRef', argc: 0, recv: { type: 'a.Impl', kind: 'instance' }, targets: ['a.Impl#path()'], origin: 'java', args: [] },
+  ]);
+  w('fields.ndjson', [
+    { method: 'a.Impl#find(Long)', field: 'a.Impl#PATH', static: true, op: 'read', file: 'a/Impl.java', line: 2, col: 9,
+      value: { text: 'PATH', kind: 'constant', type: 'java.lang.String', value: '/x', valueKind: 'string', field: 'a.Impl#PATH' } },
+    { method: 'a.Impl#find(Long)', field: 'a.Impl#name', static: false, op: 'write', file: 'a/Impl.java', line: 2, col: 20,
+      value: { text: 'name', kind: 'param', type: 'java.lang.String', index: 0 } },
+    { method: 'a.Impl#find(Long)', field: null, static: false, op: 'read', file: 'a/Impl.java', line: 2, col: 31,
+      origin: 'unresolved', reason: 'no-declaring-type',
+      value: { text: 'mystery.x', kind: 'unresolved', type: null, reason: 'no-declaration' } },
+  ]);
+  w('files.ndjson', [
+    { path: 'a/Impl.java', package: 'a', importsOrigin: 'header', imports: [{ name: 'java.util.List', wildcard: false, static: false }], errors: [] },
+    { path: 'a/Unknown.java', package: 'a', importsOrigin: 'unresolved', importsReason: 'header-unreadable', imports: [], errors: [] },
   ]);
   const d = open(dir);
   assert.deepEqual(d.implsOf('a.Port'), ['a.Impl']);
@@ -140,6 +202,24 @@ export function open(dir) {
   assert.deepEqual(d.atSite('a/Impl.java', 2, 9).map((c) => c.origin), ['java']);
   assert.deepEqual(d.annotation(d.members.get('a.Impl#find(Long)'), 'Transactional'), { value: 'x' });
   assert.equal(d.constant('a.Impl', 'PATH').value, '/x');
+  // Contract 2: typed arguments, field reads and writes, returns, method references and imports, each a lookup.
+  assert.deepEqual(d.argsOf('a.Impl#find(Long)@2:9').map((a) => a.kind), ['constant']);
+  assert.deepEqual(d.argsOf('a.Impl#find(Long)@2:25')[0].reason, 'no-declaration', 'an unresolved argument says why');
+  assert.deepEqual(d.argsOf('a.Impl#find(Long)@missing'), [], 'an unknown call has no arguments, not a guess');
+  assert.deepEqual(d.fieldAccessOf('a.Impl#PATH').map((f) => f.op), ['read']);
+  assert.deepEqual(d.fieldAccessOf('a.Impl#name').map((f) => f.method), ['a.Impl#find(Long)']);
+  assert.deepEqual(d.writersOf('a.Impl#name').map((f) => f.value.kind), ['param']);
+  assert.deepEqual(d.writersOf('a.Impl#PATH'), [], 'a read is not a write');
+  assert.equal(d.fieldAccessOf('a.Impl#name')[0].static, false);
+  assert.deepEqual(d.returnsOf('a.Impl#find(Long)').map((r) => r.kind), ['return', 'switch']);
+  assert.equal(d.returnsOf('a.Impl#find(Long)')[1].arms[0].labels[0], 'NEW');
+  assert.equal(d.returnsOf('a.Impl#find(Long)')[1].arms[1].default, true);
+  assert.equal(d.returnsOf('a.Impl#find(Long)')[1].arms[1].value.kind, 'unresolved');
+  assert.deepEqual(d.returnsOf('a.Port#find(Long)'), [], 'a method with no body returns nothing it wrote');
+  assert.deepEqual(d.methodRefsIn('a.Impl#find(Long)').map((c) => c.name), ['getPath']);
+  assert.deepEqual(d.callsOf('a.Impl#find(Long)').map((c) => c.name), ['find', 'save'], 'a method reference is not a call');
+  assert.deepEqual(d.imports('a/Impl.java').map((i) => i.name), ['java.util.List']);
+  assert.equal(d.imports('a/Unknown.java'), null, 'an unreadable header is an unknown, not an empty list');
   assert.equal(d.grep('impl').length, 2);
   assert.equal(d.membersOf('a.Port').length, 1);
   assert.throws(() => {

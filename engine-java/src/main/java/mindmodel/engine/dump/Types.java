@@ -27,8 +27,12 @@ public final class Types {
     private static void writeRow(JsonGenerator g, CtType<?> t, Path root) throws IOException {
         g.writeStringField("fqn", Names.qualified(t));
         g.writeStringField("kind", kind(t));
+        // Sorted: an immutable set's iteration order is salted per JVM, and the dump must be byte-identical across runs.
+        java.util.List<String> modifiers = new java.util.ArrayList<>();
+        for (ModifierKind m : t.getModifiers()) modifiers.add(m.toString());
+        java.util.Collections.sort(modifiers);
         g.writeArrayFieldStart("modifiers");
-        for (ModifierKind m : t.getModifiers()) g.writeString(m.toString());
+        for (String m : modifiers) g.writeString(m);
         g.writeEndArray();
         if (t.getDeclaringType() == null) g.writeNullField("enclosing");
         else g.writeStringField("enclosing", Names.qualified(t.getDeclaringType()));

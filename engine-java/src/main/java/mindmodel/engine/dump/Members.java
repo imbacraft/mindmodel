@@ -42,7 +42,7 @@ public final class Members {
     }
 
     public static void write(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth, Path root,
-            Path out) throws IOException {
+            Path out, java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns) throws IOException {
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> t : types) {
                 java.util.Set<String> declaredIds = new java.util.HashSet<>();
@@ -51,7 +51,7 @@ public final class Members {
                 // Methods of anonymous and local classes written in a member's body: the type's own body work.
                 for (CtTypeMember member : t.getTypeMembers())
                     if (member instanceof CtExecutable<?> body)
-                        for (CtMethod<?> inner : Anonymous.methods(body)) w.row(g -> anonymous(g, t, inner, root));
+                        for (CtMethod<?> inner : Anonymous.methods(body)) w.row(g -> anonymous(g, t, inner, root, returns));
                 Set<String> constants = new java.util.HashSet<>();
                 if (t instanceof CtEnum<?> e) {
                     for (CtEnumValue<?> value : e.getEnumValues()) {
@@ -63,7 +63,7 @@ public final class Members {
                     if (member instanceof CtEnumValue<?> value && !constants.add(value.getSimpleName())) continue;
                     if (member instanceof CtEnumValue<?> value) w.row(g -> enumConstant(g, t, value, root));
                     else if (member instanceof CtField<?> field) w.row(g -> field(g, t, field, root));
-                    else if (member instanceof CtConstructor<?> ctor) w.row(g -> callable(g, t, ctor, true, root));
+                    else if (member instanceof CtConstructor<?> ctor) w.row(g -> callable(g, t, ctor, true, root, returns));
                     else if (member instanceof CtMethod<?> method) {
                         // `values()` and `valueOf(String)` are written by the compiler, not by the author: they have no
                         // source position, and a dump of declarations must not claim them.
@@ -75,7 +75,7 @@ public final class Members {
                         boolean syntheticEnum = t.isEnum()
                                 && ("values".equals(method.getSimpleName()) || "valueOf".equals(method.getSimpleName()))
                                 && (method.getPosition() == null || !method.getPosition().isValidPosition());
-                        if (!syntheticEnum) w.row(g -> callable(g, t, method, false, root));
+                        if (!syntheticEnum) w.row(g -> callable(g, t, method, false, root, returns));
                     }
                 }
                 for (Lombok.Item item : synth.getOrDefault(Names.qualified(t), List.of())) {
@@ -185,7 +185,8 @@ public final class Members {
     }
 
     private static void callable(JsonGenerator g, CtType<?> owner, CtExecutable<?> executable,
-            boolean constructor, Path root) throws IOException {
+            boolean constructor, Path root, java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns)
+            throws IOException {
         // A constructor is named after its type, as the Node model always spelled it: Cargo#Cargo(TrackingId).
         String name = constructor ? owner.getSimpleName() : executable.getSimpleName();
         g.writeStringField("kind", constructor ? "constructor" : "method");
@@ -206,6 +207,8 @@ public final class Members {
         g.writeEndArray();
         g.writeStringField("id", Names.methodId(owner, name, paramTypes));
         if (executable instanceof CtMethod<?> method) g.writeStringField("returns", Names.typeText(method.getType()));
+        // An entry point is a shape of the code, not a conclusion: `public static void main(String[])`.
+        if (executable instanceof CtMethod<?> method) g.writeBooleanField("isMain", isMain(method));
         modifiers(g, ((spoon.reflect.declaration.CtModifiable) executable).getModifiers());
         g.writeBooleanField("hasBody", executable.getBody() != null);
         g.writeArrayFieldStart("throws");
@@ -214,11 +217,27 @@ public final class Members {
         Anns.write(g, executable.getAnnotations());
         loops(g, executable, root);
         branches(g, executable, root);
+        Returns.write(g, returns.get(executable));
         Ndjson.pos(g, Positions.of(executable, root));
     }
 
+    /** `public static void main(String[])` — or its varargs spelling. Everything else is not an entry point. */
+    private static boolean isMain(CtMethod<?> method) {
+        if (!"main".equals(method.getSimpleName())) return false;
+        Set<ModifierKind> modifiers = method.getModifiers();
+        if (!modifiers.contains(ModifierKind.PUBLIC) || !modifiers.contains(ModifierKind.STATIC)) return false;
+        CtTypeReference<?> type = method.getType();
+        if (type == null || !"void".equals(type.getQualifiedName())) return false;
+        if (method.getParameters().size() != 1) return false;
+        CtTypeReference<?> parameter = method.getParameters().get(0).getType();
+        if (!(parameter instanceof spoon.reflect.reference.CtArrayTypeReference<?> array)) return false;
+        CtTypeReference<?> component = array.getComponentType();
+        return component != null && "java.lang.String".equals(component.getQualifiedName());
+    }
+
     /** A method of an anonymous or local class, filed under the type whose body writes it (id carries the line). */
-    private static void anonymous(JsonGenerator g, CtType<?> owner, CtMethod<?> m, Path root) throws IOException {
+    private static void anonymous(JsonGenerator g, CtType<?> owner, CtMethod<?> m, Path root,
+            java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns) throws IOException {
         g.writeStringField("kind", "method");
         g.writeStringField("owner", Names.qualified(owner));
         g.writeStringField("name", m.getSimpleName());
@@ -243,6 +262,7 @@ public final class Members {
         Anns.write(g, m.getAnnotations());
         loops(g, m, root);
         branches(g, m, root);
+        Returns.write(g, returns.get(m));
         Ndjson.pos(g, Positions.of(m, root));
     }
 
