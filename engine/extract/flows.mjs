@@ -29,8 +29,9 @@ const NOISE =
 // The rank, in one place. Every weight is a fact count or a fixed kind; nothing here reads a method or type name
 // except the entry verb. Changing a weight changes the digest order and nothing else.
 export const FLOW_WEIGHTS = {
-  entityWrite: 3, // per distinct entity written
-  outsideCall: 2, // per outside call (HTTP, mail, and the message send below counted in addition)
+  entityWrite: 3, // the first distinct entity written: the flow changes this aggregate
+  entityFurther: 1, // each further entity: breadth, not importance — a five-table signup is not five times a checkout
+  outsideCall: 3, // per outside call (HTTP, mail, payment, and the message send below counted in addition)
   message: 2, // per message sent
   risk: 2, // a transaction-boundary fact on the path: a tie-break, never what makes a flow the main flow
   entryWriteVerb: 3, // POST/PUT/PATCH/DELETE
@@ -378,7 +379,7 @@ export function buildFlows(
     if (kind === 'listener') add('listener', FLOW_WEIGHTS.listenerEntry);
     add(
       `entities ${written.length}${written.length > entities ? ` (cap ${entities})` : ''}${written.length ? ` (${written.join(', ')})` : ''}`,
-      entities * FLOW_WEIGHTS.entityWrite,
+      entities ? FLOW_WEIGHTS.entityWrite + (entities - 1) * FLOW_WEIGHTS.entityFurther : 0,
     );
     add(`outside ${outs}`, outs * FLOW_WEIGHTS.outsideCall);
     add(`messages ${msgs}`, msgs * FLOW_WEIGHTS.message);
@@ -430,8 +431,9 @@ export function buildFlows(
     f.why.push(`shared service ${[...new Set(shared.map((h) => h.split('#')[0]))].slice(0, 2).join(', ')} +${FLOW_WEIGHTS.sharedService}`);
   }
 
-  // Rank: score, then fact id, so two runs and two machines agree.
-  return flows.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  // Rank: score, then breadth, then fact id. A tie must not fall through to alphabetical order, which would put
+  // `forgotPassword` above `activateLoan` for no reason a reader can see.
+  return flows.sort((a, b) => b.score - a.score || b.steps.length - a.steps.length || a.id.localeCompare(b.id));
 }
 
 const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener|MessageDrivenBean)$/.test(s.fqn ?? s.text ?? ''));
@@ -564,8 +566,8 @@ const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener
   const why = bulk.why.join(' | ');
   assert.match(why, /entry ui-action \+3/);
   assert.match(why, /entities 6 \(cap 5\)/);
-  assert.match(why, /entities .* \+15/);
-  assert.match(why, /outside 1 \+2/);
+  assert.match(why, /entities .* \+7/, 'five entities: three for the aggregate, one for each further table');
+  assert.match(why, /outside 1 \+3/);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
