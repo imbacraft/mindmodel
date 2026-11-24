@@ -7,9 +7,14 @@ import java.util.List;
 import java.util.Set;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import spoon.reflect.code.CtCase;
+import spoon.reflect.code.CtCatch;
 import spoon.reflect.code.CtExpression;
+import spoon.reflect.code.CtIf;
 import spoon.reflect.code.CtNewArray;
+import spoon.reflect.code.CtStatement;
 import spoon.reflect.declaration.CtConstructor;
+import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtEnum;
 import spoon.reflect.declaration.CtEnumValue;
 import spoon.reflect.declaration.CtExecutable;
@@ -28,6 +33,10 @@ import spoon.reflect.reference.CtTypeReference;
  * added by the synthesis pass with {@code generated: "lombok"}, positioned at the annotated declaration.
  */
 public final class Members {
+
+    /** One decision arm of a body: the lines its statement(s) occupy, and which decision put them there. */
+    private record Arm(int start, int end, String kind) {
+    }
 
     private Members() {
     }
@@ -138,6 +147,43 @@ public final class Members {
         g.writeEndArray();
     }
 
+    /**
+     * The decision arms a body writes, as line ranges: an if/else arm's body, a catch's body, a case's statements.
+     * Never the condition — a call written in {@code if (repo.exists())} runs on the default path — so Node can say an
+     * effect reached only through an arm is conditional without re-reading the body.
+     */
+    private static void branches(JsonGenerator g, CtExecutable<?> e, Path root) throws IOException {
+        List<Arm> arms = new ArrayList<>();
+        for (CtIf iff : e.getElements(new spoon.reflect.visitor.filter.TypeFilter<>(CtIf.class))) {
+            arm(arms, iff.getThenStatement(), "if", root);
+            CtStatement otherwise = iff.getElseStatement();
+            // An else-if's arms are that nested if's own rows; the else itself has no body to range.
+            if (otherwise != null && !(otherwise instanceof CtIf)) arm(arms, otherwise, "else", root);
+        }
+        for (CtCatch c : e.getElements(new spoon.reflect.visitor.filter.TypeFilter<>(CtCatch.class)))
+            arm(arms, c.getBody(), "catch", root);
+        // A case's statements, not the case: the label and its guard are the decision, not the arm.
+        for (CtCase<?> c : e.getElements(new spoon.reflect.visitor.filter.TypeFilter<>(CtCase.class)))
+            for (CtStatement s : c.getStatements()) arm(arms, s, "case", root);
+        // Source order, so the dump is byte-identical across runs and a reader can scan it.
+        arms.sort(java.util.Comparator.comparingInt(Arm::start).thenComparingInt(Arm::end).thenComparing(Arm::kind));
+        g.writeArrayFieldStart("branches");
+        for (Arm a : arms) {
+            g.writeStartObject();
+            g.writeNumberField("start", a.start());
+            g.writeNumberField("end", a.end());
+            g.writeStringField("kind", a.kind());
+            g.writeEndObject();
+        }
+        g.writeEndArray();
+    }
+
+    private static void arm(List<Arm> arms, CtElement statement, String kind, Path root) {
+        Positions.Pos p = Positions.of(statement, root);
+        if (p == null) return;
+        arms.add(new Arm(p.line(), p.endLine(), kind));
+    }
+
     private static void callable(JsonGenerator g, CtType<?> owner, CtExecutable<?> executable,
             boolean constructor, Path root) throws IOException {
         // A constructor is named after its type, as the Node model always spelled it: Cargo#Cargo(TrackingId).
@@ -167,6 +213,7 @@ public final class Members {
         g.writeEndArray();
         Anns.write(g, executable.getAnnotations());
         loops(g, executable, root);
+        branches(g, executable, root);
         Ndjson.pos(g, Positions.of(executable, root));
     }
 
@@ -195,6 +242,7 @@ public final class Members {
         g.writeEndArray();
         Anns.write(g, m.getAnnotations());
         loops(g, m, root);
+        branches(g, m, root);
         Ndjson.pos(g, Positions.of(m, root));
     }
 

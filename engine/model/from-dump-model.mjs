@@ -146,6 +146,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
         signatureLine: at.line,
         modifiers: member.modifiers ?? [],
         loops: member.loops ?? [],
+        // The dump's decision arms: the flow marks an effect reached only through one as conditional.
+        branches: member.branches ?? [],
         synthetic: member.generated,
         calls: [],
       });
@@ -292,6 +294,7 @@ function resolver(sources, types, known = new Set()) {
       {
         kind: 'method', owner: 'a.Impl', name: 'find', id: 'a.Impl#find(Long)',
         params: [{ name: 'id', type: 'Long', ann: [] }], ann: [], hasBody: true,
+        branches: [{ start: 5, end: 6, kind: 'if' }],
         pos: { file: 'src/a/Impl.java', line: 4, endLine: 8 },
       },
     ],
@@ -312,6 +315,7 @@ function resolver(sources, types, known = new Set()) {
   assert.equal(model.constants.get('a.Impl.PATH'), '/x');
   assert.equal(model.resolveConst('src/a/Impl.java', 'a.Impl', 'PATH'), '/x');
   assert.equal(impl.methods[0].id, 'a.Impl#find(Long)');
+  assert.deepStrictEqual(impl.methods[0].branches, [{ start: 5, end: 6, kind: 'if' }]);
   assert.deepStrictEqual(impl.methods[0].calls[0], {
     kind: 'call', name: 'save', line: 5, args: [], recvFqn: 'a.Port', recvHow: 'field',
     targets: ['a.Port#save()'], how: 'direct', origin: 'java',
