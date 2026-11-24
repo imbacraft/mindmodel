@@ -64,7 +64,7 @@ public final class Sites {
             for (CtExecutable<?> e : executables(t)) {
                 if (syntheticEnum(t, e.getSimpleName())) continue;
                 String id = Names.methodId(t, e instanceof spoon.reflect.declaration.CtConstructor<?>
-                        ? t.getSimpleName() : e.getSimpleName(), paramTypes(e));
+                        ? t.getSimpleName() : e.getSimpleName(), paramTypes(t, e));
                 byShape.putIfAbsent(e.getSimpleName() + "/" + e.getParameters().size(), id);
                 // Name and arity, unique only: two members with the same shape are not a fact.
                 int n = e.getParameters().size();
@@ -77,6 +77,14 @@ public final class Sites {
                 }
             }
             for (String shape : ambiguous) byArity.remove(shape);
+            if (t instanceof spoon.reflect.declaration.CtRecord record) {
+                int n = record.getRecordComponents().size();
+                String shape = "<init>/" + n;
+                // Spoon 11.5 models no canonical constructor for a nested record: the constructor member is still
+                // declared, so a `new` of that arity resolves to it unless another constructor shares the arity.
+                if (!byArity.containsKey(shape) && !ambiguous.contains(shape))
+                    byArity.put(shape, RecordCtors.id(record));
+            }
             if (t instanceof spoon.reflect.declaration.CtRecord record)
                 for (var component : record.getRecordComponents())
                     byShape.put(component.getSimpleName() + "/0",
@@ -381,7 +389,7 @@ public final class Sites {
         if (targets.isEmpty())
             g.writeStringField("reason", builderReceiver ? "lombok-builder"
                     : invented ? "unresolved-name"
-                    : receiverName == null ? "no-callee"
+                    : receiverName == null ? (varLocal(call.getTarget()) ? "var-unresolved" : "no-callee")
                     : receiverDeclared ? "no-declaration-here" : "library-signature");
     }
 
@@ -427,10 +435,20 @@ public final class Sites {
         if (expression.getParent(spoon.reflect.code.CtLambda.class) != null)
             g.writeBooleanField("inLambda", true);
         boolean receiverDeclared = index.declared().contains(receiverName);
+        boolean unknownVar = varLocal(target);
         g.writeStringField("origin", !targets.isEmpty() ? "java"
-                : receiverDeclared ? "unresolved" : "library");
+                : receiverDeclared || unknownVar ? "unresolved" : "library");
         if (targets.isEmpty())
-            g.writeStringField("reason", receiverDeclared ? "no-declaration-here" : "library-signature");
+            g.writeStringField("reason",
+                    receiverDeclared ? "no-declaration-here"
+                            : unknownVar ? "var-unresolved" : "library-signature");
+    }
+
+    /** True when a receiver is a `var` local: an unresolved one is an unknown, not a missing callee. */
+    private static boolean varLocal(CtExpression<?> target) {
+        if (!(target instanceof spoon.reflect.code.CtVariableRead<?> read)) return false;
+        var declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
+        return declaration instanceof spoon.reflect.code.CtLocalVariable<?> local && local.isInferred();
     }
 
     /** `targets`: the declaration and each override of it, in that order, each with which of the two it is. */
@@ -478,7 +496,7 @@ public final class Sites {
     static String methodIdOf(CtType<?> type, CtExecutable<?> owner) {
         String name = owner instanceof spoon.reflect.declaration.CtConstructor<?>
                 ? type.getSimpleName() : owner.getSimpleName();
-        return Names.methodId(type, name, paramTypes(owner));
+        return Names.methodId(type, name, paramTypes(type, owner));
     }
 
     /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
@@ -578,7 +596,7 @@ public final class Sites {
         // The method's own position can be synthetic (a record accessor); the owner's is the check that matters.
         if (owner.getPosition() == null || !owner.getPosition().isValidPosition()) return out;
         if (syntheticEnum(owner, method.getSimpleName())) return out;
-        out.add(new Target(Names.methodId(owner, method.getSimpleName(), paramTypes(method)), "declared"));
+        out.add(new Target(Names.methodId(owner, method.getSimpleName(), paramTypes(owner, method)), "declared"));
         boolean open = owner.isInterface() || owner.getModifiers().contains(spoon.reflect.declaration.ModifierKind.ABSTRACT);
         if (!open) return out;
         String shape = method.getSimpleName() + "/" + method.getParameters().size();
@@ -589,7 +607,12 @@ public final class Sites {
         return out;
     }
 
-    private static List<CtTypeReference<?>> paramTypes(CtExecutable<?> executable) {
+    private static List<CtTypeReference<?>> paramTypes(CtType<?> owner, CtExecutable<?> executable) {
+        // A record's canonical constructor is identified by its components, in declaration order: Spoon lists them in
+        // another order, and a row written under that order would not match the member the dump declares.
+        if (owner instanceof spoon.reflect.declaration.CtRecord record
+                && executable instanceof spoon.reflect.declaration.CtConstructor<?> ctor
+                && RecordCtors.isCanonical(record, ctor)) return RecordCtors.componentTypes(record);
         List<CtTypeReference<?>> out = new ArrayList<>();
         for (var p : executable.getParameters()) out.add(p.getType());
         return out;

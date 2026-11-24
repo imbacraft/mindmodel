@@ -12,7 +12,7 @@
     100
    ],
    "receiver typing": [
-    107626,
+    107620,
     111512,
     97
    ],
@@ -32,12 +32,12 @@
     100
    ],
    "annotations understood": [
-    9068,
-    9413,
+    9286,
+    9713,
     96
    ]
   },
-  "unknownAnnotations": 5,
+  "unknownAnnotations": 6,
   "unknownBaseClasses": 54,
   "uncataloguedDependencies": 96
  },
@@ -60,12 +60,12 @@
    ],
    "project targets": [
     99196,
-    104922,
+    104912,
     95
    ],
    "ambiguous targets": [
     0,
-    104922,
+    104912,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -74,8 +74,8 @@
     100
    ],
    "annotations understood": [
-    32723,
-    33668,
+    32748,
+    33695,
     97
    ]
   },

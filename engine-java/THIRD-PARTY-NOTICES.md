@@ -5,7 +5,7 @@ The engine's own code is MIT, like the rest of mindmodel.
 
 ## Spoon
 
-- Module: `fr.inria.gforge.spoon:spoon-core` 11.2.1
+- Module: `fr.inria.gforge.spoon:spoon-core` 11.5.0
 - Licence: MIT OR CeCILL-C (dual)
 - Copyright: Inria and contributors
 - Project: https://github.com/INRIA/spoon

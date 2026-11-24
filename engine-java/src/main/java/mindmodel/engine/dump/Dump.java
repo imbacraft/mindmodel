@@ -23,7 +23,7 @@ import mindmodel.engine.SourceModel;
 public final class Dump {
 
     public static final int CONTRACT = 3;
-    public static final String ENGINE = "spoon-11.2.1";
+    public static final String ENGINE = "spoon-11.5.0";
 
     private Dump() {
     }

@@ -4,9 +4,9 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 (`/mindmodel-system`). Deterministic engine (scan → digest → validate → render) plus one writer subagent per run.
 
 ## Layout
-- `engine-java/`: the Java engine (Maven, Java 17+, Spoon 11.2.1), shaded into `engine-java/target/mindmodel-engine.jar`.
+- `engine-java/`: the Java engine (Maven, Java 17+, Spoon 11.5.0), shaded into `engine-java/target/mindmodel-engine.jar`.
   It answers which project method each call reaches; `engine/jvm.mjs` runs it and joins its answers onto the Node model.
-- `engine/`: Node scripts, no dependencies. `syntax/` (tree-sitter adapter: declarations, calls, package, imports),
+- `engine/`: Node scripts, no dependencies. `syntax/` (removed: the dump is the only Java reader),
   `model/` (the symbol model: full names, resolved annotations and supertypes), `catalogs/` (framework meaning as
   JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/`; `scan.mjs` and `system.mjs`
   orchestrate, `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs` keep their roles.
@@ -18,8 +18,8 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 
 ## Ground rules
 - **No installed Node dependencies; Node 18+.** No newer-than-18 APIs (e.g. iterator helpers like `matchAll(...).map`).
-  The only vendored third-party code is the pinned tree-sitter WASM in `engine/vendor/tree-sitter/` (hashes in its
-  README); no `npm install`, no `node_modules`, no native build.
+  Nothing third-party is vendored any more: the Spoon jar is the only outside code (pinned by `engine-java/engine.lock`),
+  and no `npm install`, no `node_modules`, no native build is involved.
 - **The Java engine needs JDK 17+ and Maven to build** (`mvn -f engine-java/pom.xml package`). It replaces the Node
   resolver's guesses with Spoon's answers wherever it can; a scan without the jar still runs on the guesses, so
   preflight blocks only when no JDK 17+ is on PATH. Nothing downloads the analyzed project's dependencies or runs its

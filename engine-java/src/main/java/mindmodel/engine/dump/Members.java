@@ -63,7 +63,12 @@ public final class Members {
                     if (member instanceof CtEnumValue<?> value && !constants.add(value.getSimpleName())) continue;
                     if (member instanceof CtEnumValue<?> value) w.row(g -> enumConstant(g, t, value, root));
                     else if (member instanceof CtField<?> field) w.row(g -> field(g, t, field, root));
-                    else if (member instanceof CtConstructor<?> ctor) w.row(g -> callable(g, t, ctor, true, root, returns));
+                    else if (member instanceof CtConstructor<?> ctor) {
+                        // A record's canonical constructor is written from its components below: Spoon 11.5 hands it
+                        // back in another order, and leaves it out entirely for a nested record.
+                        if (t instanceof CtRecord record && RecordCtors.isCanonical(record, ctor)) continue;
+                        w.row(g -> callable(g, t, ctor, true, root, returns));
+                    }
                     else if (member instanceof CtMethod<?> method) {
                         // `values()` and `valueOf(String)` are written by the compiler, not by the author: they have no
                         // source position, and a dump of declarations must not claim them.
@@ -83,6 +88,7 @@ public final class Members {
                     w.row(g -> synthRow(g, item));
                 }
                 if (t instanceof CtRecord record) {
+                    w.row(g -> recordConstructor(g, record, RecordCtors.canonical(record), root, returns));
                     Set<CtRecordComponent> components = record.getRecordComponents();
                     for (CtRecordComponent component : components) {
                         w.row(g -> recordComponent(g, record, component, root));
@@ -264,6 +270,47 @@ public final class Members {
         branches(g, m, root);
         Returns.write(g, returns.get(m));
         Ndjson.pos(g, Positions.of(m, root));
+    }
+
+    /**
+     * The canonical constructor: its parameters are the record components in declaration order, its line is the compact
+     * constructor when one is written and the record header otherwise. Calls to it resolve to this id.
+     */
+    private static void recordConstructor(JsonGenerator g, CtRecord owner, CtConstructor<?> ctor, Path root,
+            java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns) throws IOException {
+        g.writeStringField("kind", "constructor");
+        g.writeStringField("owner", Names.qualified(owner));
+        g.writeStringField("name", owner.getSimpleName());
+        g.writeArrayFieldStart("params");
+        for (CtRecordComponent component : RecordCtors.components(owner)) {
+            g.writeStartObject();
+            g.writeStringField("type", Names.typeText(component.getType()));
+            g.writeStringField("name", component.getSimpleName());
+            g.writeBooleanField("varargs", false);
+            Anns.write(g, component.getAnnotations());
+            g.writeEndObject();
+        }
+        g.writeEndArray();
+        g.writeStringField("id", RecordCtors.id(owner));
+        modifiers(g, RecordCtors.modifiers(owner, ctor));
+        g.writeBooleanField("hasBody", ctor == null || ctor.getBody() != null);
+        g.writeArrayFieldStart("throws");
+        if (ctor != null) for (CtTypeReference<?> thrown : ctor.getThrownTypes()) g.writeString(Names.typeText(thrown));
+        g.writeEndArray();
+        if (ctor == null) Anns.write(g, java.util.List.of());
+        else Anns.write(g, ctor.getAnnotations());
+        if (ctor != null) {
+            loops(g, ctor, root);
+            branches(g, ctor, root);
+            Returns.write(g, returns.get(ctor));
+        } else {
+            g.writeArrayFieldStart("loops");
+            g.writeEndArray();
+            g.writeArrayFieldStart("branches");
+            g.writeEndArray();
+            Returns.write(g, null);
+        }
+        Ndjson.pos(g, RecordCtors.citation(owner, ctor, root));
     }
 
     private static void recordComponent(JsonGenerator g, CtRecord owner, CtRecordComponent c, Path root)

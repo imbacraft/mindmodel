@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { jarPath } from './engine.mjs';
@@ -14,8 +15,28 @@ const REPO = path.dirname(HERE);
 // Where that jar is (env, cache, or this checkout's build) is engine.mjs's question, not this module's.
 export { jarPath };
 
+// Spoon 11.5 accepts a compliance level up to 26 (JDK 25); 11.2.1 died above 21. A project on a newer JDK therefore
+// gets the highest level this engine understands, and `capped` says so in the facts rather than pretending the source
+// parsed at its own level.
+export const MAX_COMPLIANCE = 26;
 export function compliance() {
-  return process.env.MINDMODEL_COMPLIANCE || '17';
+  const asked = Number(process.env.MINDMODEL_COMPLIANCE || 17);
+  return String(Number.isFinite(asked) ? Math.min(asked, MAX_COMPLIANCE) : 17);
+}
+export function complianceCapped() {
+  return Number(process.env.MINDMODEL_COMPLIANCE || 17) > MAX_COMPLIANCE;
+}
+{
+  const saved = process.env.MINDMODEL_COMPLIANCE;
+  process.env.MINDMODEL_COMPLIANCE = '27';
+  assert.equal(compliance(), '26', 'a level Spoon cannot take is capped, never passed through');
+  assert.equal(complianceCapped(), true);
+  process.env.MINDMODEL_COMPLIANCE = '25';
+  assert.equal(compliance(), '25', 'Java 25 parses at its own level');
+  assert.equal(complianceCapped(), false);
+  delete process.env.MINDMODEL_COMPLIANCE;
+  assert.equal(compliance(), '17');
+  if (saved !== undefined) process.env.MINDMODEL_COMPLIANCE = saved;
 }
 
 /** A fingerprint of the inputs: the jar and every Java file's path, size and mtime. */
