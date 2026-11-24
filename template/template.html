@@ -364,7 +364,7 @@ add('concepts', 'Core concepts', `
 
 add('regions', 'Regions', `
   <h2>Regions: where the code lives</h2>
-  <p class="lede">The codebase in ${M.regions.length} areas, in the order a professional meets them. Each is one capability end to end, its React pages and its Spring code together. The badge shows how often a region changed recently, i.e. where you are likely to work.</p>
+  <p class="lede">The codebase in ${M.regions.length} areas, in the order a professional meets them. Each is one capability end to end, its React pages and its Spring code together.</p>
   <p class="core">${linkSentence(M.regionSentence.text, 'region')}</p>${cites(M.regionSentence.cites)}
   <div class="regions">${M.regions.map((r) => `
     <article class="region-card" id="region-${r.id}" style="${rvars(r.id)}">
@@ -419,18 +419,17 @@ add('background', 'What runs on its own', `
 
 add('rules', 'Rules', `
   <h2>Rules</h2>
-  <p class="lede">What you would get wrong by reading the code naively, most important first: ranked by how much of the code a rule touches and how bad it is when broken.</p>
+  <p class="lede">What the code expects of you, most important first: each rule is ordered by how much of the code it touches and what breaks when it is broken.</p>
   <div class="rules">${M.rules.map((r, i) => `<div class="r"><div class="rank-col"><span class="rank">${i + 1}</span></div><div><h3>${esc(r.title)}</h3><p class="importance">${rich(r.importance)}</p><p>${rich(r.text)}</p>${cites(r.cites)}</div></div>`).join('')}</div>`);
 
 add('stories', 'Stories', `
   <h2>Stories: the main flows, most important first</h2>
-  <p class="lede">Ranked by how central the flow is to what the product does and how much of the system it runs through. Simulated scenarios with real code paths. Only the people and the values are made up; every step is traced and cited. Steps marked <span class="inferred">inferred</span> were not traced.</p>
   ${M.stories.map((st, i) => `
     <details class="story" id="story-${st.id}" ${i === 0 ? 'open' : ''}>
       <summary><span class="storykind"><span class="rank">${i + 1}</span> ${st.kind === 'failure' ? 'failure path' : 'flow'}</span><h3>${esc(st.title)}</h3><p class="importance">${rich(st.importance)}</p><p class="setup">${rich(st.setup)}</p>
         <div class="story-route">${[...new Set(st.steps.map((s) => s.region))].map(chip).join('')}</div></summary>
       <div class="body">
-        <ol class="steps">${st.steps.map((s) => `<li><div><div class="head">${chip(s.region)}${s.inferred ? '<span class="inferred">inferred</span>' : ''}</div>${rich(s.text)}${s.careful ? `<p class="careful"><b>Be careful:</b> ${rich(s.careful)}</p>` : ''}${cites(s.cites)}</div></li>`).join('')}</ol>
+        <ol class="steps">${st.steps.map((s) => `<li><div><div class="head">${chip(s.region)}${s.inferred ? '<span class="inferred">inferred</span>' : ''}</div>${rich(s.text)}${s.careful ? `<p class="careful"><b>Note:</b> ${rich(s.careful)}</p>` : ''}${cites(s.cites)}</div></li>`).join('')}</ol>
         <div class="takeaways"><b>What you now know</b><ul>${st.takeaways.map((t) => `<li>${rich(t)}</li>`).join('')}</ul></div>
       </div>
     </details>`).join('')}`);
