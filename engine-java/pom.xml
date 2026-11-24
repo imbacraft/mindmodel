@@ -11,6 +11,8 @@
   <name>mindmodel engine</name>
 
   <properties>
+    <!-- Same source, same jar: the lock file pins the sha256 of the shipped artifact. -->
+    <project.build.outputTimestamp>2026-01-01T00:00:00Z</project.build.outputTimestamp>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spoon.version>11.2.1</spoon.version>

@@ -58,7 +58,13 @@ The page is written to `<project>/mindmodel/index.html` (or `<folder>/mindmodel-
 ### Requirements
 - Claude Code (the analysis runs on your own Claude plan and model)
 - Node.js 18+ (the scanner, validator and renderer have no npm dependencies)
+- Java 17+ (the analyzer is a small Java program; nothing is built or run from your project)
 - git (optional; used for the "changes often / rarely" badges)
+
+The Java analyzer is shipped as a published artifact, not in the repository. The first run of a given version downloads
+it once (about 15 MB) into `~/.cache/mindmodel/engine/<version>/` and verifies its sha256 against `engine-java/engine.lock`
+before every use; that download is the only network access the plugin makes. To stay fully offline — or to point at your
+own build — set `MINDMODEL_ENGINE_JAR=/path/to/mindmodel-engine.jar`.
 
 ### Best results
 v1 is tuned for **Java backends on Spring or Jakarta EE** (JAX-RS, EJB, CDI, JMS, Jakarta Batch) with **React, Vue, Svelte or Angular** SPAs or **server-rendered (JSP/Thymeleaf/JSF)** frontends. File-based routing (Next.js, Nuxt, SvelteKit) is not read yet. Other stacks work with generic signals and give weaker results.

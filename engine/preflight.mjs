@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// Pre-flight for /mindmodel: is the code about to be mapped a clean, current state? Never fetches (no network).
+// Pre-flight for /mindmodel: is the code about to be mapped a clean, current state, and can the engine run here? It
+// never touches the network for the project's code; its one fetch is the engine jar, once per version (see engine.mjs).
 // Usage: node preflight.mjs <projectRoot>   Prints JSON: { ok, node, git, warnings[] }. ok=false means: ask the user before continuing.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import assert from 'node:assert';
+import { ensure } from './engine.mjs';
 
 const git = (root, args) => {
   try {
@@ -43,7 +45,7 @@ export function javaMajor(env = process.env) {
 }
 assert.equal(javaMajor({ PATH: '' }), null);
 
-export function preflight(root) {
+function preflightInner(root) {
   const warnings = [];
   const major = +process.versions.node.split('.')[0];
   if (major < 18)
@@ -145,13 +147,26 @@ export function preflight(root) {
   };
 }
 
+/**
+ * The gate a run passes through: the project's own state, the JDK, and an engine jar that is present and verified.
+ * `ok: false` means a block-level warning, and the caller must ask before going on.
+ */
+export async function preflight(root) {
+  const r = preflightInner(root);
+  const engine = await ensure({ log: (text) => r.warnings.push({ level: 'info', text }) });
+  if (!engine.ok) r.warnings.push({ level: 'block', text: engine.reason });
+  r.engine = { ok: engine.ok, source: engine.source ?? null, path: engine.path ?? null };
+  r.ok = !r.warnings.some((w) => w.level !== 'info');
+  return r;
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const root = path.resolve(process.argv[2] ?? '.');
   if (!fs.existsSync(root)) {
     console.log(JSON.stringify({ ok: false, warnings: [{ level: 'block', text: `No such directory: ${root}` }] }));
     process.exit(1);
   }
-  const r = preflight(root);
+  const r = await preflight(root);
   console.log(JSON.stringify(r, null, 1));
   process.exit(r.warnings.some((w) => w.level === 'block') ? 1 : 0);
 }

@@ -6,13 +6,13 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { jarPath } from './engine.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.dirname(HERE);
 
-export function jarPath() {
-  return process.env.MINDMODEL_ENGINE_JAR || path.join(REPO, 'engine-java', 'target', 'mindmodel-engine.jar');
-}
+// Where that jar is (env, cache, or this checkout's build) is engine.mjs's question, not this module's.
+export { jarPath };
 
 export function compliance() {
   return process.env.MINDMODEL_COMPLIANCE || '17';

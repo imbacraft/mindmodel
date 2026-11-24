@@ -18,8 +18,11 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/engine/preflight.mjs" "<root>"
    ```
-   It prints JSON with `ok` and a list of `warnings` (`block`, `confirm` or `info`). It never fetches.
-   - Any **`block`** (e.g. Node too old): show it and stop.
+   It prints JSON with `ok`, an `engine` object and a list of `warnings` (`block`, `confirm` or `info`). This is the only
+   step that may use the network: when no engine jar is present it downloads the pinned release once (~15 MB, sha256
+   verified) and reports it as an `info` line. If that fails, it is a `block` — show the message and stop; an offline
+   machine can set `MINDMODEL_ENGINE_JAR` to a local jar instead.
+   - Any **`block`** (e.g. Node too old, no Java 17+, engine jar unavailable): show it and stop.
    - **`ok: false`** (uncommitted changes, behind the remote, detached HEAD, not the default branch): show the `confirm` warnings to the user and **ask explicitly whether to continue** (e.g. with AskUserQuestion: *Continue anyway* / *Stop so I can commit, pull or switch branch*). Do not continue without an explicit yes; never decide for them.
    - **`ok: true`**: mention any `info` lines in one short sentence and continue.
 
