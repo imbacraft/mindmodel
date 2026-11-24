@@ -49,10 +49,20 @@ export const FLOW_WEIGHTS = {
   // Visibility: a public, visitor-facing path is what the product is; an admin or internal path is not. The facts
   // decide (security rules and the frontend's API calls), never the path's spelling alone.
   publicEntry: 12,
-  frontendCall: 4,
+  // Visibility scales with callers: an endpoint one page calls is a feature, an endpoint four pages call is the
+  // product's surface. The ladder is capped because a fifth page says nothing new about importance.
+  frontendCall: 4, // exactly one distinct frontend call site reaches the endpoint
+  frontendSpread: 6, // frontendSpreadAt or more distinct call sites
+  frontendWide: 8, // frontendWideAt or more, and never more than this
+  frontendSpreadAt: 2,
+  frontendWideAt: 4,
   internalEntry: -3,
   importEntityCap: 2, // a bulk import writes many entities because it loops them, not because it is complex
   entryGet: 0, // a GET with an effect is still a flow
+  // A flow that writes an entity the facts give a lifecycle (a status is set on it) moves a core object
+  // through its states. A flow that only writes supporting rows — a token, a join row, a queued email — moves nothing
+  // core. Once per flow, whatever its width.
+  coreObject: 2,
   centralityEntity: 2, // writes an entity many other types refer to (once per flow)
   centralityRefs: 20, // "many" = referenced by at least this many types
   entityCap: 5, // entity points stop here, however many entities a flow writes
@@ -86,6 +96,18 @@ function callClassifier(selected = []) {
   return { isPoll, isExecutor, meansOf };
 }
 const siteKey = (methodId, line, name) => `${methodId}|${line}|${name}`;
+// One frontend call site: the line when the fact carries one, the file alone when it does not, so the same page
+// fetching an endpoint twice is still one caller.
+const callSite = (c) => (Number.isFinite(c.line) ? `${c.file}|${c.line}` : String(c.file ?? ''));
+// The visibility ladder: 0 sites -> nothing, 1 -> frontendCall, 2-3 -> frontendSpread, 4+ -> frontendWide.
+const frontendPoints = (sites) =>
+  sites >= FLOW_WEIGHTS.frontendWideAt
+    ? FLOW_WEIGHTS.frontendWide
+    : sites >= FLOW_WEIGHTS.frontendSpreadAt
+      ? FLOW_WEIGHTS.frontendSpread
+      : sites > 0
+        ? FLOW_WEIGHTS.frontendCall
+        : 0;
 
 // Effects by call site: the fact families already decided what a write and an outside call are; this only indexes them.
 function effectIndex({ stateWrites = [], outsideCalls = [] }) {
@@ -251,6 +273,9 @@ export function buildFlows(
   const { isPoll, isExecutor } = callClassifier(selected);
   const effects = effectIndex({ stateWrites, outsideCalls });
   const statuses = statusIndex(statusSets);
+  // The entities the facts give a lifecycle: some site in the code sets a status on them. A flow that writes one moves
+  // a core object. Read from the lifecycle family, never from a name.
+  const lifecycleEntities = new Set(statusSets.filter((s) => s.method && s.entity).map((s) => simple(s.entity)));
   const boundary = new Map(); // method id -> boundary kind
   for (const t of transactions) if (BOUNDARY.has(t.kind) && t.method) boundary.set(t.method, t.kind);
   const refs = new Map((entities ?? []).map((e) => [e.name, e.refs ?? 0]));
@@ -543,6 +568,10 @@ export function buildFlows(
     for (const tr of trails ?? []) for (const id of tr.ids) pathIds.add(id);
     const withRisk = [...pathIds].map((id) => boundary.get(id)).find(Boolean);
     const central = written.filter((e) => (refs.get(e) ?? 0) >= FLOW_WEIGHTS.centralityRefs);
+    // Core object: does this flow write an entity the facts give a lifecycle? Supporting rows — a token, a queued
+    // email, a join row — have none, so a flow that only writes those moves nothing core.
+    const coreWritten = written.filter((e) => lifecycleEntities.has(simple(e)));
+    const coreUnconditional = coreWritten.some((e) => !entityCond.get(e));
 
     const why = [];
     let score = 0;
@@ -571,6 +600,12 @@ export function buildFlows(
       entityPoints,
       condNote(entityCond),
     );
+    // A flow that writes a lifecycle entity moves a core object; one that only writes supporting rows does not.
+    add(
+      `core object ${coreWritten.slice(0, 3).join(', ')}`,
+      coreWritten.length ? weigh(FLOW_WEIGHTS.coreObject, !coreUnconditional) : 0,
+      coreUnconditional || !coreWritten.length ? '' : 'conditional',
+    );
     // A lifecycle change is unconditional when any status set on the path runs on it; a transition that only one arm
     // performs counts at half weight, like any other conditional effect.
     const statusUnconditional = statusesSet.some((k) => !statusCond.get(k));
@@ -591,7 +626,10 @@ export function buildFlows(
       // A visitor-facing call is one the public site makes, not the admin panel: the frontend facts carry the page,
       // so a call from an admin/dashboard page does not count, however the API path is spelled.
       const calls = frontendPaths.filter((p) => p.path === path || p.path === path?.replace(/\{\}/g, '*'));
-      const publicPage = calls.some((c) => !/(?:^|\/)(?:admin|dashboard|internal)(?:\/|$)/i.test(c.file ?? ''));
+      const visitorCalls = calls.filter((c) => !/(?:^|\/)(?:admin|dashboard|internal)(?:\/|$)/i.test(c.file ?? ''));
+      const publicPage = visitorCalls.length > 0;
+      // Distinct call sites, not calls: one page with two fetches is one caller; four pages are the product's surface.
+      const sites = new Set(visitorCalls.map(callSite)).size;
       const anonymous = access === 'anonymous';
       // Staff APIs live under the tenant/admin/internal prefixes; a chain that permits them all does not make the
       // staff panel a visitor-facing surface.
@@ -599,7 +637,7 @@ export function buildFlows(
       const visitor = anonymous && !staffApi && (publicPage || /^\/api\/public\b/.test(path ?? ''));
       add(visitor ? 'visibility public' : anonymous ? 'visibility anonymous (staff UI)' : access === 'authenticated' || access.startsWith('role:') ? 'visibility internal' : '',
         visitor ? FLOW_WEIGHTS.publicEntry : access === 'authenticated' || access.startsWith('role:') ? FLOW_WEIGHTS.internalEntry : 0);
-      add('frontend-called', publicPage ? FLOW_WEIGHTS.frontendCall : 0);
+      add(`frontend-called${sites > 1 ? ` ${sites} sites` : ''}`, frontendPoints(sites));
     }
     const act = activityOf(codeOf.file);
     add(`activity ${act} commit(s)`, act > 0 ? FLOW_WEIGHTS.activity : 0);

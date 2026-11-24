@@ -304,7 +304,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 **Goal:** the reader sees the main flows run end to end through real code, which ties concepts, regions and the request path together.
 
-**Start from `facts.md` → Flow skeletons, computed:** each state-changing entry point with what happens in order (outside effects, saves, status changes, async hand-offs, after-commit work), ranked by how much of the core it touches. Pick and trace stories from these; open only the methods a step needs explained.
+**Start from `facts.md` → Flow skeletons, computed:** each state-changing entry point with what happens in order (outside effects, saves, status changes, async hand-offs, after-commit work), ranked by how much of the core it touches. The rank is a sum of facts, so read its parts: the entry kind, the entities written, how many distinct frontend call sites reach the endpoint, and whether the flow writes an entity that has a lifecycle — a flow that only writes supporting rows (a token, a queued email, a join row) ranks below one that moves a core object. Pick and trace stories from these; open only the methods a step needs explained.
 
 **An effect marked `(conditional)` may not happen.** It sits inside an `if`/`else`/`switch` arm or a `catch` on the traced path, so the entry's default path never reaches it — the default signup that calls Stripe only when the trial flag is off is the case this marks. Never write a conditional effect as if it always runs: give its condition in that step ("when `startTrial` is false, …"), or leave it out. It also counts for less in the flow's rank, so do not promote it to the main path to make a story read better.
 
