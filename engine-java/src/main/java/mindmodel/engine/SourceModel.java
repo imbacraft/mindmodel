@@ -6,12 +6,15 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import spoon.Launcher;
 import spoon.compiler.Environment;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.declaration.CtType;
+
+import mindmodel.engine.dump.Names;
 
 /**
  * A Spoon model over an explicit file list: no classpath, no comments, no compilation. Files are resolved through
@@ -89,6 +92,84 @@ public final class SourceModel {
     public List<CtInvocation<?>> allInvocations() {
         return new ArrayList<>(launcher.getModel().getElements(new spoon.reflect.visitor.filter.TypeFilter<>(
                 CtInvocation.class)));
+    }
+
+    /**
+     * Each input file's own package, from its compilation unit: {@code ""} for the default package. A file that declares
+     * no type is still a file with a package, and this is where that is read.
+     */
+    public Map<String, String> packages() {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        for (var unit : launcher.getFactory().CompilationUnit().getMap().entrySet()) {
+            String rel = relative(Path.of(unit.getKey()));
+            if (rel == null) continue;
+            var declared = unit.getValue().getPackageDeclaration();
+            out.put(rel, declared == null || declared.getReference() == null ? ""
+                    : declared.getReference().getQualifiedName());
+        }
+        return out;
+    }
+
+    /**
+     * Files whose declared types Spoon could not read at all: a cross-package static import of one of a type's members
+     * makes the reference builder lay a bare shell — a name, no position, no members — before the type's own file is
+     * read, and the shell keeps the name. The file is parsed; its type is not. Sorted, so a rebuild reads them in one
+     * order.
+     */
+    public List<String> unreadFiles() {
+        List<String> out = new ArrayList<>();
+        for (var unit : launcher.getFactory().CompilationUnit().getMap().entrySet()) {
+            String rel = relative(Path.of(unit.getKey()));
+            if (rel == null || unit.getValue().getDeclaredTypes().isEmpty()) continue;
+            boolean read = false;
+            for (CtType<?> t : unit.getValue().getDeclaredTypes())
+                if (t.getPosition() != null && t.getPosition().isValidPosition()) {
+                    read = true;
+                    break;
+                }
+            if (!read) out.add(rel);
+        }
+        out.sort(null);
+        return out;
+    }
+
+    /**
+     * The qualified names of the types Spoon built as bare shells — a name, no position, no members. They are what a
+     * static import of their members named.
+     */
+    public java.util.Set<String> unreadNames() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (var unit : launcher.getFactory().CompilationUnit().getMap().entrySet()) {
+            String rel = relative(Path.of(unit.getKey()));
+            if (rel == null) continue;
+            for (CtType<?> t : unit.getValue().getDeclaredTypes())
+                if (t.getPosition() == null || !t.getPosition().isValidPosition()) out.add(Names.qualified(t));
+        }
+        return out;
+    }
+
+    /**
+     * The files whose header statically imports a member of one of `fqns`. They are the ones that lay the shell, so a
+     * model built without them reads the type itself. The header is the file's own text: Spoon drops a static import it
+     * cannot resolve, which is exactly the import that lays the shell.
+     */
+    public List<String> filesImporting(java.util.Set<String> fqns) {
+        List<String> out = new ArrayList<>();
+        for (String rel : files)
+            for (String owner : mindmodel.engine.dump.Files.staticOwners(root, rel))
+                if (fqns.contains(owner)) {
+                    out.add(rel);
+                    break;
+                }
+        return out;
+    }
+
+    /** Project-relative name of a file under this root, or null when it is outside it or not one of the inputs. */
+    private String relative(Path file) {
+        Path p = realPath(file);
+        if (!p.startsWith(root)) return null;
+        String rel = root.relativize(p).toString().replace('\\', '/');
+        return files.contains(rel) ? rel : null;
     }
 
     /** Every type declared in one of the listed files, anonymous and local types included. */

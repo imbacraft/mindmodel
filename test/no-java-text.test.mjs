@@ -14,40 +14,20 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(here, '../engine');
 
-// `file:function` -> why that function may still read Java source. Every Phase 3 commit deletes its entries; nothing
-// may be added (the test fails on an offender that is not listed AND on an entry that no longer offends).
-export const ALLOWLIST = new Map([
-  // Phase 3.5 (scan): the whole-file reader and the tree-sitter package/import reader it imports.
-  ['engine/scan.mjs:<module>', 'imports engine/syntax/imports.mjs (tree-sitter) for packages and imports'],
-  ['engine/scan.mjs:scan', 'reads every .java into javaAll[].text and slices lines out of it (mains, views, sources)'],
-  ['engine/syntax/imports.mjs:sourceFacts', 'tree-sitter package and import reader; deleted in Phase 3.5'],
+// `file:function` -> why that function may still read Java source. The list is EMPTY: the only reader of `.java` is the
+// Spoon engine, and every extractor queries the dump. Nothing may be added — a fact the dump cannot answer is
+// `unresolved` with a reason, never a regex over source text.
+export const ALLOWLIST = new Map([]);
 
-  // Phase 3.2 (lifecycle) is ported: one lifecycle per (entity, status enum) from the dump's typed arguments,
-  // returns and field accesses. No entry here reads Java text any more.
+// The two paths Phase 3 deleted. A test fails if either comes back: restoring the mini-parser (or the vendored
+// tree-sitter build it needed) is not a way to answer a question the dump does not.
+export const DELETED = ['engine/syntax/imports.mjs', 'engine/vendor/tree-sitter'];
 
-  // Phase 3.1 (identity and context) is done: security's identity pass, its tenant sources and tenancy's store
-  // detection read the dump through engine/model/query.mjs. Phase 3.4 still owns the two config rules below.
-  ['engine/extract/security.mjs:shiroCodeRules', "Shiro path definitions read from the config class's text"],
-  ['engine/extract/security.mjs:springChains', "the HttpSecurity DSL read from the config class's text"],
-
-  // The system scan (engine/system.mjs) reads the .java of every service; it is not in the doc's table.
-  ['engine/system.mjs:channelName', 'resolves a channel expression against the class text'],
-  ['engine/system.mjs:codeIndex', "const, class and aggregate indexes built from every service's .java"],
-  ['engine/system.mjs:isApp', 'detects a Spring main by reading each listed .java'],
-  ['engine/system.mjs:jakartaJms', 'JNDI destinations read from the class text'],
-  ['engine/system.mjs:messaging', 'messaging calls matched line by line against the class text'],
-  ['engine/system.mjs:restCalls', 'Feign, discovery and URL calls matched against the class text'],
-  ['engine/system.mjs:systemScan', "reads every service's .java for messaging, calls and the server role"],
-]);
-
-// The doc's table (docs/one-engine.md, Phase 0 step 2) is not the whole list. Found here and missing there:
-// `engine/system.mjs` in full (7 functions: the system scan reads every service's .java). Listed there but not
-// offenders: `tenancy.mjs` store detection and security's identity pass (`authSources`, `requestReads`,
-// `securitySinks`, `tenantSources`, `verifiesIn`, … use dump rows and query primitives only, no source text);
-// `boot.mjs:124` is `eeBoot` reading a pom.xml profile, not Java.
-// Ported and gone from the table: `boot.mjs:deployables` (the dump's `isMain` and annotation rows),
-// `schedules.mjs:scheduleFacts` (the model's annotations and calls), `text/time.mjs:windowsIn` (call rows) and
-// `lifecycle.mjs` (the dump's typed arguments, returns and field accesses).
+// How the list emptied (docs/one-engine.md Phase 3): the doc's table was not the whole list. `engine/system.mjs` (seven
+// functions) read every service's `.java`; scan read every file once for packages, imports and lines; springChains and
+// shiroCodeRules read the config classes; the boot and lifecycle passes were ported before this round. All of them now
+// query the dump: calls with their receiver types and typed arguments, annotations, supertypes, field types and each
+// file's own package and imports.
 
 const TEXT_OPS = 'matchAll|match|split|replace|trim|includes|indexOf|slice|test|exec|length';
 
@@ -343,6 +323,15 @@ test('engine/ reads Java source only where the allowlist says it may', () => {
     stale,
     [],
     `ALLOWLIST entries no longer read Java source — delete them:\n${stale.map((k) => `  ${k}`).join('\n')}`,
+  );
+});
+
+test('the deleted reader is gone: neither the mini-parser nor the vendored tree-sitter exists', () => {
+  const back = DELETED.filter((p) => fs.existsSync(path.join(here, '..', p)));
+  assert.deepStrictEqual(
+    back,
+    [],
+    `these paths were deleted in Phase 3 and must stay deleted (the dump is the only reader of Java):\n${back.map((p) => `  ${p}`).join('\n')}`,
   );
 });
 

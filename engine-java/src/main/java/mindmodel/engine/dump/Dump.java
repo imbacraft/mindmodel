@@ -46,6 +46,9 @@ public final class Dump {
         List<Row> rows = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (CtType<?> t : model.allTypes()) collect(t, rows, seen, root);
+        // A file whose type came out as a bare shell is read again in its own model: the shell is a name and nothing
+        // else, so the declaration has to be read where no static import has laid the shell first.
+        List<String> unread = recover(root, model, inputs, compliance, rows, seen);
         rows.sort(ORDER);
         List<CtType<?>> types = new ArrayList<>();
         for (Row r : rows) types.add(r.type());
@@ -57,8 +60,29 @@ public final class Dump {
         Sites.Written written = Sites.write(types, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
         Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns());
         FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
-        int failed = Files.write(inputs, types, problems(model, root), root, outDir.resolve("files.ndjson"));
+        int failed = Files.write(inputs, types, model.packages(), problems(model, root, unread), root,
+                outDir.resolve("files.ndjson"));
         meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"));
+    }
+
+    /**
+     * Reads again the files whose declared types Spoon built as bare shells, and adds what they declare to `rows`.
+     * The second model holds every input except the files whose static imports name one of those types — the imports
+     * that laid the shells — so each type is read from its own source, with the rest of the project still in reach.
+     *
+     * @return the files still unread after that, to be reported rather than filled in.
+     */
+    private static List<String> recover(Path root, SourceModel model, List<String> inputs, int compliance,
+            List<Row> rows, java.util.Set<String> seen) throws IOException {
+        List<String> ghosts = model.unreadFiles();
+        if (ghosts.isEmpty()) return List.of();
+        // The shells carry no position but they do carry their names, which is what the imports were written with.
+        java.util.Set<String> skip = new java.util.HashSet<>(model.filesImporting(model.unreadNames()));
+        List<String> rest = new ArrayList<>(inputs);
+        rest.removeAll(skip);
+        SourceModel own = SourceModel.build(root, rest, compliance);
+        for (CtType<?> t : own.allTypes()) collect(t, rows, seen, root);
+        return own.unreadFiles();
     }
 
     /** A type and its nested types; anonymous and local classes are not types of their own (D2 keeps their calls). */
@@ -72,7 +96,7 @@ public final class Dump {
     }
 
     /** Parse errors by project-relative file, so the dump names what it could not read. */
-    private static java.util.Map<String, List<String>> problems(SourceModel model, Path root) {
+    private static java.util.Map<String, List<String>> problems(SourceModel model, Path root, List<String> unread) {
         java.util.Map<String, List<String>> out = new java.util.LinkedHashMap<>();
         Path base = root.toAbsolutePath().normalize();
         for (var problem : model.problems()) {
@@ -87,6 +111,8 @@ public final class Dump {
             String rel = base.relativize(file).toString().replace('\\', '/');
             out.computeIfAbsent(rel, k -> new ArrayList<>()).add(problem.getMessage());
         }
+        // A file whose type is still a bare shell after the second read: the row says so rather than claiming a type.
+        for (String rel : unread) out.computeIfAbsent(rel, k -> new ArrayList<>()).add("type-without-position");
         return out;
     }
 

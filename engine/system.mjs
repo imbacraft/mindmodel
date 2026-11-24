@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // System scan: the services in a folder and the proven connections between them (REST, Kafka, JMS).
-// Each service is scanned with the single-app scanner; this adds what crosses service boundaries and joins it.
+// The folder is read through one engine dump — the only reader of its Java — and every service's own facts come from
+// the single-app scanner; this adds what crosses service boundaries and joins it.
 // Usage: node system.mjs <folder> [outDir]   (default out: <folder>/mindmodel-system/.work/)
 import fs from 'node:fs';
 import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import { scan, summarize } from './scan.mjs';
 import { configKeys } from './extract/config.mjs';
+import { dumpFor } from './run.mjs';
+import { open as openDump } from './dump.mjs';
+import { buildModelFromDump } from './model/from-dump-model.mjs';
 
 // --- per-service extraction --------------------------------------------------------
 // Placeholders like "${app.topics.orders:orders}" resolve from the service's own config, else their default.
@@ -18,130 +22,259 @@ export function resolve(value, keys) {
   return m[2] != null && m[2] !== '' ? { name: m[2], via: `${m[1]} default` } : { name: null, unresolved: m[1] };
 }
 
-// Messaging is detected by patterns: built-ins for Spring Kafka, Kafka Streams, Spring Cloud Stream, JMS and
-// Eventuate Tram, plus a company's own wrapper patterns from <folder>/mindmodel-system.json. EXPR captures the
-// channel argument: a string literal, a constant (Topics.ORDERS), an Entity.class or a variable.
-const EXPR = '("[^"]*"|[A-Z]\\w*(?:\\.\\w+)+|[a-z]\\w*(?:\\.\\w+)*)',
-  NAMED = '("[^"]*"|[A-Z]\\w*\\.[A-Z_][A-Z0-9_]*)';
+const simple = (name) => String(name ?? '').split('.').pop();
+const relOf = (root, p) => path.relative(root, p).split(path.sep).join('/');
+const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
+const stringArg = (a) => (typeof a?.value === 'string' ? a.value : null);
+const quoted = (v) => `"${v}"`;
+// An annotation as the dump wrote it: its arguments are values, not the source text the model keeps for display.
+const annOn = (row, name) => (row?.ann ?? []).find((a) => a.name === name || simple(a.name) === name) ?? null;
+const typeRow = (module, t) => module?.db?.type(t.fqn) ?? null;
+const memberRow = (module, m) => (m.id ? (module.db.members.get(m.id) ?? null) : null);
+
+/** Every string an annotation value folds to, arrays included; a nested annotation names no channel. */
+const flatStrings = (value) => {
+  if (!value) return [];
+  if (value.kind === 'array') return (value.value ?? []).flatMap((v) => flatStrings(v));
+  if (value.kind === 'annotation' || value.kind === 'unresolved' || value.value == null) return [];
+  return typeof value.value === 'string' ? [value.value] : [];
+};
+
+
+// Messaging is one row per channel use: a listener annotation's topic, or a call on a messaging library type whose
+// channel argument the dump folded. `recv` is the receiver type's simple name (a suffix: a project's own publisher
+// extends the library's), `name` the method the call names.
+// `<folder>/mindmodel-system.json` may add a company's own wrappers: an entry's `re` is then tested against
+// `Type.method` — names the dump wrote, never source text.
 export const BUILTIN = [
-  { kind: 'kafka', dir: 'in', re: '@KafkaListener\\s*\\([^)]*?topics\\s*=\\s*\\{?\\s*EXPR' },
-  { kind: 'kafka', dir: 'out', re: '\\b\\w*(?:[kK]afka\\w*|template)\\.send\\s*\\(\\s*EXPR' },
-  // Kafka Streams only with a named topic: a variable here is almost always Java's own Stream API.
-  { kind: 'kafka', dir: 'in', re: '\\.stream\\s*\\(\\s*NAMED' },
-  { kind: 'kafka', dir: 'out', re: '\\.to\\s*\\(\\s*NAMED' },
-  { kind: 'kafka', dir: 'out', re: '[sS]treamBridge\\.send\\s*\\(\\s*EXPR' },
-  { kind: 'jms', dir: 'in', re: '@JmsListener\\s*\\([^)]*destination\\s*=\\s*EXPR' },
-  { kind: 'jms', dir: 'out', re: '\\b\\w*[jJ]ms\\w*\\.(?:convertAndSend|send)\\s*\\(\\s*EXPR' },
+  { kind: 'kafka', dir: 'in', annotation: 'KafkaListener', arg: 'topics' },
+  { kind: 'jms', dir: 'in', annotation: 'JmsListener', arg: 'destination' },
+  { kind: 'kafka', dir: 'out', recv: 'KafkaTemplate', name: 'send' },
+  { kind: 'kafka', dir: 'out', recv: 'StreamBridge', name: 'send' },
+  { kind: 'jms', dir: 'out', recv: 'JmsTemplate', name: 'convertAndSend' },
+  { kind: 'jms', dir: 'out', recv: 'JmsTemplate', name: 'send' },
   // Eventuate Tram (domain events and saga commands, carried by Kafka)
-  { kind: 'kafka', dir: 'out', re: '\\b\\w*[pP]ublisher\\.publish\\s*\\(\\s*EXPR', publisher: true },
-  { kind: 'kafka', dir: 'out', re: '\\.withChannel\\s*\\(\\s*EXPR' },
-  { kind: 'kafka', dir: 'in', re: '\\.fromChannel\\s*\\(\\s*EXPR' },
-  { kind: 'kafka', dir: 'in', re: '\\.(?:and)?[fF]orAggregateType\\s*\\(\\s*EXPR' },
+  { kind: 'kafka', dir: 'out', recv: 'DomainEventPublisher', name: 'publish', publisher: true },
+  { kind: 'kafka', dir: 'out', name: 'withChannel' },
+  { kind: 'kafka', dir: 'in', name: 'fromChannel' },
+  { kind: 'kafka', dir: 'in', name: 'forAggregateType' },
+  { kind: 'kafka', dir: 'in', name: 'andForAggregateType' },
+  // Kafka Streams only with a named topic: a variable here is almost always Java's own Stream API.
+  { kind: 'kafka', dir: 'in', recv: 'StreamsBuilder', name: 'stream', named: true },
+  { kind: 'kafka', dir: 'out', name: 'to', named: true },
 ];
-export function messaging(text, patterns = BUILTIN) {
-  const out = [],
-    compiled = patterns.map((p) => ({ ...p, rx: new RegExp(p.re.replace('EXPR', EXPR).replace('NAMED', NAMED), 'g') }));
-  text.split('\n').forEach((l, i) => {
-    for (const p of compiled)
-      for (const m of l.matchAll(p.rx))
-        out.push({
-          kind: p.kind,
-          dir: p.dir,
-          expr: m[1],
-          line: i + 1,
-          publisher: p.publisher,
-          recv: /(\w+)\.publish/.exec(m[0])?.[1],
-        });
-  });
-  return out;
-}
 
-// Jakarta EE JMS, which line patterns can't read: a message-driven bean's destination sits in a multi-line activation
-// config, and a sender sends to a field injected by JNDI name (@Resource(lookup = "...")). Both sides use the JNDI name.
-export function jakartaJms(text) {
-  const lineAt = (i) => text.slice(0, i).split('\n').length,
-    out = [];
-  if (/@MessageDriven\b/.test(text)) {
-    const d =
-      /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(text) ??
-      /mappedName\s*=\s*"([^"]+)"/.exec(text);
-    if (d) out.push({ kind: 'jms', dir: 'in', name: d[1], line: lineAt(d.index) });
+/**
+ * Messaging rows for one module: `{kind, dir, line, expr, raw, arg, recv, file}`. `expr` is the argument as the dump
+ * spells it (a literal in quotes, a constant by name, `X.class`), `arg` the typed value `channelName` resolves.
+ */
+export function messaging(module, patterns = BUILTIN) {
+  const out = [];
+  const { db, types } = module ?? {};
+  if (!db) return out;
+  for (const t of types ?? []) {
+    for (const m of t.methods ?? []) {
+      const row = memberRow(module, m);
+      for (const rule of patterns.filter((p) => p.annotation)) {
+        const a = annOn(row, rule.annotation);
+        if (!a) continue;
+        for (const v of flatStrings(a.args?.[rule.arg]))
+          out.push({
+            kind: rule.kind,
+            dir: rule.dir,
+            line: a.line || m.start,
+            expr: quoted(v),
+            raw: quoted(v),
+            arg: { kind: 'literal', text: quoted(v), value: v, valueKind: 'string' },
+            file: module.prefix + t.file,
+            mfile: t.file,
+          });
+      }
+      for (const c of m.calls ?? []) {
+        const recvName = simple(c.recvFqn);
+        for (const rule of patterns) {
+          if (rule.annotation) continue;
+          if (rule.recv && !recvName.endsWith(rule.recv)) continue;
+          if (rule.name && c.name !== rule.name) continue;
+          if (rule.re && !new RegExp(rule.re).test(`${recvName}.${c.name}`)) continue;
+          const arg = dumpArgs(db, c)[0];
+          if (!arg) continue;
+          // A streams `stream(...)`/`to(...)` with a variable names no topic: Java's own Stream API looks the same.
+          if (rule.named && !namedTopic(arg)) continue;
+          out.push({
+            kind: rule.kind,
+            dir: rule.dir,
+            line: c.line,
+            expr: String(arg.text ?? ''),
+            raw: String(arg.text ?? ''),
+            arg,
+            recv: rule.publisher ? recvName : undefined,
+            publisher: rule.publisher,
+            file: module.prefix + t.file,
+            mfile: t.file,
+          });
+        }
+      }
+    }
   }
-  const jndi = new Map(
-    [
-      ...text.matchAll(
-        /@Resource\s*\(\s*(?:lookup|name|mappedName)\s*=\s*"([^"]+)"\s*\)\s*(?:(?:private|protected|public|final)\s+)*[\w.]+\s+(\w+)\s*;/g,
-      ),
-    ].map((m) => [m[2], m[1]]),
-  );
-  if (jndi.size)
-    for (const m of text.matchAll(/\.send\s*\(\s*(\w+)\s*,/g))
-      if (jndi.has(m[1])) out.push({ kind: 'jms', dir: 'out', name: jndi.get(m[1]), line: lineAt(m.index) });
-  return out;
+  return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.dir.localeCompare(b.dir));
 }
 
-// Folder-wide index for resolving channel expressions: string constants (Class.NAME) and class names to FQNs.
-export function codeIndex(files) {
+/** A literal or a `Class.CONSTANT` read: the two shapes a named topic takes. */
+const namedTopic = (arg) => arg.kind === 'literal' || arg.kind === 'constant';
+
+// Jakarta EE JMS, which a listener's activation config names instead of a topic: a message-driven bean's destination is
+// in `@MessageDriven`'s activation properties, and a sender sends to a field injected by JNDI name (`@Resource`).
+export function jakartaJms(module) {
+  const { db, types } = module ?? {};
+  const out = [];
+  if (!db) return out;
+  for (const t of types ?? []) {
+    const row = typeRow(module, t);
+    const mdb = annOn(row, 'MessageDriven');
+    if (mdb) {
+      const dest = messageDestination(mdb);
+      if (dest) out.push({ kind: 'jms', dir: 'in', name: dest, line: mdb.line || t.start, file: module.prefix + t.file });
+    }
+    // A JNDI-injected destination: the field names the queue, and a send on that field is a producer for it.
+    const injected = new Map();
+    for (const f of t.fields ?? []) {
+      const fieldRow = (db.membersOf(t.fqn) ?? []).find((x) => x.kind === 'field' && x.name === f.name);
+      const a = annOn(fieldRow, 'Resource');
+      if (!a) continue;
+      const name = ['lookup', 'name', 'mappedName'].map((k) => flatStrings(a.args?.[k])[0]).find(Boolean);
+      if (name) injected.set(`${t.fqn}#${f.name}`, name);
+    }
+    if (!injected.size) continue;
+    for (const m of t.methods ?? [])
+      for (const c of m.calls ?? []) {
+        if (c.name !== 'send' && c.name !== 'convertAndSend') continue;
+        const arg = dumpArgs(db, c)[0];
+        const name = arg?.field ? injected.get(arg.field) : null;
+        if (name) out.push({ kind: 'jms', dir: 'out', name, line: c.line, file: module.prefix + t.file });
+      }
+  }
+  return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+}
+
+/** The destination an MDB's activation config names: `destinationLookup`, `destinationName`, `destination`, `mappedName`. */
+function messageDestination(a) {
+  const props = flatAnnotationValues(a.args?.activationConfig);
+  for (const p of props) {
+    const key = ['propertyName'].map((k) => flatStrings(p?.args?.[k])[0])[0];
+    if (!/^destination(?:Lookup|Name)?$/.test(key ?? '')) continue;
+    const value = flatStrings(p.args.propertyValue)[0];
+    if (value) return value;
+  }
+  return flatStrings(a.args?.mappedName)[0] ?? null;
+}
+
+const flatAnnotationValues = (value) => {
+  if (!value) return [];
+  if (value.kind === 'array') return (value.value ?? []).flatMap((v) => flatAnnotationValues(v));
+  if (value.kind !== 'annotation') return [];
+  return [value.value];
+};
+
+/** Folder-wide index for resolving channel expressions: string constants, simple names to FQNs, aggregate publishers. */
+export function codeIndex(model) {
   const constants = new Map(),
     fqn = new Map(),
     aggregateOf = new Map();
-  for (const { path: p, text } of files) {
-    const cls = path.basename(p, '.java'),
-      pkg = /^\s*package\s+([\w.]+)\s*;/m.exec(text)?.[1];
-    if (pkg) fqn.set(cls, `${pkg}.${cls}`);
-    for (const m of text.matchAll(/\bstatic\s+(?:final\s+)?String\s+(\w+)\s*=\s*"([^"]*)"/g)) {
-      constants.set(`${cls}.${m[1]}`, m[2]);
-      if (!constants.has(m[1])) constants.set(m[1], m[2]);
+  for (const t of model?.types?.values() ?? []) {
+    fqn.set(t.name, t.fqn);
+    for (const [id, value] of model.constants ?? []) {
+      if (!id.startsWith(`${t.fqn}.`)) continue;
+      const name = id.slice(t.fqn.length + 1);
+      constants.set(`${t.name}.${name}`, value);
+      if (!constants.has(name)) constants.set(name, value);
     }
-    const agg = /class\s+\w+\s+extends\s+\w*Aggregate\w*Publisher\w*\s*<\s*(\w+)/.exec(text);
-    if (agg) aggregateOf.set(cls, agg[1]);
+    // An aggregate publisher (`FooDomainEventPublisher extends ...Aggregate...Publisher<Foo>`) publishes to Foo's channel.
+    const base = (t.supers ?? []).find((s) => /Aggregate\w*Publisher/.test(s.text ?? ''));
+    const aggregate = /<\s*([\w.]+)/.exec(base?.text ?? '')?.[1];
+    if (aggregate) aggregateOf.set(t.name, simple(aggregate));
   }
   return { constants, fqn, aggregateOf };
 }
 
-// Resolve a channel expression to a name. Unresolvable names stay visible as unresolved, never guessed.
-export function channelName(x, text, keys, ix) {
-  const e = x.expr;
-  if (/^".*"$/.test(e)) return resolve(e.slice(1, -1), keys);
-  if (/\.class$/.test(e)) {
-    const c = e
-      .replace(/\.class$/, '')
-      .split('.')
-      .pop();
-    return ix.fqn.has(c) ? { name: ix.fqn.get(c), via: `${c}.class` } : { name: null, unresolved: e };
-  }
-  if (ix.constants.has(e)) return { name: ix.constants.get(e), via: e };
-  // A field or parameter injected from config: @Value("${key}") ... String var
-  const inj = new RegExp(
-    `@Value\\(\\s*"(\\$\\{[^}]+\\})"\\s*\\)\\s*(?:private\\s+|protected\\s+|public\\s+)?(?:final\\s+)?String\\s+${e.replace(/^this\./, '')}\\b`,
-  ).exec(text);
-  if (inj) return resolve(inj[1], keys);
-  // An aggregate publisher (FooDomainEventPublisher extends Abstract...Publisher<Foo>) publishes to Foo's channel.
-  if (x.publisher && x.recv) {
-    const t = new RegExp(`\\b(\\w+)\\s+${x.recv}\\s*[;=)]`).exec(text)?.[1];
-    const agg = t && ix.aggregateOf.get(t);
-    if (agg && ix.fqn.has(agg)) return { name: ix.fqn.get(agg), via: `${t} → ${agg}` };
-  }
-  return { name: null, unresolved: e };
+/** A type's simple name as the file that writes it resolves it: its imports, then the one type of that name. */
+function typeNamed(model, file, name) {
+  const resolved = model?.resolveIn?.(file, name);
+  const hit = resolved ? model.types.get(resolved) : null;
+  if (hit) return hit;
+  const names = [...(model?.types?.values() ?? [])].filter((t) => t.name === name);
+  return names.length === 1 ? names[0] : null;
 }
 
-// REST calls to other services: Feign clients, URLs with a host name, lb:// gateway routes.
-export function restCalls(text) {
+// Resolve a channel expression to a name from what the dump folded. Unresolvable names stay visible as unresolved.
+export function channelName(x, module, keys, ix) {
+  const { db, model } = module ?? {};
+  const arg = x.arg ?? {};
+  // The argument as the dump spells it (a constant's name, a class literal, a variable): display, never a fact.
+  const written = String(arg.text ?? x.expr ?? '');
+  // A class literal (`Consumer.class`) names the event type an Eventuate publisher carries.
+  if (/\.class$/.test(written)) {
+    const name = written.replace(/\.class$/, '').split('.').pop();
+    const type = typeNamed(model, x.mfile ?? x.file, name);
+    return type ? { name: type.fqn, via: `${name}.class` } : { name: null, unresolved: written };
+  }
+  const literal = stringArg(arg);
+  if (literal != null) {
+    const r = resolve(literal, keys);
+    return r.unresolved ? r : { name: r.name, via: r.via };
+  }
+  // A constant field: the value the dump folded, named as the source names it.
+  if (arg.kind === 'constant' && arg.value != null) return { name: String(arg.value), via: written };
+  // A field or parameter injected from config: `@Value("${key}") String var` — the field's own annotation says which key.
+  if (arg.kind === 'field' && arg.field) {
+    const owner = model?.types?.get(String(arg.field).split('#')[0]);
+    const fieldRow = (db?.membersOf(owner?.fqn) ?? []).find(
+      (x) => x.kind === 'field' && `${x.owner}#${x.name}` === arg.field,
+    );
+    const key = flatStrings(annOn(fieldRow, 'Value')?.args?.value)[0];
+    if (key) return resolve(key, keys);
+    return { name: null, unresolved: written };
+  }
+  // An aggregate publisher publishes to the aggregate's channel.
+  if (x.publisher && x.recv) {
+    const aggregate = ix.aggregateOf.get(x.recv);
+    if (aggregate && ix.fqn.has(aggregate)) return { name: ix.fqn.get(aggregate), via: `${x.recv} → ${aggregate}` };
+  }
+  return { name: null, unresolved: written };
+}
+
+// REST calls to other services: Feign clients, discovery lookups, and URLs (or `lb://` routes) whose host the dump
+// folded. A URL built in a local variable is not a value the dump has: those calls stay out, never a guess.
+const URL_HOST = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::(\d+))?(\/[^?#]*)?$/;
+export function restCalls(module) {
+  const { db, types } = module ?? {};
   const out = [];
-  // A dotted host (github.com) is outside the system: the host stops at the dot, so the closing quote never follows.
-  text.split('\n').forEach((l, i) => {
-    let m;
-    if ((m = /@FeignClient\s*\(([^)]*)/.exec(l))) {
-      const n = /(?:name|value)\s*=\s*"([^"]+)"/.exec(m[1]) ?? /^\s*"([^"]+)"/.exec(m[1]);
-      if (n) out.push({ host: n[1], path: '', line: i + 1, via: 'feign' });
+  if (!db) return out;
+  for (const t of types ?? []) {
+    const feign = annOn(typeRow(module, t), 'FeignClient');
+    if (feign) {
+      const host = flatStrings(feign.args?.name)[0] ?? flatStrings(feign.args?.value)[0];
+      if (host) out.push({ host, path: '', line: feign.line ?? t.start, via: 'feign', file: module.prefix + t.file });
     }
-    for (const d of l.matchAll(/\b(?:getInstances|choose|getInstance)\s*\(\s*"([a-z][a-z0-9-]*)"/g))
-      out.push({ host: d[1], path: '', line: i + 1, via: 'discovery' });
-    for (const u of l.matchAll(/"(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::\d+)?(\/[^"]*)?"/g))
-      if (!/^(localhost|www)$/.test(u[1]))
-        out.push({ host: u[1], path: (u[2] ?? '').split('?')[0], line: i + 1, via: 'url' });
-  });
-  return out;
+    for (const m of t.methods ?? []) {
+      for (const c of m.calls ?? []) {
+        const rows = dumpArgs(db, c);
+        if (/^(getInstances|choose|getInstance)$/.test(c.name)) {
+          const d = stringArg(rows[0]);
+          if (d && /^[a-z][a-z0-9-]*$/.test(d))
+            out.push({ host: d, path: '', line: c.line, via: 'discovery', file: module.prefix + t.file });
+        }
+        // A URL the dump folded, wherever it is passed: a client's `uri(...)`, a route, a webhook.
+        for (const a of rows) {
+          const value = stringArg(a);
+          const u = value == null ? null : URL_HOST.exec(value);
+          if (!u || /^(localhost|www)$/.test(u[1])) continue;
+          out.push({ host: u[1], path: (u[3] ?? '').split('?')[0], line: c.line, via: 'url', file: module.prefix + t.file });
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.via.localeCompare(b.via));
 }
 
 // Gateway routes in YAML: "uri: lb://vets-service" followed by "- Path=/api/vet/**".
@@ -196,7 +329,8 @@ const javaFiles = (dir) => {
   walk(path.join(dir, 'src/main'));
   return out;
 };
-// An app is a Spring Boot main, or a Jakarta EE / MicroProfile deployable (a WAR or EAR, or a server plugin in its build).
+// An app is a Spring Boot configuration class, a Spring Boot servlet initializer (a WAR), or a Jakarta EE /
+// MicroProfile deployable (a WAR or EAR, or a server plugin in its build).
 const eeApp = (dir) => {
   const p = path.join(dir, 'pom.xml');
   if (!fs.existsSync(p)) return false;
@@ -208,14 +342,69 @@ const eeApp = (dir) => {
     )
   );
 };
-const isApp = (dir) =>
+const BOOT_START = new Set(['SpringBootApplication', 'SpringBootConfiguration']);
+// A Spring Boot app declares one of the boot annotations, extends the servlet initializer (a WAR), or runs
+// `SpringApplication.run` from a main method — the dump's `isMain` and the call's receiver type say so.
+const bootsFromMain = (t) => (t.methods ?? []).some((m) => m.isMain && (m.calls ?? []).some((c) => /(^|\.)SpringApplication(?:Builder)?$/.test(c.recvFqn ?? '')));
+const isApp = (dir, types) =>
   eeApp(dir) ||
-  javaFiles(dir).some((f) => {
-    const t = fs.readFileSync(f, 'utf8');
-    return (
-      /static\s+void\s+main\s*\(/.test(t) && /SpringApplication|@SpringBootApplication|@SpringBootConfiguration/.test(t)
-    );
-  });
+  (types ?? []).some(
+    (t) =>
+      (t.ann ?? []).some((a) => BOOT_START.has(a.name)) ||
+      (t.supers ?? []).some((s) => /SpringBootServletInitializer$/.test(s.fqn ?? simple(s.text))) ||
+      bootsFromMain(t),
+  );
+
+/** The package and imports each file wrote, from the dump's own header reader. */
+const sourcesOf = (db) =>
+  new Map(
+    [...db.files].map(([p, f]) => [
+      p,
+      {
+        pkg: f.package ?? '',
+        imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })),
+      },
+    ]),
+  );
+
+/** A module's size, from the dump: the last line each of its types ends on. */
+const linesOf = (types) => {
+  const files = new Map();
+  for (const t of types) files.set(t.file, Math.max(files.get(t.file) ?? 0, t.end ?? 0));
+  return [...files.values()].reduce((a, b) => a + b, 0);
+};
+
+/** One dump of the whole folder, and the model built from it: the only reader of the modules' Java. */
+function folderModel(folder, modules) {
+  const rels = modules.flatMap((d) => javaFiles(d).map((p) => relOf(folder, p)));
+  if (!rels.length) return null;
+  const run = dumpFor(folder, rels, { outDir: path.join(folder, 'mindmodel-system', '.work', 'dump') });
+  if (!run.ok) throw new Error(`mindmodel: no engine dump for ${rels.length} Java file(s) (${run.reason})`);
+  const db = openDump(run.dir);
+  return { db, model: buildModelFromDump(db, sourcesOf(db)) };
+}
+
+/**
+ * One module's types, out of the folder's dump. A module owning a file the folder dump could not parse has a sibling
+ * declaring the same type (a lambda or API variant); that module is dumped again on its own, because its build is what
+ * its calls belong to and a copied class name must not empty its messaging.
+ */
+function moduleOf(folder, dir, db, model, collided) {
+  const rel = relOf(folder, dir);
+  // A module at the folder itself has no prefix: its files are already relative to the folder.
+  const prefix = rel ? `${rel}/` : '';
+  if (collided.has(dir)) {
+    const own = dumpFor(dir, javaFiles(dir).map((p) => relOf(dir, p)));
+    if (own.ok) {
+      const ownDb = openDump(own.dir);
+      const ownModel = buildModelFromDump(ownDb, sourcesOf(ownDb));
+      const types = [...ownModel.types.values()];
+      return { dir, prefix, db: ownDb, model: ownModel, types, lines: linesOf(types) };
+    }
+  }
+  const types = [...model.types.values()].filter((t) => t.file.startsWith(prefix));
+  return { dir, prefix, db, model, types, lines: linesOf(types) };
+}
 
 export function systemScan(folder) {
   const modules = findServices(folder);
@@ -224,94 +413,103 @@ export function systemScan(folder) {
     ? (JSON.parse(fs.readFileSync(path.join(folder, 'mindmodel-system.json'), 'utf8')).messaging ?? [])
     : [];
   const patterns = [...BUILTIN, ...custom];
-  const ix = codeIndex(
-    modules.flatMap((d) => javaFiles(d).map((f) => ({ path: f, text: fs.readFileSync(f, 'utf8') }))),
+  const folderFacts = folderModel(folder, modules);
+  const db = folderFacts?.db ?? null;
+  const model = folderFacts?.model ?? null;
+  const ix = codeIndex(model);
+  // Modules with a file the folder dump could not parse: the dump keeps one type per name, so a module that copies a
+  // sibling's class needs its own dump.
+  const collided = new Set(
+    [...(db?.files?.values() ?? [])]
+      .filter((f) => (f.errors ?? []).length)
+      .map((f) => modules.find((d) => f.path.startsWith(`${relOf(folder, d)}/`)))
+      .filter(Boolean),
   );
+  const byModule = new Map(modules.map((d) => [d, moduleOf(folder, d, db, model, collided)]));
   // Modules without a Spring entry point are shared libraries (DTOs, events), not services.
-  const libraries = modules.filter((d) => !isApp(d)).map((d) => path.relative(folder, d));
-  const services = modules.filter(isApp).map((dir) => {
-    const facts = scan(dir);
-    const res = path.join(dir, 'src/main/resources');
-    const cfgFiles = !fs.existsSync(res)
-      ? []
-      : fs
-          .readdirSync(res, { withFileTypes: true })
-          .filter((e) => e.isFile() && /^(application|bootstrap)\.(ya?ml|properties)$/.test(e.name))
-          .map((e) => path.join(dir, 'src/main/resources', e.name));
-    const keys = new Map(),
-      ymls = [];
-    for (const f of cfgFiles) {
-      const t = fs.readFileSync(f, 'utf8');
-      ymls.push({ f, t });
-      for (const [k, v] of configKeys(t, f.endsWith('.properties')))
-        keys.set(k, { ...v, file: path.relative(folder, f) });
-    }
-    const name = keys.get('spring.application.name')?.value ?? path.basename(dir);
-    const port = /^\d+$/.test(keys.get('server.port')?.value ?? '') ? keys.get('server.port').value : null;
-    const rel = (p) => path.relative(folder, path.join(dir, p));
-    const java = javaFiles(dir);
-    const msgs = [],
-      calls = [];
-    for (const f of java) {
-      const t = fs.readFileSync(f, 'utf8'),
-        r = path.relative(folder, f);
-      for (const x of messaging(t, patterns)) {
-        const res = channelName(x, t, keys, ix);
-        msgs.push({ kind: x.kind, dir: x.dir, line: x.line, ...res, raw: x.expr, cite: `${r}:${x.line}` });
+  const libraries = modules.filter((d) => !isApp(d, byModule.get(d).types)).map((d) => path.relative(folder, d));
+  const services = modules
+    .filter((dir) => isApp(dir, byModule.get(dir).types))
+    .map((dir) => {
+      const facts = scan(dir);
+      const res = path.join(dir, 'src/main/resources');
+      const cfgFiles = !fs.existsSync(res)
+        ? []
+        : fs
+            .readdirSync(res, { withFileTypes: true })
+            .filter((e) => e.isFile() && /^(application|bootstrap)\.(ya?ml|properties)$/.test(e.name))
+            .map((e) => path.join(dir, 'src/main/resources', e.name));
+      const keys = new Map(),
+        ymls = [];
+      for (const f of cfgFiles) {
+        const t = fs.readFileSync(f, 'utf8');
+        ymls.push({ f, t });
+        for (const [k, v] of configKeys(t, f.endsWith('.properties')))
+          keys.set(k, { ...v, file: path.relative(folder, f) });
       }
-      for (const x of jakartaJms(t)) msgs.push({ ...x, via: 'JNDI name', raw: x.name, cite: `${r}:${x.line}` });
-      for (const c of restCalls(t)) calls.push({ ...c, cite: `${r}:${c.line}` });
-    }
-    for (const [k, v] of keys) {
-      const u = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::(\d+))?(?=[:/]|$)/.exec(v.value);
-      if (u && u[1] !== 'www' && k !== 'server.port')
-        calls.push({
-          host: u[1] === 'localhost' ? `localhost:${u[2]}` : u[1],
-          path: '',
-          via: 'config',
-          cite: `${v.file}:${v.line}`,
-        });
-    }
-    // Destinations bound from config that is not in the repo (env vars, deployment): named, marked unresolved.
-    const unresolvedDest = [];
-    for (const f of java) {
-      const t = fs.readFileSync(f, 'utf8'),
-        pre = /@ConfigurationProperties\s*\(\s*(?:prefix\s*=\s*)?"([^"]+)"/.exec(t)?.[1];
-      if (pre)
-        for (const m of t.matchAll(/private\s+String\s+(\w*(?:Url|Uri|Host))\s*;/g)) {
-          const key = `${pre}.${m[1]}`;
-          if (![...keys.keys()].some((k) => k.toLowerCase().replace(/-/g, '') === key.toLowerCase()))
-            unresolvedDest.push(key);
+      const name = keys.get('spring.application.name')?.value ?? path.basename(dir);
+      const port = /^\d+$/.test(keys.get('server.port')?.value ?? '') ? keys.get('server.port').value : null;
+      const module = byModule.get(dir);
+      const cite = (file, line) => `${file}:${line}`;
+      const msgs = [];
+      for (const x of messaging(module, patterns)) {
+        const r = channelName(x, module, keys, ix);
+        msgs.push({ kind: x.kind, dir: x.dir, line: x.line, ...r, raw: x.raw, cite: cite(x.file, x.line) });
+      }
+      for (const x of jakartaJms(module))
+        msgs.push({ ...x, via: 'JNDI name', raw: x.name, cite: cite(x.file, x.line) });
+      const calls = restCalls(module).map(({ file, ...c }) => ({ ...c, cite: cite(file, c.line) }));
+      for (const [k, v] of keys) {
+        const u = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::(\d+))?(?=[:/]|$)/.exec(v.value);
+        if (u && u[1] !== 'www' && k !== 'server.port')
+          calls.push({
+            host: u[1] === 'localhost' ? `localhost:${u[2]}` : u[1],
+            path: '',
+            via: 'config',
+            cite: `${v.file}:${v.line}`,
+          });
+      }
+      // Destinations bound from config that is not in the repo (env vars, deployment): named, marked unresolved.
+      const unresolvedDest = [];
+      for (const t of module.types) {
+        const pre = flatStrings(annOn(typeRow(module, t), 'ConfigurationProperties')?.args?.prefix)[0];
+        if (!pre) continue;
+        for (const f of t.fields ?? []) {
+          if (!/(Url|Uri|Host)$/.test(f.name)) continue;
+          const key = `${pre}.${f.name}`;
+          if (![...keys.keys()].some((k) => k.toLowerCase().replace(/-/g, '') === key.toLowerCase())) unresolvedDest.push(key);
         }
-    }
-    for (const { f, t } of ymls)
-      for (const g of gatewayRoutes(t))
-        calls.push({
-          host: g.host,
-          path: g.paths.join(','),
-          via: 'gateway',
-          cite: `${path.relative(folder, f)}:${g.line}`,
-        });
-    const text = java.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
-    const role = /@EnableConfigServer/.test(text)
-      ? 'config server'
-      : /@EnableEurekaServer/.test(text)
-        ? 'discovery server'
-        : /@EnableAdminServer/.test(text)
-          ? 'admin server'
-          : null;
-    return {
-      name,
-      dir: path.relative(folder, dir) || '.',
-      role,
-      facts,
-      msgs,
-      calls,
-      unresolvedDest,
-      port,
-      lines: text.split('\n').length,
-    };
-  });
+      }
+      for (const { f, t } of ymls)
+        for (const g of gatewayRoutes(t))
+          calls.push({
+            host: g.host,
+            path: g.paths.join(','),
+            via: 'gateway',
+            cite: `${path.relative(folder, f)}:${g.line}`,
+          });
+      // Plumbing the system relies on to run (config, discovery, admin): named, not a business service.
+      const hasAnn = (name) => module.types.some((t) => annOn(typeRow(module, t), name));
+      const role = hasAnn('EnableConfigServer')
+        ? 'config server'
+        : hasAnn('EnableEurekaServer')
+          ? 'discovery server'
+          : hasAnn('EnableAdminServer')
+            ? 'admin server'
+            : null;
+      return {
+        name,
+        dir: path.relative(folder, dir) || '.',
+        role,
+        facts,
+        msgs,
+        calls,
+        unresolvedDest,
+        port,
+        // The module's size, from the dump: the last line each of its types ends on.
+        lines: module.lines,
+      };
+    });
 
   // Two services with the same spring.application.name (a copy-paste slip) would merge in discovery: tell them apart by folder.
   const dupes = services.filter((s) => services.filter((o) => o.name === s.name).length > 1);
@@ -350,7 +548,7 @@ export function systemScan(folder) {
       const target = byName.get(c.host) ?? byName.get(norm(c.host));
       const ep =
         target && c.path && c.via !== 'gateway'
-          ? target.facts.endpoints.find((e) => e.path === c.path.replace(/\{[^}]+\}/g, '{}').replace(/\/$/, ''))
+          ? target.facts.endpoints.find((e) => e.path === c.path.replace(/\{[^}]+}/g, '{}').replace(/\/$/, ''))
           : null;
       rest.push({
         from: s.name,

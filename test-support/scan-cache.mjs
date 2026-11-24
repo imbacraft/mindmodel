@@ -30,7 +30,16 @@ function hashTree(dirs) {
   return h.digest('hex').slice(0, 16);
 }
 
-const engineKey = hashTree([path.join(here, '../engine'), path.join(here, '../schema')]);
+// The Java engine decides what the dump says, so a rebuilt jar invalidates every entry too: the tree that reads it and
+// the artifact it reads are one engine, and a cache keyed on the Node half alone serves a scan of the old answers.
+const jar = path.join(here, '../engine-java/target/mindmodel-engine.jar');
+const jarStamp = fs.existsSync(jar) ? `${fs.statSync(jar).size}:${fs.statSync(jar).mtimeMs}` : 'none';
+const engineKey = crypto
+  .createHash('sha256')
+  .update(hashTree([path.join(here, '../engine'), path.join(here, '../schema'), path.join(here, '../engine-java/src')]))
+  .update(jarStamp)
+  .digest('hex')
+  .slice(0, 16);
 const cfg = loadApps(testDir);
 const commitOf = (name) => (cfg.apps.find((a) => a.name === name) ?? {}).commit ?? 'unknown';
 

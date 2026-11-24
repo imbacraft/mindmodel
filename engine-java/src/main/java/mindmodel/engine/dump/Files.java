@@ -16,8 +16,10 @@ import spoon.reflect.reference.CtReference;
 import spoon.reflect.reference.CtTypeReference;
 
 /**
- * files.ndjson: one row per input file, with its package, its imports, whether Spoon could read it, and the errors it
- * reported. A file that produced no type at all is an error too — silence is the one thing the dump may not do.
+ * files.ndjson: one row per input file, with its own package, its imports, whether Spoon could read it, and the errors it
+ * reported. The package comes from the file's compilation unit, never from a type: a file that declares nothing still
+ * declares where it lives. A file that produced no type at all is an error too — silence is the one thing the dump may
+ * not do — and the only such error left is a file Spoon read no unit for.
  *
  * Imports are the file's own header, read by Spoon's compilation unit when that fills them, and by a lexical header
  * reader when it does not (a no-classpath unit can leave the list empty). {@code importsOrigin} says which answered;
@@ -40,8 +42,11 @@ public final class Files {
     }
 
     /** @return how many input files carry at least one error. */
-    public static int write(List<String> inputs, List<CtType<?>> types, Map<String, List<String>> problems,
-            Path root, Path out) throws IOException {
+    public static int write(List<String> inputs, List<CtType<?>> types, Map<String, String> packages,
+            Map<String, List<String>> problems, Path root, Path out) throws IOException {
+        // A file's package is the one its own header declares, read from its compilation unit. Taking it from a type
+        // borrowed the type's file instead: a file that declares no type (all of it commented out) has a package and no
+        // type, and a file whose type Spoon built as a bare shell has neither — the row has to say which file it is.
         Map<String, String> pkgOf = new LinkedHashMap<>();
         Map<String, List<Import>> written = new LinkedHashMap<>();
         for (CtType<?> t : types) {
@@ -71,10 +76,11 @@ public final class Files {
         }
         try (Ndjson w = new Ndjson(out)) {
             for (String path : rows) {
-                String pkg = pkgOf.get(path);
+                String pkg = packages.getOrDefault(path, pkgOf.get(path));
                 List<String> errors = new ArrayList<>(problems.getOrDefault(path, List.of()));
-                if (pkg == null && !path.endsWith("package-info.java") && !path.endsWith("module-info.java"))
-                    errors.add("no-types-parsed");
+                // A file Spoon read no compilation unit for is the one genuine parse failure left: nothing about it was
+                // read. A file whose unit exists was parsed, whether it declares a type or nothing but comments.
+                if (!packages.containsKey(path)) errors.add("not-read");
                 if (!errors.isEmpty()) failed++;
                 List<Import> imports = importsOf.get(path);
                 String from = origin.get(path);
@@ -153,6 +159,24 @@ public final class Files {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    /**
+     * The types a file's header statically imports a member of: `import static a.b.C.NAME;` names `a.b.C`, and
+     * `import static a.b.C.Nested;` could be either, so both spellings are returned. Read by the same header reader that
+     * answers the imports row — a static import Spoon cannot resolve never reaches its own list.
+     */
+    public static java.util.Set<String> staticOwners(Path root, String path) {
+        java.util.Set<String> out = new TreeSet<>();
+        List<Import> lines = header(root, path);
+        if (lines == null) return out;
+        for (Import item : lines) {
+            if (!item.isStatic()) continue;
+            out.add(item.name());
+            int last = item.name().lastIndexOf('.');
+            if (!item.wildcard() && last > 0) out.add(item.name().substring(0, last));
+        }
+        return out;
     }
 
     private static void row(JsonGenerator g, String path, String pkg, List<String> errors, List<Import> imports,

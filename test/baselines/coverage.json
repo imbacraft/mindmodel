@@ -12,18 +12,18 @@
     100
    ],
    "receiver typing": [
-    104779,
+    107626,
     111512,
-    94
+    97
    ],
    "project targets": [
-    51427,
-    53714,
+    52011,
+    54049,
     96
    ],
    "ambiguous targets": [
     0,
-    53714,
+    54049,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -32,7 +32,7 @@
     100
    ],
    "annotations understood": [
-    9066,
+    9068,
     9413,
     96
    ]
@@ -44,28 +44,28 @@
  "fineract": {
   "rates": {
    "supertypes resolved": [
-    4343,
-    4343,
+    4348,
+    4348,
     100
    ],
    "fields with a resolved type": [
-    27327,
-    27327,
+    27362,
+    27362,
     100
    ],
    "receiver typing": [
-    143360,
-    154466,
-    93
+    148293,
+    154470,
+    96
    ],
    "project targets": [
-    97190,
-    103182,
-    94
+    99196,
+    104922,
+    95
    ],
    "ambiguous targets": [
     0,
-    103182,
+    104922,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -74,7 +74,7 @@
     100
    ],
    "annotations understood": [
-    32721,
+    32723,
     33668,
     97
    ]
@@ -101,9 +101,9 @@
     97
    ],
    "project targets": [
-    612,
+    623,
     630,
-    97
+    99
    ],
    "ambiguous targets": [
     0,

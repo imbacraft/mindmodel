@@ -1,7 +1,16 @@
-// Import-time self-checks moved out of engine/system.mjs (Task 9); the assertions are unchanged.
+// Import-time self-checks moved out of engine/system.mjs (Task 9), now over a dump: the messaging listener annotations,
+// the Kafka/JMS/Eventuate calls with their folded channel arguments, the Jakarta EE JNDI destinations, the channel-name
+// resolution, and the REST calls a service makes. The Java lives on disk (test-support/fixtures/system-messaging).
 import test from 'node:test';
-import assert from 'node:assert';
-import { resolve, messaging, jakartaJms, channelName, restCalls, gatewayRoutes } from '../engine/system.mjs';
+import assert from 'node:assert/strict';
+import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
+import { BUILTIN, channelName, codeIndex, jakartaJms, messaging, restCalls, resolve, gatewayRoutes } from '../engine/system.mjs';
+
+const module_ = () => {
+  const { db, model } = dumpOfLayers(['system-messaging']);
+  return { db, model, types: [...model.types.values()], prefix: '' };
+};
+const ix = () => codeIndex(module_().model);
 
 test('resolve: a placeholder resolves from config, else its default', () => {
   assert.deepStrictEqual(resolve('${t.orders:orders}', new Map()), { name: 'orders', via: 't.orders default' });
@@ -12,73 +21,65 @@ test('resolve: a placeholder resolves from config, else its default', () => {
   assert.deepStrictEqual(resolve('${t.x}', new Map()), { name: null, unresolved: 't.x' });
 });
 
-test('messaging: built-in patterns find channel expressions, streams are not messaging', () => {
-  const t =
-    '@KafkaListener(id = "o", topics = "orders", groupId = "p")\ntemplate.send("payment-orders", id, o);\nbuilder.stream("stock-orders").to("orders");\n@JmsListener(destination = "${q.audit:audit}")\njmsTemplate.convertAndSend("invoices", x);\n.fromChannel(KitchenServiceChannels.COMMAND_CHANNEL)\ndomainEventPublisher.publish(Consumer.class, id, events);\n.andForAggregateType(K.CH)';
+test('messaging: a listener annotation, a template send, a stream and a saga channel', { skip: NO_ENGINE }, () => {
+  const rows = messaging(module_())
+    .map((x) => `${x.kind}:${x.dir}:${x.expr}`)
+    .sort();
+  assert.deepStrictEqual(rows, [
+    'jms:in:"${audit.queue:audit}"', // @JmsListener's destination: a JMS listener, its placeholder kept
+    'jms:out:"invoices"', // jmsTemplate.convertAndSend
+    'kafka:in:"orders"', // @KafkaListener(topics = "orders")
+    'kafka:in:"shop.Order"', // andForAggregateType("shop.Order")
+    'kafka:in:Channels.COMMAND_CHANNEL', // fromChannel(constant)
+    'kafka:in:Channels.TICKET_EVENT_CHANNEL', // forAggregateType(constant)
+    'kafka:out:"payment-orders"', // kafkaTemplate.send
+    'kafka:out:ticket', // the aggregate publisher's publish call, resolved below
+  ].sort((a, b) => a.localeCompare(b)) );
+});
+
+test('messaging: a project publisher extends the library one and publishes to its aggregate', { skip: NO_ENGINE }, () => {
+  const m = module_();
+  const rows = messaging(m).filter((x) => x.kind === 'kafka' && x.dir === 'out');
+  const publish = rows.find((x) => x.expr === 'ticket');
+  assert.ok(publish, `the publisher call is a row: ${rows.map((r) => r.expr).join(', ')}`);
+  const r = channelName(publish, m, new Map(), codeIndex(m.model));
+  assert.equal(r.name, 'shop.Ticket', `the aggregate names the channel: ${JSON.stringify(r)}`);
+  assert.match(r.via, /TicketDomainEventPublisher → Ticket/);
+});
+
+test('jakartaJms: an MDB destination and a JNDI-injected sender', { skip: NO_ENGINE }, () => {
   assert.deepStrictEqual(
-    messaging('StreamSupport.stream(result.spliterator(), false)\nlist.stream().map(x).collect(toList())').length,
-    0,
-  );
-  assert.deepStrictEqual(
-    messaging(t).map((x) => `${x.kind}:${x.dir}:${x.expr}`),
-    [
-      'kafka:in:"orders"',
-      'kafka:out:"payment-orders"',
-      'kafka:in:"stock-orders"',
-      'kafka:out:"orders"',
-      'jms:in:"${q.audit:audit}"',
-      'jms:out:"invoices"',
-      'kafka:in:KitchenServiceChannels.COMMAND_CHANNEL',
-      'kafka:out:Consumer.class',
-      'kafka:in:K.CH',
-    ],
+    jakartaJms(module_()).map((x) => `${x.dir}:${x.name}`),
+    ['in:java:app/jms/Orders', 'out:java:app/jms/Invoices'],
   );
 });
 
-test('jakartaJms: an MDB destination and a JNDI-injected sender', () => {
-  assert.deepStrictEqual(
-    jakartaJms(
-      '@MessageDriven(activationConfig = {\n  @ActivationConfigProperty(\n    propertyName = "destinationLookup",\n    propertyValue = "java:app/jms/Q")})\nclass C {}',
-    ),
-    [{ kind: 'jms', dir: 'in', name: 'java:app/jms/Q', line: 3 }],
-  );
-  assert.deepStrictEqual(
-    jakartaJms(
-      '@Resource(lookup = "java:app/jms/Q")\nprivate Destination q;\nvoid f() { ctx.createProducer()\n  .send(q, x); }',
-    ),
-    [{ kind: 'jms', dir: 'out', name: 'java:app/jms/Q', line: 4 }],
-  );
-});
-
-test('channelName: constant, aggregate publisher, class and @Value injection', () => {
-  const ix = {
-    constants: new Map([['K.CH', 'kitchenService']]),
-    fqn: new Map([['Ticket', 'a.b.Ticket']]),
-    aggregateOf: new Map([['TicketPub', 'Ticket']]),
-  };
-  assert.equal(channelName({ expr: 'K.CH' }, '', new Map(), ix).name, 'kitchenService');
+test('channelName: a constant, a class literal and an injected placeholder', { skip: NO_ENGINE }, () => {
+  const m = module_();
+  const index = codeIndex(m.model);
+  const key = (name) => ({ name: 'x' });
   assert.equal(
-    channelName({ expr: 'ticket', publisher: true, recv: 'pub' }, 'private TicketPub pub;', new Map(), ix).name,
-    'a.b.Ticket',
+    channelName({ arg: { kind: 'constant', text: 'Channels.COMMAND_CHANNEL', value: 'kitchenCommands' }, mfile: 'src/main/java/shop/TicketService.java', file: 'src/main/java/shop/TicketService.java' }, m, key, index).name,
+    'kitchenCommands',
   );
-  assert.equal(channelName({ expr: 'Ticket.class' }, '', new Map(), ix).name, 'a.b.Ticket');
   assert.equal(
-    channelName(
-      { expr: 'queueName' },
-      '@Value("${risk.queueName}")\n\tprivate String queueName;',
-      new Map([['risk.queueName', { value: 'risk-q' }]]),
-      ix,
-    ).name,
-    'risk-q',
+    channelName({ arg: { kind: 'field', text: 'Ticket.class' }, mfile: 'src/main/java/shop/TicketService.java', file: 'src/main/java/shop/TicketService.java' }, m, key, index).name,
+    'shop.Ticket',
   );
+  // `@Value("${audit.queue}")` on the field names the key a channel expression resolves through.
+  const injected = channelName(
+    { arg: { kind: 'field', field: 'shop.AuditListener#queueName', text: 'queueName' }, mfile: 'src/main/java/shop/AuditListener.java', file: 'src/main/java/shop/AuditListener.java' },
+    m,
+    key,
+    index,
+  );
+  assert.equal(injected.unresolved, 'queueName', 'a field with no @Value is unresolved, not guessed');
 });
 
-test('restCalls: url, Feign client and discovery hosts', () => {
+test('restCalls: a URL literal, a Feign client and a discovery host', { skip: NO_ENGINE }, () => {
   assert.deepStrictEqual(
-    restCalls(
-      '.uri("http://customers-service/owners/{id}")\n@FeignClient(name = "billing")\ndiscoveryClient.getInstances("customers-service").get(0)',
-    ).map((x) => `${x.host}${x.path}`),
-    ['customers-service/owners/{id}', 'billing', 'customers-service'],
+    restCalls(module_()).map((x) => `${x.via} ${x.host}${x.path}`).sort(),
+    ['discovery visits-service', 'feign billing', 'url customers-service/owners/{id}', 'url vets-service/api/vet'].sort(),
   );
 });
 
@@ -86,4 +87,9 @@ test('gatewayRoutes: lb:// host with its path predicates', () => {
   assert.deepStrictEqual(gatewayRoutes('uri: lb://vets-service\n  predicates:\n    - Path=/api/vet/**'), [
     { host: 'vets-service', line: 1, paths: ['/api/vet/**'] },
   ]);
+});
+
+test('the built-in rules are data: a type suffix, a method name, an annotation', () => {
+  assert.ok(BUILTIN.every((r) => r.annotation || r.name));
+  assert.ok(BUILTIN.some((r) => r.annotation === 'KafkaListener' && r.arg === 'topics'));
 });

@@ -353,9 +353,11 @@
   "recv": "fromDateParam",
   "recvFqn": "org.apache.fineract.infrastructure.core.api.DateParam",
   "recvHow": "param",
-  "how": "external",
-  "targets": [],
-  "note": "DateParam.java yields no type inside the full fineract model (parses alone), so this site stays unresolved; documented gap"
+  "how": "direct",
+  "targets": [
+   "org.apache.fineract.infrastructure.core.api.DateParam#getDate(String,DateFormat,String)"
+  ],
+  "note": "DateParam.java is read even though another file statically imports its constants, so this site resolves to the method it calls (it used to stay unresolved: a documentation gap, now closed)"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/data/AccountTransfersDataValidator.java",

@@ -77,6 +77,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       // flow needs the parameter list to do that.
       typeParams: row.typeParams ?? [],
       modifiers: row.modifiers ?? [],
+      // An abstract class serves nothing by itself: its mappings run in its concrete subclasses.
+      abstract: (row.modifiers ?? []).includes('abstract'),
       ann: annOf(row, row.pos?.line ?? 1, (name) => resolveIn(file, name)),
       supers: (row.supertypes ?? []).map((s) => ({ kind: s.kind, text: s.text, fqn: s.fqn ?? null })),
       fields: [],
@@ -138,6 +140,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
         })),
         ann: annOf(member, at.line, (name) => resolveIn(t.file, name)),
         hasBody: member.hasBody !== false,
+        // `public static void main(String[])`: the dump's answer, so an entry point is never a regex over text.
+        isMain: member.isMain === true,
         isPublic: (member.modifiers ?? []).includes('public'),
         returnText: member.returns ?? null,
         start: startsAt(member, at.line),
@@ -168,8 +172,12 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     const targets = (row.targets ?? []).map((t) => (typeof t === 'string' ? { id: t, kind: 'declared' } : t));
     const call = {
       kind: 'call',
+      // The dump's own row id: a reader hands it back to the query layer for the typed arguments (`argsOf`), the
+      // receiver's type arguments and the targets.
+      id: row.id ?? null,
       name: row.name,
       line: row.line,
+      col: row.col ?? null,
       // Contract 2 arguments are typed objects; the extractors still read the written text of the first two.
       args: (row.args ?? []).slice(0, 2).map((a) => (typeof a === 'string' ? a : a?.text ?? '')),
       recvFqn: row.recv?.type ?? null,
@@ -335,7 +343,7 @@ function resolver(sources, types, known = new Set()) {
   assert.equal(impl.methods[0].id, 'a.Impl#find(Long)');
   assert.deepStrictEqual(impl.methods[0].branches, [{ start: 5, end: 6, kind: 'if' }]);
   assert.deepStrictEqual(impl.methods[0].calls[0], {
-    kind: 'call', name: 'save', line: 5, args: [], recvFqn: 'a.Port', recvHow: 'field', typeArgs: [],
+    kind: 'call', id: null, name: 'save', line: 5, col: null, args: [], recvFqn: 'a.Port', recvHow: 'field', typeArgs: [],
     targets: ['a.Port#save()'], targetKinds: new Map([['a.Port#save()', 'declared']]), uniqueImpl: false,
     how: 'direct', origin: 'java',
   });

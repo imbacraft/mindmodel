@@ -8,7 +8,6 @@ import path from 'node:path';
 import { javaFacts } from './extract/lifecycle.mjs';
 import { bootFacts, deployables } from './extract/boot.mjs';
 import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
-import { sourceFacts } from './syntax/imports.mjs';
 import { bindingRates } from './model/calls.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
 import { dumpFor } from './run.mjs';
@@ -246,6 +245,51 @@ export function ensureWork(root) {
   return work;
 }
 
+const simpleName = (text) => String(text ?? '').replace(/<[\s\S]*/, '').split('.').pop().trim();
+// An annotation as the facts state it: its name and the argument list the dump wrote, never the source line.
+const describeAnn = (a) => `@${a.name}${a.args ? `(${a.args})` : ''}`.slice(0, 160);
+
+/**
+ * The places one shape appears in a set of types, as `{file, line, text}`: an annotation on the type or its methods, a
+ * supertype, a field's type, a method's return type, or a call. Each `text` says what the shape is — the supertype
+ * implemented, the annotation written, the argument passed — and a place is listed once.
+ */
+export function modelEntries(types, { types: tSpec = {}, methods: mSpec = {}, fields: fSpec = {} } = {}) {
+  const out = [];
+  for (const t of types ?? []) {
+    for (const a of t.ann ?? [])
+      if ((tSpec.ann ?? []).some((re) => re.test(a.name))) out.push({ file: t.file, line: a.line ?? t.nameLine, text: describeAnn(a) });
+    for (const sp of t.supers ?? []) {
+      const name = simpleName(sp.fqn ?? sp.text ?? '');
+      if (!tSpec.supers || !tSpec.supers.test(name)) continue;
+      out.push({ file: t.file, line: t.nameLine, text: `${sp.kind === 'interface' ? 'implements' : 'extends'} ${name}` });
+    }
+    for (const f of t.fields ?? [])
+      if (fSpec.type && (fSpec.type.test(f.type ?? '') || fSpec.type.test(f.typeFqn ?? '')))
+        out.push({ file: t.file, line: f.line, text: `${f.type || f.typeFqn} ${f.name}` });
+    for (const m of t.methods ?? []) {
+      for (const a of m.ann ?? [])
+        if ((mSpec.ann ?? []).some((re) => re.test(a.name))) out.push({ file: t.file, line: a.line ?? m.nameLine, text: describeAnn(a) });
+      if (mSpec.returns && mSpec.returns.test(m.returns ?? ''))
+        out.push({ file: t.file, line: m.nameLine, text: `${m.returns} ${m.name}()` });
+      for (const c of m.calls ?? []) {
+        if (!mSpec.calls || !mSpec.calls.test(c.name ?? '')) continue;
+        if (mSpec.recv && !mSpec.recv.test(c.recvFqn ?? '')) continue;
+        out.push({ file: t.file, line: c.line, text: `${c.name}(${(c.args ?? [])[0] ?? ''})` });
+      }
+    }
+  }
+  const seen = new Set();
+  return out
+    .filter((e) => {
+      const k = `${e.file}:${e.line}:${e.text}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+}
+
 /**
  * A run writes a new map from the current facts, so the previous `mindmodel.json` must not sit at the path the writer
  * writes: left there, the writer patches the old map and a plugin upgrade never shows. Renaming keeps the old file
@@ -275,27 +319,29 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     byExt[e] = (byExt[e] ?? 0) + 1;
   }
 
-  // Java model
-  const javaAll = files
-    .filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f))
-    .map((p) => {
-      const text = read(p);
-      // One parse per file: the scanner, the facts and the validator all read this index.
-      const ix = sourceFacts(text);
-      return { p: R(p), text, ix };
-    });
+  // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
+  const javaAll = files.filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f)).map((p) => ({ p: R(p) }));
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
   const java = javaAll.filter((j) => !app.isExcluded(j.p));
   // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs). Read once, used for
   // catalog selection (which frameworks are installed) and as a fact family of its own.
   const buildFiles = readBuild(root, files.map(R));
-  // The model comes first: one base (the dump) answers identity, members and calls. Everything below is a query over
-  // it — the app's own files, annotations, supertypes and enum values — never a second parse.
+  // The model comes first: one base (the dump) answers identity, members, calls and each file's package and imports.
+  // Everything below is a query over it — the app's own files, annotations, supertypes and enum values — never a
+  // second parse.
   const dumpRun = dumpFor(root, javaAll.map((j) => j.p));
   const dump = dumpRun.ok ? openDump(dumpRun.dir) : null;
   const sources = new Map(
-    javaAll.map((j) => [j.p, { pkg: j.ix.pkg, imports: j.ix.imports, degraded: !!j.ix.degraded }]),
+    [...(dump?.files?.entries() ?? [])].map(([p, f]) => [
+      p,
+      {
+        pkg: f.package ?? '',
+        imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })),
+        // A file the engine could not read at all is degraded: the dump says so rather than leaving a silent empty list.
+        degraded: (f.errors ?? []).length > 0,
+      },
+    ]),
   );
   // Which frameworks are installed decides how a wildcard import of a name the project does not declare resolves
   // (`jakarta.persistence.*` with `@Entity`), so the catalogs are selected before the model is built.
@@ -310,22 +356,15 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     throw new Error(`mindmodel: no engine dump for ${javaAll.length} Java file(s) (${dumpRun.reason})`);
   const callStats = dump ? callStatsOf(model, dump) : { answered: 0, targets: 0, ambiguous: 0, unanswered: 0, sites: 0 };
   bindingRates(model);
-  // One file -> its methods, for the passes that walk a file's lines and need the method a line belongs to.
-  const methodsByFile = new Map();
-  for (const t of model.types.values()) {
-    if (!methodsByFile.has(t.file)) methodsByFile.set(t.file, []);
-    methodsByFile.get(t.file).push(...(t.methods ?? []));
-  }
 
   // This deployable's types: the app excludes other modules, and a test fixture is not part of its schema.
   const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !/\/src\/test\//.test(t.file));
   const hasAnn = (t, simple) =>
     (t.ann ?? []).some((a) => a.name === simple || String(a.fqn ?? '').endsWith(`.${simple}`));
-  // A model type in the shape the later passes already read. Identity (name, kind, annotations, supertypes, enum
-  // values) is the model's; `views` and `scheduled` are what a controller's body *says*, which is text, not types.
-  const texts = new Map(javaAll.map((j) => [j.p, j]));
+  // A model type in the shape the later passes already read: identity (name, kind, annotations, supertypes, enum
+  // values) and members are the model's. A controller's view names are string returns the model does not resolve as
+  // paths, so `views` stays empty rather than being read out of the source.
   const asEntry = (t) => {
-    const src = texts.get(t.file) ?? {};
     return {
       p: t.file,
       name: t.name,
@@ -336,15 +375,10 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
       implements: (t.supers ?? []).filter((s) => s.kind === 'interface').map((s) => s.text).join(','),
       constants: t.enumValues ?? [],
       scheduled: scheduledOf(t),
-      views: viewsOf(src.text ?? ''),
+      views: [],
       table: tableOf(t),
-      // The model's own members, in the shape the later passes read; `ix` stays only for the lines they slice.
       fields: (t.fields ?? []).map((f) => ({ name: f.name, type: f.type, typeFqn: f.typeFqn, ann: f.ann, line: f.line })),
       methods: t.methods ?? [],
-      ix: src.ix ?? {},
-      views: src.views ?? [],
-      scheduled: src.scheduled ?? [],
-      text: src.text ?? '',
       type: t,
     };
   };
@@ -377,15 +411,6 @@ function scheduledOf(t) {
   }
   return jobs.sort((a, b) => a.line - b.line);
 }
-
-/** A controller method returning a view name: a string return is a line pattern, not a type. */
-const viewsOf = (text) =>
-  text
-    .split('\n')
-    .flatMap((line, i) => {
-      const rv = /return\s+"((?:redirect:|forward:)?[\w\-/{}.]+)"/.exec(line);
-      return rv ? [{ view: rv[1], line: i + 1 }] : [];
-    });
 
 const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
 
@@ -427,7 +452,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         // app's frontend — the same rule that keeps `src/test/` out of the Java model.
         !isE2ePath(R(f)),
     )
-    .map((p) => ({ p: R(p), text: read(p) }));
+    .map((p) => ({ p: R(p), source: read(p) }));
   const views = files
     .filter(
       (f) =>
@@ -487,12 +512,12 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   // The same rule appears in several copies of a config (startup, manager, e2e); one fact per prefix and access.
   const ruleSeen = new Set();
   const securityRules = [
-    ...springChains(javaAll, methodsByFile),
+    ...springChains(model),
     ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !/\/src\/test\//.test(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
     ...files
       .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !/\/src\/test\//.test(f))
       .flatMap((f) => shiroRules(read(f), R(f))),
-    ...shiroCodeRules(model, (rel) => read(path.join(root, rel))),
+    ...shiroCodeRules(model),
     ...files
       .filter((f) => /web\.xml$/.test(f) && !/\/src\/test\//.test(f))
       .flatMap((f) => webXmlRules(read(f), R(f))),
@@ -533,10 +558,8 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   // Where the user comes from, from what the code configures: the security chain's own calls (httpBasic(),
   // oauth2ResourceServer().jwt(), formLogin()/sessionManagement()) and filters that authenticate from a header by
   // setting the security context. Structural, not text matching.
-  const lineIn = (file, needle) => {
-    const i = read(path.join(root, file)).split('\n').findIndex((l) => l.includes(needle));
-    return i >= 0 ? `${file}:${i + 1}` : null;
-  };
+  // The citation is the call's own line, which the dump wrote: the source text is not consulted for it.
+  const citeOf = (t, c) => `${t.file}:${c.line}`;
   const userSources = [];
   const addUser = (kind, cite, why) => {
     if (cite && !userSources.some((u) => u.kind === kind)) userSources.push({ kind, cites: [cite], why });
@@ -544,24 +567,29 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   for (const t of model.types.values())
     for (const m of t.methods ?? [])
       for (const c of m.calls ?? []) {
-        if (c.name === 'httpBasic') addUser('basic auth', lineIn(t.file, 'httpBasic'), `${t.name} configures httpBasic()`);
+        if (c.name === 'httpBasic') addUser('basic auth', citeOf(t, c), `${t.name} configures httpBasic()`);
         if (c.name === 'oauth2ResourceServer' || c.name === 'jwt')
-          addUser('JWT bearer token', lineIn(t.file, c.name === 'jwt' ? '.jwt(' : 'oauth2ResourceServer'), `${t.name} configures ${c.name}()`);
-        if (c.name === 'formLogin') addUser('HTTP session', lineIn(t.file, 'formLogin'), `${t.name} configures formLogin()`);
+          addUser('JWT bearer token', citeOf(t, c), `${t.name} configures ${c.name}()`);
+        if (c.name === 'formLogin') addUser('HTTP session', citeOf(t, c), `${t.name} configures formLogin()`);
         if (c.name === 'setAttribute' && (m.calls ?? []).some((x) => x.name === 'getSession'))
-          addUser('HTTP session', lineIn(t.file, 'getSession'), `${t.name}#${m.name} stores the caller in the HttpSession`);
-        if (c.name === 'sessionManagement' && !/STATELESS|NEVER/.test((c.args ?? []).join(' ') || read(path.join(root, t.file)).split('\n').slice(m.start - 1, m.end).join(' ')))
-          addUser('HTTP session', lineIn(t.file, 'sessionManagement'), `${t.name} configures a stateful sessionManagement()`);
+          addUser('HTTP session', citeOf(t, c), `${t.name}#${m.name} stores the caller in the HttpSession`);
+        // `sessionCreationPolicy(STATELESS)` is a call whose argument names the policy: a stateless app has no session.
+        if (
+          c.name === 'sessionManagement' &&
+          !(m.calls ?? []).some((x) => /STATELESS|NEVER/.test((x.args ?? []).join(' ')))
+        )
+          addUser('HTTP session', citeOf(t, c), `${t.name} configures a stateful sessionManagement()`);
         if (/^(setAuthentication|setContext)$/.test(c.name ?? '') && (/Filter$/.test(t.name) || (m.calls ?? []).some((x) => ['getHeader', 'getCookies'].includes(x.name))))
-          addUser('API token', lineIn(t.file, c.name), `${t.name}#${m.name} sets the authentication from the request`);
+          addUser('API token', citeOf(t, c), `${t.name}#${m.name} sets the authentication from the request`);
         // A filter that reads the Authorization header and stores the caller (attribute, ThreadLocal, SecurityContext).
         if (
           /Filter$/.test(t.name) &&
           (m.calls ?? []).some((x) => x.name === 'getHeader') &&
           (m.calls ?? []).some((x) => ['setAttribute', 'set', 'setAuthentication'].includes(x.name)) &&
-          /Authorization|Bearer|token/i.test(read(path.join(root, t.file)))
+          // The header the filter reads names the token: the dump folded the argument, no source text is read.
+          (m.calls ?? []).some((x) => (x.args ?? []).some((a) => /Authorization|Bearer|token/i.test(a)))
         )
-          addUser('API token', lineIn(t.file, 'getHeader'), `${t.name}#${m.name} reads the token header and stores the caller`);
+          addUser('API token', citeOf(t, c), `${t.name}#${m.name} reads the token header and stores the caller`);
       }
 
   // Sureness declares its authentication types as processors; the catalog names them.
@@ -569,7 +597,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     for (const t of catalog.types ?? [])
       if (t.means === 'auth-type' && [...model.types.values()].some((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn)) {
         const holder = [...model.types.values()].find((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn);
-        addUser(t.authType, lineIn(holder.file, holder.name), `${holder.name} is a Sureness ${t.authType} processor`);
+        addUser(t.authType, `${holder.file}:${holder.nameLine}`, `${holder.name} is a Sureness ${t.authType} processor`);
       }
   for (const a of authSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p)))
     if (!userSources.some((u) => u.kind === a.kind)) userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
@@ -589,10 +617,10 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   });
   const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
   const feCalls = fe.flatMap((f) =>
-    f.text.split('\n').flatMap((l, i) => {
+    f.source.split('\n').flatMap((l, i) => {
       const m = /["'`](\/api\/[^"'`\s]*)["'`]/.exec(l);
       if (!m) return [];
-      const around = f.text
+      const around = f.source
         .split('\n')
         .slice(Math.max(0, i - 3), i + 4)
         .join(' ');
@@ -631,23 +659,32 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     .filter((v) => !Object.keys(viewUse).some((k) => k === v.name || k.endsWith('/' + v.name)) && !included.has(v.name))
     .map((v) => v.file);
 
-  // runtime machinery
-  const pick = (re, list = java) => list.flatMap((j) => linesMatching(j.text, re).map((m) => ({ file: j.p, ...m })));
-  // Registrations and filter classes only: imports, `x = new FilterRegistrationBean<>()` lines and record accessors like item.order() are noise.
-  const interceptors = pick(
-    /ContainerRequestFilter|ContainerResponseFilter|@WebFilter|@AroundInvoke|@Interceptor\b|addInterceptor|addPathPatterns|excludePathPatterns|(?:public|protected)\s+FilterRegistrationBean|FilterRegistrationBean(?:<[^>]*>)?\s+\w+\s*\(|instanceof FilterRegistrationBean|extends OncePerRequestFilter|implements (HandlerInterceptor|Filter)\b/,
-  ).filter((m) => !/^import\s/.test(m.text));
-  const contextScopes = pick(
-    /@RequestScoped?\b|@SessionScoped?\b|@ConversationScoped|@ViewScoped|@Scope\(|ThreadLocal<|@ControllerAdvice/,
-  );
-  const exceptionHandlers = java
-    .filter((j) => /@ExceptionHandler|implements\s+ExceptionMapper/.test(j.text))
-    .map((j) => j.p);
+  // runtime machinery, from the model: an annotation, a supertype, a call or a field's type — never a line of source.
+  const interceptors = modelEntries(appTypes, {
+    types: { ann: [/^(WebFilter|Interceptor)$/], supers: /(ContainerRequestFilter|ContainerResponseFilter|OncePerRequestFilter|HandlerInterceptor|Filter)$/ },
+    methods: { ann: [/^AroundInvoke$/], returns: /FilterRegistrationBean/, calls: /^(addInterceptor|addPathPatterns|excludePathPatterns)$/ },
+  });
+  const contextScopes = modelEntries(appTypes, {
+    types: { ann: [/^(RequestScoped|SessionScoped|ConversationScoped|ViewScoped|Scope|ControllerAdvice)$/] },
+    methods: { ann: [/^Scope$/] },
+    // A static ThreadLocal is the request- or caller-scoped slot the app keeps its context in.
+    fields: { type: /ThreadLocal/ },
+  });
+  const exceptionHandlers = [
+    ...new Set(
+      appTypes
+        .filter(
+          (t) => (t.supers ?? []).some((s) => /ExceptionMapper$/.test(s.fqn ?? s.text ?? '')) ||
+            (t.methods ?? []).some((m) => (m.ann ?? []).some((a) => a.name === 'ExceptionHandler')),
+        )
+        .map((t) => t.file),
+    ),
+  ];
   const background = appTypes.flatMap((t) => scheduledOf(t).map((s) => ({ ...s, file: t.file, cls: t.name })));
   const sockets = endpoints
     .filter((e) => e.verb === 'STOMP')
     .map((e) => ({ file: e.file, line: e.line, path: e.path }))
-    .concat(pick(/SessionDisconnectEvent|SessionConnectedEvent|registerStompEndpoints|enableSimpleBroker/));
+    .concat(modelEntries(appTypes, { methods: { calls: /^(registerStompEndpoints|enableSimpleBroker)$/ } }));
   const runners = appTypes
     .filter(
       (t) =>
@@ -660,8 +697,11 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     .map((f) => {
       const t = read(f),
         id = /<job\b[^>]*\bid="([^"]+)"/.exec(t)?.[1] ?? path.basename(f, '.xml');
-      const starts = pick(new RegExp(`\\.start\\(\\s*"${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)).map(
-        (s) => `${s.file}:${s.line}`,
+      // `JobOperator.start("name")`: the dump's call row, with the job id as its folded argument.
+      const starts = appTypes.flatMap((t) =>
+        (t.methods ?? [])
+          .flatMap((m) => (m.calls ?? []).filter((c) => c.name === 'start' && (c.args ?? []).includes(`"${id}"`)))
+          .map((c) => `${t.file}:${c.line}`),
       );
       return {
         kind: 'Batch job',
@@ -670,7 +710,12 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         line: 1,
       };
     });
-  const sessionState = pick(/(session|getSession\(\))\.(set|get)Attribute\(\s*"|@SessionAttributes/)
+  // Session state: an attribute written or read on the HTTP session, and the @SessionAttributes declaration. A view
+  // that reads `sessionScope.x` is not Java, and stays a view-file fact, not a runtime one.
+  const sessionState = modelEntries(appTypes, {
+    types: { ann: [/^SessionAttributes$/] },
+    methods: { calls: /^(setAttribute|getAttribute)$/, recv: /HttpSession$/ },
+  })
     .concat(
       views.flatMap((v) =>
         linesMatching(v.text, /sessionScope\.|session\.getAttribute/).map((m) => ({ file: v.p, ...m })),
@@ -718,10 +763,12 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     'javax.ws.rs.client': '(HTTP client: JAX-RS)',
     'org.eclipse.microprofile.rest.client': '(HTTP client: MicroProfile)',
   };
+  // The file's imports, as the dump's header reader wrote them: an SDK is installed when one of its packages is imported.
+  const importsOf = (relPath) => (sources.get(relPath)?.imports ?? []).map((i) => i.name);
   const externals = {};
   for (const j of java)
     for (const [k, v] of Object.entries(EXT))
-      if (new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text)) (externals[v] ??= []).push(j.p);
+      if (importsOf(j.p).some((name) => name.includes(k))) (externals[v] ??= []).push(j.p);
   const configFiles = files.filter(
     (f) =>
       /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) &&
@@ -747,16 +794,13 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   // state: who writes each entity (repository mutations per caller), copies of state
   // The repository → entity map comes from the model's resolved type arguments (entities.mjs); no name patterns.
   const repoEntity = new Map([...entFacts.repos].map(([fqn, e]) => [fqn.split('.').pop(), e.split('.').pop()]));
+  // `@Modifying` on a repository method: the annotation row the dump wrote, on the method that carries it.
   const modifying = repos.flatMap((r) =>
-    linesMatching(r.text, /@Modifying/).map((m) => ({ file: r.p, line: m.line, entity: repoEntity.get(r.name) })),
+    (r.methods ?? []).flatMap((m) =>
+      (m.ann ?? []).filter((a) => a.name === 'Modifying').map((a) => ({ file: r.p, line: a.line ?? m.nameLine, entity: repoEntity.get(r.name) })),
+    ),
   );
-  const sdkFiles = new Set(
-    java
-      .filter((j) =>
-        Object.keys(EXT).some((k) => new RegExp(`import\\s+[\\w.]*${k.replace(/\./g, '\\.')}`).test(j.text)),
-      )
-      .map((j) => j.p),
-  );
+  const sdkFiles = new Set(java.filter((j) => importsOf(j.p).some((name) => Object.keys(EXT).some((k) => name.includes(k)))).map((j) => j.p));
   const deep = javaFacts({
     // Statuses are read from the dump's typed arguments and returns: the source text is not consulted.
     dump,
@@ -772,16 +816,27 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   const bootComputed = bootFacts({ root, files, rel: R, git, app });
 
   // boot: entry points, profile switches, how to run locally
-  const mains = javaAll
+  // A runnable entry point: a `main` method (the dump's `isMain`) whose class is a Spring Boot app or whose body runs
+  // `SpringApplication`.
+  const mains = [...model.types.values()]
+    .filter((t) => !/\/src\/test\//.test(t.file))
     .filter(
-      (j) =>
-        /static\s+void\s+main\s*\(/.test(j.text) &&
-        /SpringApplication(Builder)?\b|@SpringBootApplication|@SpringBootConfiguration/.test(j.text),
+      (t) =>
+        t.methods.some(
+          (m) =>
+            m.isMain &&
+            (hasAnn(t, 'SpringBootApplication') ||
+              hasAnn(t, 'SpringBootConfiguration') ||
+              (m.calls ?? []).some((c) => /(^|\.)SpringApplication(Builder)?$/.test(c.recvFqn ?? ''))),
+        ),
     )
-    .map((j) => ({ file: j.p, line: linesMatching(j.text, /static\s+void\s+main\s*\(/)[0]?.line }));
-  const switches = pick(
-    /@Profile\(|@ConditionalOnProperty\(|@ConditionalOnMissingBean|spring\.profiles\.active/,
-  ).concat(
+    .flatMap((t) =>
+      t.methods.filter((m) => m.isMain).map((m) => ({ file: t.file, line: m.nameLine })),
+    );
+  const switches = modelEntries(appTypes, {
+    types: { ann: [/^(Profile|ConditionalOnProperty|ConditionalOnMissingBean)$/] },
+    methods: { ann: [/^(Profile|ConditionalOnProperty|ConditionalOnMissingBean)$/] },
+  }).concat(
     configFiles.flatMap((f) =>
       linesMatching(read(f), /profiles?\.active|on-profile/).map((m) => ({ file: R(f), ...m })),
     ),
@@ -819,8 +874,8 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
 
   // frontend routes
   const routes = fe.flatMap((f) => {
-    const ng = isAngularRoutes(f.text);
-    return f.text.split('\n').flatMap((l, i) => {
+    const ng = isAngularRoutes(f.source);
+    return f.source.split('\n').flatMap((l, i) => {
       const p = routePath(l, ng);
       return p == null ? [] : [{ path: p, file: f.p, line: i + 1 }];
     });

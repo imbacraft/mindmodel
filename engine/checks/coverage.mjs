@@ -1,6 +1,5 @@
 // L6: what the engine understood, and what it did not. Coverage is computed from the model (not from the facts), so
 // it reports the engine's own blind spots and not just the claims it managed to make.
-import assert from 'node:assert';
 import { annotationIndex, simpleMeans, typeIndex } from '../catalogs/catalog.mjs';
 
 const rate = (id, num, den) => ({ id, numerator: num, denominator: den, percent: den ? Math.round((num / den) * 100) : 0 });
@@ -56,10 +55,11 @@ export function coverage(model, facts, selected, { build = [], rels = [] } = {})
   const anns = annotationsOf(model);
 
   // An annotation is understood when a catalog names its resolved FQN, or — for a name the model could not resolve
-  // (a wildcard import, a simple name) — when at least one selected catalog knows that simple name at that placement.
-  // The match is then `inferred` (§4.2); what matters for the blind-spot list is that the name is not a mystery.
+  // (a wildcard import, a simple name it kept as written) — when at least one selected catalog knows that simple name
+  // at that placement. The match is then `inferred` (§4.2); what matters for the blind-spot list is that the name is
+  // not a mystery.
   const understood = (a) => {
-    if (a.fqn) return index.byFqn.has(a.fqn) || HARMLESS.has(simple(a.fqn));
+    if (a.fqn && (index.byFqn.has(a.fqn) || HARMLESS.has(simple(a.fqn)))) return true;
     return HARMLESS.has(a.name) || simpleMeans(index, simple(a.name), a.on).length >= 1;
   };
 
@@ -235,134 +235,4 @@ export function coverageLine(cov) {
   ]
     .filter(Boolean)
     .join('; ');
-}
-
-{
-  const files = [
-    {
-      p: 'a/C.java',
-      ix: {
-        pkg: 'a',
-        imports: [
-          { name: 'org.springframework.web.bind.annotation.GetMapping', wildcard: false, isStatic: false },
-          { name: 'org.springframework.web.bind.annotation.RestController', wildcard: false, isStatic: false },
-          { name: 'lombok.Builder', wildcard: false, isStatic: false },
-          { name: 'a.repo.Base', wildcard: false, isStatic: false },
-        ],
-        types: [
-          {
-            kind: 'class',
-            name: 'C',
-            owner: undefined,
-            start: 1,
-            end: 30,
-            nameLine: 1,
-            extends: 'Base',
-            ann: [
-              { name: 'RestController', args: '', line: 1 },
-              { name: 'CompanyThing', args: '', line: 2 },
-            ],
-          },
-        ],
-        methods: [
-          { name: 'get', nameLine: 6, start: 6, end: 8, ann: [{ name: 'GetMapping', args: '"/x"', line: 5 }] },
-          { name: 'other', nameLine: 12, start: 12, end: 14, ann: [{ name: 'CompanyThing', args: '', line: 11 }] },
-          { name: 'other2', nameLine: 15, start: 15, end: 16, ann: [{ name: 'CompanyThing', args: '', line: 15 }] },
-          { name: 'other3', nameLine: 17, start: 17, end: 18, ann: [{ name: 'CompanyThing', args: '', line: 17 }] },
-          { name: 'built', nameLine: 20, start: 20, end: 22, ann: [{ name: 'Builder.Default', args: '', line: 19 }] },
-        ],
-        fields: [
-          { name: 'dep', type: 'UnknownDep', line: 24, owner: 'C', ann: [] },
-          { name: 'many', type: 'List<X>', line: 25, owner: 'C', ann: [{ name: 'CompanyThing', args: '', line: 25 }] },
-          { name: 'rare', type: 'X', line: 26, owner: 'C', ann: [{ name: 'Rare', args: '', line: 26 }] },
-          { name: 'rare2', type: 'X', line: 27, owner: 'C', ann: [{ name: 'Rare', args: '', line: 27 }] },
-        ],
-      },
-    },
-    {
-      p: 'a/D.java',
-      ix: {
-        pkg: 'a',
-        imports: [
-          { name: 'a.repo.Base', wildcard: false, isStatic: false },
-          { name: 'com.nobody.thing.Api', wildcard: false, isStatic: false },
-        ],
-        types: [
-          // No import for GetMapping: an unresolvable simple name is understood when exactly one catalog has it.
-          { kind: 'class', name: 'D', owner: undefined, start: 1, end: 6, nameLine: 1, extends: 'Base', ann: [{ name: 'GetMapping', args: '', line: 2 }] },
-          { kind: 'class', name: 'E', owner: undefined, start: 7, end: 9, nameLine: 7, extends: 'Base', ann: [] },
-        ],
-        methods: [],
-        fields: [],
-      },
-    },
-  ];
-  const { buildModel } = await import('../../test/fixtures/model-from-source.mjs');
-  const model = buildModel(files);
-  model.degraded = new Set();
-  const selected = [
-    {
-      catalog: {
-        id: 'spring-web',
-        when: { deps: ['org.springframework.boot:spring-boot-starter-web'] },
-        annotations: [
-          { fqn: 'org.springframework.web.bind.annotation.GetMapping', means: 'endpoint', verb: 'GET' },
-          { fqn: 'org.springframework.web.bind.annotation.RestController', means: 'controller' },
-        ],
-      },
-      why: 'test',
-    },
-    {
-      catalog: {
-        id: 'lombok',
-        when: { deps: ['org.projectlombok:lombok'] },
-        annotations: [{ fqn: 'lombok.Builder.Default', means: 'ignore' }],
-        types: [{ fqn: 'org.springframework.data.jpa.repository.JpaRepository', means: 'repository' }],
-      },
-      why: 'test',
-    },
-  ];
-  const facts = [
-    { family: 'endpoint', handler: 'C.get', path: '/x' },
-    { family: 'endpoint', handler: 'C.other', path: '/' },
-  ];
-  const build = [
-    { file: 'pom.xml', group: 'a', deps: [{ group: 'com.nobody', artifact: 'thing' }, { group: 'org.projectlombok', artifact: 'lombok' }] },
-    { file: 'pom.xml', group: 'a', deps: [{ group: 'a', artifact: 'a-core' }, { group: 'com.unused', artifact: 'lib' }] },
-  ];
-  const rels = ['a/C.java', 'a/UsesThing.java', 'web/app.kt', 'web/build.gradle', 'tools/t.groovy'];
-  const cov = coverage(model, facts, selected, { build, rels });
-  const pct = Object.fromEntries(cov.rates.map((r) => [r.id, r.percent]));
-  assert.equal(pct['supertypes resolved'], 100); // a.repo.Base resolves through the fixture's import
-  assert.equal(pct['endpoints with a fully resolved path'], 100); // both fixture facts name no constant
-  // Rates that are 100% by construction are gone: they measure nothing.
-  assert.ok(!cov.rates.some((r) => r.id === 'endpoints with a handler' || r.id === 'endpoints with a path'));
-  // 11 meaningful annotations; CompanyThing (5 uses) is the only one nobody explains. Builder.Default resolves to
-  // lombok.Builder.Default through its owner, and D's unimported GetMapping still matches the one catalog that has it.
-  // Rare (2 uses) is below the reporting threshold and stays out of the blind-spot list.
-  assert.deepStrictEqual(
-    [pct['annotations understood'], cov.rates.find((r) => r.id === 'annotations understood').denominator],
-    [36, 11],
-  );
-  assert.deepStrictEqual(
-    cov.unknownAnnotations.map((u) => [u.name, u.count, u.types]),
-    [['CompanyThing', 5, 1]],
-  );
-  // A JDK/Jakarta base is not a blind spot; a library base is, once three types extend it.
-  assert.deepStrictEqual(cov.unknownBaseClasses.map((b) => [b.name, b.count]), [['a.repo.Base', 3]]);
-  // The project's own module is not a dependency, Lombok is catalogued, and `com.nobody:thing` is imported by a file.
-  // `com.unused:lib` is declared but imported nowhere, so it is counted, not listed: ranking is by use.
-  assert.deepStrictEqual(cov.uncataloguedDependencies.map((d) => [d.coordinate, d.files]), [['com.nobody:thing', 1]]);
-  assert.equal(cov.uncataloguedDependenciesTotal, 2);
-  assert.deepStrictEqual(cov.unparsedLanguages, { kotlin: 1, groovy: 1, scala: 0 });
-  assert.match(coverageLine(cov), /annotations understood 36% \(4\/11\)/);
-  // The digest line names the blind spots, not just the rates: a writer can act on a name.
-  // The digest line carries the counters; the names are the section below it.
-  assert.match(coverageLine(cov), /unknown base classes 1/);
-  assert.match(coverageLine(cov), /uncatalogued deps 2/);
-  // Ambiguous targets is its own rate (§6.1): it exists even at zero, and the digest only prints it when non-zero.
-  const amb = cov.rates.find((r) => r.id === 'ambiguous targets');
-  assert.ok(amb, 'ambiguous targets is a rate');
-  assert.equal(amb.denominator, cov.rates.find((r) => r.id === 'project targets').denominator);
-  assert.doesNotMatch(coverageLine(cov), /ambiguous targets/);
 }

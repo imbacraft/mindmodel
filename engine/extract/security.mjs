@@ -16,15 +16,6 @@ const HEADERS = /getHeader\(\s*"([^"]+)"\s*\)|header\(\s*"([^"]+)"\s*\)/g;
 const CLAIMS = /getClaim(?:AsString)?\(\s*"([^"]+)"\s*\)/g;
 const TENANT_WORDS = /tenant|organisation|organization|workspace|domain|host/i;
 
-// The matching ')' for the '(' at `open` (or -1): chain bodies nest lambdas and argument lists.
-function balanced(text, open) {
-  let depth = 0;
-  for (let i = open; i < text.length; i++) {
-    if (text[i] === '(') depth++;
-    else if (text[i] === ')' && --depth === 0) return i;
-  }
-  return -1;
-}
 
 const ACCESS = [
   [/^permitAll$/, () => 'anonymous'],
@@ -36,67 +27,92 @@ const ACCESS = [
   [/^denyAll$/, () => 'blocked'],
 ];
 const firstLiteral = (s) => String(s).match(/"([^"]+)"/)?.[1] ?? '?';
+// One call chained to another is written with the chain's own position, so the rows of one chain share `line:col` and
+// Spoon lists them from the outside in: reversing a group gives the chain's source order.
+const chainOrder = (calls) => {
+  const groups = new Map();
+  for (const c of calls) {
+    const k = `${c.line ?? 0}:${c.col ?? 0}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      const [al, ac] = a.split(':').map(Number);
+      const [bl, bc] = b.split(':').map(Number);
+      return al - bl || ac - bc;
+    })
+    .flatMap(([, list]) => list.slice().reverse());
+};
+const ACCESS_CALLS = new Set([
+  'permitAll', 'authenticated', 'hasRole', 'hasAnyRole', 'hasAuthority', 'hasAnyAuthority', 'denyAll',
+]);
+const HTTP_METHOD = /HttpMethod\.(\w+)/;
+const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
+// The string values an argument list folds to: a literal's or a constant's value, never a variable's name.
+const stringValues = (rows) => rows.map((a) => (typeof a?.value === 'string' ? a.value : null)).filter((v) => v !== null);
+// An argument as a rule's reason displays it: a string in quotes, anything else by the name the dump wrote.
+const shownArg = (a) => (typeof a?.value === 'string' ? `"${a.value}"` : String(a?.text ?? ''));
+const annOfElement = (element, names) => (element?.ann ?? []).find((a) => names.includes(a.name));
 
 function accessOf(rule, args) {
   for (const [re, make] of ACCESS) if (re.test(rule)) return make(args);
   return 'unknown';
 }
 
-// Spring Security chains. Each `securityMatcher` is the chain's scope; a chain without one covers every path.
-export function springChains(java, fileMethods) {
+// Spring Security chains, from the dump's call rows: `securityMatcher(...)` states a chain's scope, and each
+// `requestMatchers(...)`/`anyRequest()` in it is paired with the access call chained to it (`permitAll()`, `hasRole("X")`).
+// The arguments are the dump's typed values; `HttpMethod.OPTIONS` names a verb and applies to OPTIONS only.
+export function springChains(model, db = model?.dump ?? null) {
   const rules = [];
+  if (!db) return rules;
   // Types this repo declares: a configurer applied here whose class is absent is a rule set the scan cannot read.
-  const declared = new Set();
-  for (const j of java)
-    for (const m of String(j.text ?? '').matchAll(/\b(?:class|interface|enum|record)\s+(\w+)/g)) declared.add(m[1]);
-  for (const j of java) {
-    if (!/SecurityFilterChain/.test(j.text ?? '')) continue;
-    const lines = j.text.split('\n');
-    // The file's methods come from the model (`fileMethods`), not from a second parse of the source.
-    const methodAt = (line) =>
-      (fileMethods?.get(j.p) ?? [])
-        .filter((m) => m.start <= line && line <= m.end)
-        .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
-    for (let i = 0; i < lines.length; i++) {
-      if (!/\.securityMatcher\s*\(/.test(lines[i])) continue;
-      const m = methodAt(i + 1);
-      if (!m) continue;
-      const body = lines.slice(m.start - 1, m.end).join('\n');
-      const smAt = body.indexOf('securityMatcher');
-      const open = body.indexOf('(', smAt);
-      const sm = body.slice(open + 1, balanced(body, open));
-      const scope = [...sm.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-      const orderLine = [...lines.slice(Math.max(0, m.start - 6), m.start - 1)].reverse().find((l) => /@Order/.test(l));
-      // The chain's own condition: a chain behind a profile or a property is not in force everywhere.
-      const above = lines.slice(Math.max(0, m.start - 8), m.start - 1).join(' ');
-      const cond = /@(ConditionalOnProperty|Profile)\(([^)]*)\)/.exec(above);
-      const order = Number(/@Order\(\s*(\d+)\s*\)/.exec(orderLine ?? '')?.[1] ?? NaN);
-
-      const authAt = body.indexOf('authorizeHttpRequests');
-      // A configurer applied to this chain whose class the repo does not declare: its requestMatchers rules exist only
-      // in that library, so this chain's paths are unknown — say so instead of reporting them as "unknown" with no
-      // reason. Only `new X(...)` is claimed: a value passed to `apply` has no class the text can name.
-      const applied = [...body.matchAll(/\.(?:apply|with)\s*\(\s*new\s+([\w.]+)\s*\(/g)]
-        .map((x) => x[1])
-        .find((fqn) => !declared.has(fqn.split('.').pop()));
-      const before = rules.length;
-      if (authAt >= 0) {
-        const authOpen = body.indexOf('(', authAt);
-        const block = body.slice(authOpen, balanced(body, authOpen) + 1);
-        const ruleRe = /\.(requestMatchers|anyRequest)\s*\(([^)]*)\)\s*\.\s*([A-Za-z]+)\s*\(([^)]*)\)/g;
-        for (const r of block.matchAll(ruleRe)) {
-          const [, kind, args, fn, fnArgs] = r;
+  const declared = new Set([...model.types.values()].map((t) => t.name));
+  for (const t of model.types.values())
+    for (const m of t.methods ?? []) {
+      const calls = chainOrder((m.calls ?? []).filter((c) => c.id));
+      const matchers = calls.filter((c) => c.name === 'securityMatcher');
+      for (const [n, sm] of matchers.entries()) {
+        const at = calls.indexOf(sm);
+        const next = matchers[n + 1];
+        const span = calls.slice(at + 1, next ? calls.indexOf(next) : undefined);
+        const scope = stringValues(dumpArgs(db, sm));
+        const order = Number(/^\s*(-?\d+)/.exec(annOfElement(m, ['Order'])?.args ?? '')?.[1] ?? NaN);
+        // The chain's own condition: a chain behind a profile or a property is not in force everywhere.
+        const cond =
+          annOfElement(m, ['ConditionalOnProperty', 'Profile']) ?? annOfElement(t, ['ConditionalOnProperty', 'Profile']);
+        // A configurer applied to this chain whose class the repo does not declare: its requestMatchers rules exist only
+        // in that library, so this chain's paths are unknown — say so instead of reporting them as "unknown" with no
+        // reason. Only `new X(...)` is claimed: a value passed to `apply` has no class the dump can name.
+        const applied = span
+          .filter((c) => c.name === 'apply' || c.name === 'with')
+          .flatMap((c) => dumpArgs(db, c))
+          .filter((a) => a?.kind === 'new' && a.created)
+          .map((a) => a.created)
+          .find((fqn) => !declared.has(fqn.split('.').pop()));
+        const before = rules.length;
+        const authAt = span.findIndex((c) => c.name === 'authorizeHttpRequests');
+        let matcher = null;
+        for (const c of span.slice(authAt < 0 ? span.length : authAt)) {
+          if (c.name === 'requestMatchers' || c.name === 'anyRequest') {
+            matcher = c;
+            continue;
+          }
+          if (!matcher || !ACCESS_CALLS.has(c.name)) continue;
+          const rows = dumpArgs(db, matcher);
           // `requestMatchers(HttpMethod.OPTIONS, "/api/**")` applies to OPTIONS only; a matcher without a verb applies
           // to every method. Ignoring the verb made an OPTIONS-only permit open the whole API.
-          const verbs = [...args.matchAll(/HttpMethod\.(\w+)/g)].map((x) => x[1].toUpperCase());
-          const access = accessOf(fn, fnArgs);
+          const verbs = rows
+            .map((a) => HTTP_METHOD.exec(String(a?.text ?? ''))?.[1])
+            .filter(Boolean)
+            .map((v) => v.toUpperCase());
+          const shown = dumpArgs(db, c).map(shownArg).join(', ');
+          const fn = `${c.name}(${shown})`;
+          const access = accessOf(c.name, shown);
           // `anyRequest()` means "everything this chain matches": its prefix is the chain's securityMatcher.
-          const patterns =
-            kind === 'anyRequest'
-              ? scope.length
-                ? scope
-                : ['**']
-              : [...args.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+          const anyRequest = matcher.name === 'anyRequest';
+          const patterns = anyRequest ? (scope.length ? scope : ['**']) : stringValues(rows);
+          matcher = null;
           if (!patterns.length) continue;
           for (const pattern of patterns)
             rules.push({
@@ -108,38 +124,37 @@ export function springChains(java, fileMethods) {
               pattern,
               verbs: verbs.length ? verbs : ['*'],
               access,
-              ...(cond ? { condition: `${cond[1]}(${cond[2]})` } : {}),
+              ...(cond ? { condition: `${cond.name}(${cond.args})` } : {}),
               ...(applied ? { outside: applied } : {}),
               chain: `${m.name}${Number.isNaN(order) ? '' : ` (@Order(${order}))`}`,
-              evidence: [`${j.p}:${i + 1}#${m.name}`],
+              evidence: [`${t.file}:${sm.line}#${m.name}`],
               why: [
-                `${kind === 'anyRequest' ? 'anyRequest' : `requestMatchers(${verbs.length ? `${verbs.join('/')}, ` : ''}"${pattern}")`} → ${fn}(${fnArgs})${cond ? ` [${cond[1]}]` : ''}`,
+                `${anyRequest ? 'anyRequest' : `requestMatchers(${verbs.length ? `${verbs.join('/')}, ` : ''}"${pattern}")`} → ${fn}${cond ? ` [${cond.name}]` : ''}`,
                 ...(applied ? [`path rules also come from ${applied}, outside this repo: not seen`] : []),
               ],
             });
         }
+        // The chain's matcher is known but none of its rules are: the configurer it applies holds them, and that class is
+        // not here. One rule per scope, so the prefix is reported with its reason instead of as a bare "unknown". A chain
+        // without a matcher says nothing about which paths it governs, so its note claims no verb and shadows no rule.
+        if (applied && rules.length === before)
+          for (const pattern of scope.length ? scope : ['**'])
+            rules.push({
+              id: `security-rule:${pattern}:unknown:outside`,
+              family: 'security-rule',
+              confidence: 'inferred',
+              source: 'spring-security',
+              scope: scope.length ? scope : ['**'],
+              pattern,
+              verbs: scope.length ? ['*'] : [],
+              access: 'unknown',
+              outside: applied,
+              chain: `${m.name} applies ${applied}`,
+              evidence: [`${t.file}:${sm.line}#${m.name}`],
+              why: [`path rules come from ${applied}, outside this repo: not seen`],
+            });
       }
-      // The chain's matcher is known but none of its rules are: the configurer it applies holds them, and that class is
-      // not here. One rule per scope, so the prefix is reported with its reason instead of as a bare "unknown". A chain
-      // without a matcher says nothing about which paths it governs, so its note claims no verb and shadows no rule.
-      if (applied && rules.length === before)
-        for (const pattern of scope.length ? scope : ['**'])
-          rules.push({
-            id: `security-rule:${pattern}:unknown:outside`,
-            family: 'security-rule',
-            confidence: 'inferred',
-            source: 'spring-security',
-            scope: scope.length ? scope : ['**'],
-            pattern,
-            verbs: scope.length ? ['*'] : [],
-            access: 'unknown',
-            outside: applied,
-            chain: `${m.name} applies ${applied}`,
-            evidence: [`${j.p}:${i + 1}#${m.name}`],
-            why: [`path rules come from ${applied}, outside this repo: not seen`],
-          });
     }
-  }
   // @Order decides which chain sees a request first; a chain without an order sorts last.
   const orderOf = (r) => (Number(/@Order\((\d+)\)/.exec(r.chain)?.[1] ?? NaN));
   return rules.sort((a, b) => {
@@ -570,30 +585,36 @@ export function shiroRules(text, file) {
   return rules;
 }
 
-// Shiro's code-based chain (`filterChainDefinitionMap.put("/api/**", "authc")`, `addPathDefinition`).
-export function shiroCodeRules(model, textOf) {
+// Shiro's code-based chain (`filterChainDefinitionMap.put("/api/**", "authc")`, `addPathDefinition`): each call's two
+// arguments are the path and the access, and both are the dump's folded values. A call whose arguments the dump could
+// not fold is not a rule — the path would be a guess.
+export function shiroCodeRules(model, db = model?.dump ?? null) {
   const rules = [];
+  if (!db) return rules;
   for (const t of model.types.values()) {
     if (!/ShiroFilterChainDefinition|ShiroFilterFactoryBean/.test(t.name)) continue;
-    const text = textOf(t.file);
-    for (const m of text.matchAll(/put\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)|addPathDefinition\(\s*"([^"]+)"\s*,\s*"([^"]+)"/g)) {
-      const pattern = m[1] ?? m[3];
-      const expr = m[2] ?? m[4];
-      const access = /anon/.test(expr) ? 'anonymous' : /roles\[([^\]]+)\]/.exec(expr)?.[1] ? `role:${/roles\[([^\]]+)\]/.exec(expr)[1].split(',')[0].trim()}` : 'authenticated';
-      rules.push({
-        id: `security-rule:${pattern}:${access}:shiro-code`,
-        family: 'security-rule',
-        confidence: 'resolved',
-        source: 'shiro',
-        scope: ['**'],
-        pattern,
-        verbs: ['*'],
-        access,
-        chain: t.name,
-        evidence: [`${t.file}:${t.nameLine}#${t.name}`],
-        why: [`${t.name} maps ${pattern} to ${expr}`],
-      });
-    }
+    for (const m of t.methods ?? [])
+      for (const c of m.calls ?? []) {
+        if (c.name !== 'put' && c.name !== 'addPathDefinition') continue;
+        const rows = dumpArgs(db, c);
+        const [pattern, expr] = [0, 1].map((i) => (typeof rows[i]?.value === 'string' ? rows[i].value : null));
+        if (!pattern || !expr) continue;
+        const roles = /roles\[([^\]]+)\]/.exec(expr)?.[1];
+        const access = /anon/.test(expr) ? 'anonymous' : roles ? `role:${roles.split(',')[0].trim()}` : 'authenticated';
+        rules.push({
+          id: `security-rule:${pattern}:${access}:shiro-code`,
+          family: 'security-rule',
+          confidence: 'resolved',
+          source: 'shiro',
+          scope: ['**'],
+          pattern,
+          verbs: ['*'],
+          access,
+          chain: t.name,
+          evidence: [`${t.file}:${t.nameLine}#${t.name}`],
+          why: [`${t.name} maps ${pattern} to ${expr}`],
+        });
+      }
   }
   return rules;
 }
