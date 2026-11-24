@@ -52,6 +52,8 @@ public final class Lombok {
 
     private static void itemsOf(CtType<?> type, Path root, List<Item> items) {
         String owner = Names.qualified(type);
+        // Every enum carries these from the compiler: no source declares them, and the dump reports what is written.
+        if (type.isEnum()) enumMethods(type, owner, root, items);
         boolean data = has(type, "Data");
         boolean value = has(type, "Value");
         boolean getters = data || value || has(type, "Getter");
@@ -71,6 +73,15 @@ public final class Lombok {
                         Set.of(ModifierKind.PRIVATE, ModifierKind.STATIC, ModifierKind.FINAL), type, logger, root, items);
                 break;
             }
+    }
+
+    /** The four members javac writes for an enum: `name()`, `ordinal()`, `values()` and `valueOf(String)`. */
+    private static void enumMethods(CtType<?> type, String owner, Path root, List<Item> items) {
+        Set<ModifierKind> pub = Set.of(ModifierKind.PUBLIC);
+        item(owner, "method", "name", "String", List.of(), pub, type, "enum", root, items);
+        item(owner, "method", "ordinal", "int", List.of(), pub, type, "enum", root, items);
+        item(owner, "method", "values", owner, List.of(), pub, type, "enum", root, items);
+        item(owner, "method", "valueOf", owner, List.of("String"), pub, type, "enum", root, items);
     }
 
     /** Getters for every field, setters for the mutable ones; a field's own annotation adds to the type's. */

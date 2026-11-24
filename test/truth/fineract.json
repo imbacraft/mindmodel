@@ -164,9 +164,11 @@
   "recv": "AcmeJobName.ACME_NOOP_JOB",
   "recvFqn": "com.acme.fineract.loan.job.AcmeJobName",
   "recvHow": "field",
-  "how": "unresolved",
-  "targets": [],
-  "note": "an enum constant is a static field read"
+  "how": "direct",
+  "targets": [
+   "com.acme.fineract.loan.job.AcmeJobName#name()"
+  ],
+  "note": "enum synthetics: name() is written by javac, not by the source"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",
