@@ -529,6 +529,31 @@ const CALLER_SIMPLE = new Set(['Authentication', 'Principal']);
 const baseType = (text) => String(text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
 const simpleType = (text) => baseType(text).split('.').pop();
 
+// A value of a type the project declares — a User, a ResolvedTenantContext — is an identity once a holder keeps it.
+// A String, a primitive or a JDK type (an IP, a request id, an idempotency key) is request bookkeeping: that is the
+// whole distinction, and it is the value's type, never the holder's name.
+const PRIMITIVE = /^(?:void|boolean|byte|char|short|int|long|float|double)$/;
+const JDK_VALUE = new Set([
+  'String', 'Object', 'Integer', 'Long', 'Short', 'Byte', 'Boolean', 'Character', 'Double', 'Float', 'Number',
+  'UUID', 'URI', 'URL', 'Instant', 'LocalDate', 'LocalDateTime', 'Duration', 'BigDecimal', 'BigInteger',
+  'InetAddress', 'InetSocketAddress', 'Optional',
+]);
+const isProjectValueType = (model, file, written) => {
+  const text = baseType(written);
+  if (!text || PRIMITIVE.test(text)) return false;
+  const fqn = fqnOf(model, file, text);
+  if (fqn) return Boolean(model.types?.has(fqn));
+  // No import answered: a simple name the project declares is still the project's type.
+  const simple = text.split('.').pop();
+  if (JDK_VALUE.has(simple)) return false;
+  for (const key of model.types?.keys() ?? []) if (key.split('.').pop() === simple) return true;
+  return false;
+};
+
+// The element type of `ThreadLocal<X>`, as written; null for any other field type.
+const threadLocalElement = (type) =>
+  /(?:^|\.)ThreadLocal\s*<(.*)>$/.exec(String(type ?? '').trim())?.[1]?.trim() ?? null;
+
 // A written type's FQN, from the file's imports. Null when the file does not name it: the caller of these helpers
 // still reads the written simple name, so an import that is missing never hides a type.
 const fqnOf = (model, file, written) => {
@@ -581,11 +606,13 @@ function verifiesIn(model, bodies, file) {
   return null;
 }
 
-// A security identity holder a method writes, with the text of the value it stores there. Only a caller slot counts:
-// the security context, an Authentication/Principal field, or a project method called with a caller parameter. A
-// ThreadLocal of a String (an IP, a request id, a workspace id), a request attribute or a context holder of the app's
-// own is a user-source fact and never a warning.
-function securitySinks(t, m, b, model, byId) {
+// A security identity holder a method writes, with the text of the value it stores there. A caller slot counts: the
+// security context, an Authentication/Principal field, a project method called with a caller parameter. So does the
+// app's own context holder — a ThreadLocal (or a project method filling one) whose element type the project declares,
+// because storing a ResolvedTenantContext or a User there makes it the request's identity just the same. A
+// ThreadLocal of a String (an IP, a request id, a workspace id), a request attribute or a context holder of a JDK type
+// is a user-source fact and never a warning.
+function securitySinks(t, m, b, model, byId, textOf = null) {
   const sinks = [];
   const declared = declaredTypes(t, m, b);
   const lineAt = (idx) => Math.max(1, m.start + b.slice(0, idx).split('\n').length - 1);
@@ -623,24 +650,100 @@ function securitySinks(t, m, b, model, byId) {
         arg: a[1],
       });
   }
+  // A context holder of the app's own: a ThreadLocal field whose element type the project declares (a
+  // ResolvedTenantContext, a User, a *Context object). Not Spring Security's, and still the request's identity. A
+  // ThreadLocal<String> (an IP, a request id, an idempotency key) is excluded by the type alone.
+  for (const f of t.fields ?? []) {
+    const element = threadLocalElement(f.type);
+    if (!element || !isProjectValueType(model, t.file, element)) continue;
+    const a = new RegExp(`\\b${f.name}\\s*\\.\\s*set\\s*\\(`).exec(b);
+    if (!a) continue;
+    const arg = argAt(a.index + a[0].length - 1);
+    // A setter that only forwards its own parameter is the caller's store one frame up: the call site below carries
+    // it, and counting both would make two warnings for one store.
+    if ((m.params ?? []).some((p) => p.name && p.name === arg.trim())) continue;
+    sinks.push({
+      what: `thread-local ${f.name} (${simpleType(element)})`,
+      cite: `${t.file}:${lineAt(a.index)}`,
+      arg,
+    });
+  }
   // A call handing the value to a project method whose parameter is the caller: `void bind(Authentication caller)`.
+  // The same store one frame up when the parameter is a project type the method puts in a project-typed holder and the
+  // value is built here: `setResolvedContext(new ResolvedTenantContext(user))` is the filter storing the user, not
+  // merely reading it. A record the method looked up (`setTenant(tenant)`) is a tenant-source fact, not an identity.
   for (const c of m.calls ?? [])
-    for (const tg of c.targets ?? []) {
-      const hit = byId.get(tg);
-      if (!hit) continue;
-      const slot = (hit.m.params ?? []).find((p) => {
+    for (const hit of targetHits(model, t.file, c, byId)) {
+      const args = c.args ?? [];
+      const callerAt = (hit.m.params ?? []).findIndex((p) => {
         const type = fqnOf(model, hit.t.file, p.type) ?? baseType(p.type);
         return CALLER_SIMPLE.has(simpleType(type));
       });
+      const slot = callerAt >= 0
+        ? { name: hit.m.params[callerAt].name, arg: args.join(', ') || null }
+        : projectHolderSlot(model, hit, args, b, textOf);
       if (!slot) continue;
       sinks.push({
         what: `${hit.t.name}#${hit.m.name}(${slot.name})`,
         cite: `${t.file}:${c.line ?? m.start}`,
-        arg: (c.args ?? []).join(', ') || null,
+        arg: slot.arg,
       });
     }
   return sinks;
 }
+
+// The project methods a call reaches. A static call (`TenantContext.setContext(...)`) names its type as the receiver:
+// when the dump or the fixture linker left the call without targets, the receiver's own type answers, as javac would.
+function targetHits(model, file, c, byId) {
+  const hits = [];
+  for (const tg of c.targets ?? []) {
+    const hit = byId.get(tg) ?? byId.get(String(tg).replace(/\(.*$/, ''));
+    if (hit) hits.push(hit);
+  }
+  if (hits.length) return hits;
+  const name = c.recv?.kind === 'name' ? c.recv.text : null;
+  if (!name || !/^[A-Z]/.test(name)) return hits;
+  const fqn = model.resolveIn?.(file, name) ?? null;
+  const hit = fqn && model.types?.has(fqn) ? byId.get(`${fqn}#${c.name}`) : null;
+  return hit ? [hit] : hits;
+}
+
+// The parameter of a project method that stands for an identity: a project-typed value the method stores in a
+// ThreadLocal holder of the project's own type (its parameter is the only thing it can be storing). Null when the
+// method is no such holder, or when the value at this call is not built here — `new UserContext(user)` is the
+// client's id becoming an identity; a `User` the method looked up by that id is the same thing one hop away only
+// when some holder holds it, which is what the type gate already decides.
+function projectHolderSlot(model, hit, args, callerBody, textOf) {
+  if (!textOf) return null;
+  const heldBody = String(textOf(hit.t.file) ?? '').split('\n').slice(hit.m.start - 1, hit.m.end).join('\n');
+  const holder = (hit.t.fields ?? []).find((f) => {
+    const element = threadLocalElement(f.type);
+    if (!element || !isProjectValueType(model, hit.t.file, element)) return false;
+    const set = new RegExp(`\\b${f.name}\\s*\\.\\s*set\\s*\\(([^)]*)\\)`).exec(heldBody);
+    // Only a setter that stores its own parameter: anything else is a store this method builds, found in its body.
+    return Boolean(set && (hit.m.params ?? []).some((p) => p.name && p.name === set[1].trim()));
+  });
+  if (!holder) return null;
+  for (const [i, p] of (hit.m.params ?? []).entries()) {
+    if (!isProjectValueType(model, hit.t.file, p.type)) continue;
+    const built = builtValue(args[i], callerBody, model, hit.t.file);
+    if (built) return { name: p.name, arg: built };
+  }
+  return null;
+}
+
+// The project value a call passes: `new Context(user)`, or the construction the caller's own body assigns to the
+// name it passes (`ResolvedTenantContext ctx = new ResolvedTenantContext(user); setResolvedContext(ctx);`).
+const builtValue = (argText, callerBody, model, file) => {
+  const text = String(argText ?? '').trim();
+  const inline = /^new\s+([\w.]+)\s*\(/.exec(text);
+  if (inline) return isProjectValueType(model, file, inline[1]) ? text : null;
+  const name = /^(\w+)$/.exec(text)?.[1];
+  if (!name) return null;
+  const assigned = new RegExp(`\\b${name}\\s*=\\s*([^;]+)`).exec(String(callerBody ?? ''));
+  const made = assigned ? /^new\s+([\w.]+)\s*\(/.exec(assigned[1].trim()) : null;
+  return made && isProjectValueType(model, file, made[1]) ? assigned[1].trim() : null;
+};
 
 // The value the client sent has to reach the holder. A read the code only compares, logs, or hands to a check and
 // nothing else does not become the caller. Followed one assignment deep (`user = users.loadByLogin(actor)`); when the
@@ -812,9 +915,10 @@ export function authSources(model, textOf, isTest = () => false) {
 }
 
 // The caller the code believes because the request said so. Two conditions, both required: the value reaches a
-// *security* identity holder (the security context, or an Authentication/Principal slot), and no verification call is
-// reachable in the same method (same file, two hops) from a receiver of a security-library or token-service type.
-// Anything less certain stays a user source — a ThreadLocal of an IP, a request id or a workspace id is not a caller.
+// *security* identity holder (the security context, an Authentication/Principal slot, or a holder of the app's own
+// whose type the project declares), and no verification call is reachable in the same method (same file, two hops)
+// from a receiver of a security-library or token-service type. Anything less certain stays a user source — a
+// ThreadLocal of an IP, a request id or a workspace id is not a caller.
 // One warning per (method, holder): every source that reaches that holder is listed in the one entry.
 export function identityWarnings(model, textOf, isTest = () => false) {
   const warnings = [];
@@ -828,7 +932,7 @@ export function identityWarnings(model, textOf, isTest = () => false) {
       // The sink decides first: without a security holder there is no warning to make, whatever is read.
       const holders = new Map();
       for (const x of bodies)
-        for (const sink of securitySinks(x.t, x.m, x.b, model, byId)) {
+        for (const sink of securitySinks(x.t, x.m, x.b, model, byId, textOf)) {
           const key = `${x.t.name}#${x.m.name}`;
           if (!holders.has(key)) holders.set(key, { x, sinks: [] });
           holders.get(key).sinks.push(sink);
@@ -890,6 +994,13 @@ export function identityWarnings(model, textOf, isTest = () => false) {
   assert.ok(isVerifierType('shop.JwtTokenService', model));
   assert.ok(!isVerifierType('shop.TwoFactorService', model));
   assert.ok(!isVerifierType('java.lang.String', model));
+  // The value's type decides an identity holder: a project type is one, a String or a JDK type is not.
+  assert.equal(threadLocalElement('ThreadLocal<User>'), 'User');
+  assert.equal(threadLocalElement('ThreadLocal<Map<String, Object>>'), 'Map<String, Object>');
+  assert.equal(threadLocalElement('String'), null);
+  assert.ok(isProjectValueType(model, 'x', 'Svc'));
+  assert.ok(!isProjectValueType(model, 'x', 'String'));
+  assert.ok(!isProjectValueType(model, 'x', 'long'));
   assert.ok(
     valueReaches({ kind: 'cookie', name: 'actAs', value: 'actor' }, [{ b: 'User u = users.loadByLogin(actor);' }], 'u'),
   );

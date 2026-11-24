@@ -118,7 +118,9 @@ const LOCAL_STRING = L(
   '}',
 );
 
-// A cookie stored in a ThreadLocal of the user: the caller arrives from the client unchecked, and the fact says so.
+// A cookie stored in a ThreadLocal of the user: the caller arrives from the client unchecked. The holder is the app's
+// own — a ThreadLocal of a type the project declares — and that is an identity sink even though it is not Spring
+// Security's.
 const LOCAL_COOKIE = L(
   'package shop;',
   ...IMPORTS,
@@ -165,7 +167,98 @@ const CHECKED_ONLY = L(
   '}',
 );
 
-function build(filter, cls = 'ActAsFilter') {
+// The app's own context holder, filled from a cookie. `TenantContext` keeps a ThreadLocal of a project type
+// (`UserContext`), and the filter stores the context it builds from the user the cookie named. The holder is not
+// Spring Security's and the value is not a String: the type alone makes it an identity, and no verification runs.
+const TENANT_CONTEXT = {
+  'src/main/java/shop/UserContext.java': L(
+    'package shop;',
+    'public class UserContext {',
+    '  private final User user;',
+    '  public UserContext(User user) {',
+    '    this.user = user;',
+    '  }',
+    '  public User getUser() {',
+    '    return user;',
+    '  }',
+    '}',
+  ),
+  'src/main/java/shop/TenantContext.java': L(
+    'package shop;',
+    'public class TenantContext {',
+    '  private static final ThreadLocal<UserContext> CURRENT = new ThreadLocal<>();',
+    '  public static void setContext(UserContext ctx) {',
+    '    CURRENT.set(ctx);',
+    '  }',
+    '  public static UserContext getContext() {',
+    '    return CURRENT.get();',
+    '  }',
+    '}',
+  ),
+};
+
+const PROJECT_CONTEXT_FILTER = L(
+  'package shop;',
+  ...IMPORTS,
+  'public class ActAsFilter {',
+  '  private final UserService users;',
+  '  public ActAsFilter(UserService users) {',
+  '    this.users = users;',
+  '  }',
+  '  public void doFilterInternal(HttpServletRequest request) {',
+  '    String actor = null;',
+  '    for (Cookie c : request.getCookies()) {',
+  '      if ("actAs".equals(c.getName())) {',
+  '        actor = c.getValue();',
+  '      }',
+  '    }',
+  '    User user = users.loadByLogin(actor);',
+  '    TenantContext.setContext(new UserContext(user));',
+  '  }',
+  '}',
+);
+
+// The same shape, but the app's holder keeps a String — a workspace id, a request id. That is bookkeeping, so the
+// cookie stays a user source and there is no warning: the stored value's type is the whole distinction.
+const STRING_CONTEXT = {
+  'src/main/java/shop/RequestContext.java': L(
+    'package shop;',
+    'public class RequestContext {',
+    '  private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();',
+    '  public static void setCurrent(String value) {',
+    '    CURRENT.set(value);',
+    '  }',
+    '  public static String getCurrent() {',
+    '    return CURRENT.get();',
+    '  }',
+    '}',
+  ),
+};
+
+const STRING_CONTEXT_FILTER = L(
+  'package shop;',
+  ...IMPORTS,
+  'public class ActAsFilter {',
+  '  private final UserService users;',
+  '  private final RequestContext context;',
+  '  public ActAsFilter(UserService users, RequestContext context) {',
+  '    this.users = users;',
+  '    this.context = context;',
+  '  }',
+  '  public void doFilterInternal(HttpServletRequest request) {',
+  '    String actor = null;',
+  '    for (Cookie c : request.getCookies()) {',
+  '      if ("actAs".equals(c.getName())) {',
+  '        actor = c.getValue();',
+  '      }',
+  '    }',
+  '    User user = users.loadByLogin(actor);',
+  '    context.setCurrent(user.getLogin());',
+  '  }',
+  '}',
+);
+
+function build(filter, cls = 'ActAsFilter', extra = {}) {
   const files = {
     ...USER,
     'src/main/java/shop/TfaService.java': L(
@@ -177,6 +270,7 @@ function build(filter, cls = 'ActAsFilter') {
       '}',
     ),
     'src/main/java/shop/TfaToken.java': L('package shop;', 'public class TfaToken {', '  public boolean isValid() {', '    return true;', '  }', '}'),
+    ...extra,
     [`src/main/java/shop/${cls}.java`]: filter,
   };
   const model = buildModel(Object.entries(files).map(([p, text]) => ({ p, text, ix: index(text) })));
@@ -235,10 +329,36 @@ test('a header into a plain ThreadLocal of a String is a user source and no warn
   assert.equal(source.kind, 'API token');
 });
 
-test('a cookie into a ThreadLocal of the user is a user source and no warning', () => {
+test('a cookie into a ThreadLocal of the user is a warning: the app holder stores a project type', () => {
   const { sources, warnings } = build(LOCAL_COOKIE);
-  assert.deepEqual(warnings, []);
+  assert.equal(warnings.length, 1, `a project-typed ThreadLocal is an identity sink: ${JSON.stringify(warnings)}`);
+  assert.equal(warnings[0].method, 'ActAsFilter#doFilterInternal');
+  assert.equal(warnings[0].source, 'cookie:actAs');
+  assert.match(warnings[0].why[1], /thread-local ACTOR \(User\)/);
   assert.equal(sources.find((s) => s.name === 'actAs')?.kind, 'cookie actAs (unverified)');
+});
+
+test('a cookie made the caller through the app\'s own context holder is one warning', () => {
+  const { warnings } = build(PROJECT_CONTEXT_FILTER, 'ActAsFilter', TENANT_CONTEXT);
+  assert.equal(warnings.length, 1, `one warning: ${JSON.stringify(warnings.map((w) => w.id))}`);
+  const w = warnings[0];
+  assert.equal(w.kind, 'client-asserted-identity');
+  assert.equal(w.method, 'ActAsFilter#doFilterInternal');
+  assert.equal(w.source, 'cookie:actAs');
+  assert.match(w.why[1], /TenantContext#setContext\(ctx\)/, 'the store is the holder setter, not a name');
+  // The holder is a static utility class: the call names its type as the receiver, and the sink is still the filter's.
+  assert.ok(
+    w.evidence.some((e) => e.startsWith('src/main/java/shop/ActAsFilter.java:')),
+    `the warning cites the filter: ${w.evidence.join(', ')}`,
+  );
+});
+
+test('the same holder of a String is a user source and no warning', () => {
+  const { sources, warnings } = build(STRING_CONTEXT_FILTER, 'ActAsFilter', STRING_CONTEXT);
+  assert.deepEqual(warnings, [], 'a ThreadLocal<String> is not an identity holder');
+  const source = sources.find((s) => s.name === 'actAs');
+  assert.ok(source, `the read is still a user source: ${sources.map((s) => s.kind).join(', ')}`);
+  assert.equal(source.kind, 'cookie actAs (unverified)');
 });
 
 test('a header that is only checked, never stored, is a user source and no warning', () => {
