@@ -48,6 +48,16 @@ test('flat caps: regions never above 1,000 words, state never above 400, at any 
   assert.equal(CAPS.state, 400);
 });
 
+test('a section far under its share is reported as thin, not left alone', () => {
+  const b = budgetFor(300);
+  const counts = Object.fromEntries(Object.keys(b.sections).map((k) => [k, b.sections[k]]));
+  assert.deepStrictEqual(budgetWarnings(counts, b), [], 'a map at every share has nothing to report');
+  const thin = { ...counts, state: Math.floor(b.sections.state * 0.4), intros: 1 };
+  const warned = budgetWarnings(thin, b);
+  assert.equal(warned.length, 1, 'only state is thin: intros is exempt, and the total is still under');
+  assert.match(warned[0], /^state: ~\d+ words < \d+ .*thin/);
+});
+
 test('each tier’s section shares stay under the tier ceiling', () => {
   for (const n of TIER_ENDPOINTS) {
     const b = budgetFor(n);

@@ -162,6 +162,10 @@ export function citeTarget(map) {
   );
 }
 
+// A share is the room a section has, not a target to fill. Writing to the ceiling and stopping early is the mirror of
+// writing over it: the section stops answering its question. `intros` is exempt (version and project strings).
+export const UNDER_SHARE = 0.6;
+
 // One warning per section over its share, plus the total: the writer fixes a section, never the whole map.
 export function budgetWarnings(counts, budget) {
   const out = [];
@@ -172,6 +176,12 @@ export function budgetWarnings(counts, budget) {
     out.push(
       `${name}: ~${n} words > tier ${budget.tier} target ${target}${cap && n > cap ? ` (over the hard cap ${cap})` : ''}`,
     );
+  }
+  for (const [name, n] of Object.entries(counts)) {
+    const target = budget.sections[name];
+    if (name === 'intros' || n >= target * UNDER_SHARE) continue;
+    out.push(`${name}: ~${n} words < ${Math.round(target * UNDER_SHARE)} (60% of the tier ${budget.tier} share ` +
+      `${target}): thin, answer the section's question before cutting`);
   }
   const total = Object.values(counts).reduce((n, x) => n + x, 0);
   if (total > budget.core)
@@ -705,7 +715,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // The tier, the total and every section against its share, so the next edit is one section, not the whole map.
   if (stats) {
     const parts = Object.entries(stats.sections).map(
-      ([k, n]) => `${k} ${n}/${stats.targets[k]}${n > stats.targets[k] ? '!' : ''}`,
+      ([k, n]) =>
+        `${k} ${n}/${stats.targets[k]}${n > stats.targets[k] ? '!' : n < stats.targets[k] * UNDER_SHARE && k !== 'intros' ? '_' : ''}`,
     );
     console.log(
       `budget: tier ${stats.tier} — core ${stats.coreWords}/${stats.budget} words · citations ${stats.citations}` +

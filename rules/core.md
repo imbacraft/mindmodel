@@ -28,9 +28,9 @@
 
 **P7. Words first.** About 80% words. The only diagram is the request-path sequence; another only if its relations branch, loop or are many-to-many (a chain is a sentence).
 
-**P8. Budgets are size tiers, with flat caps where overflow lives.** The core map (everything except stories) is capped by the app's endpoint count, in four tiers; regions and state carry flat caps at every tier. Part 7 states the numbers once: use them, do not restate them. `facts.md` opens with this app's tier and section targets (`**budget: …**`). Cut, merge or group; never cram.
+**P8. Budgets are size tiers, with flat caps where overflow lives.** The core map (everything except stories) is capped by the app's endpoint count, in four tiers; regions and state carry flat caps at every tier. Part 7 states the numbers once: use them, do not restate them. `facts.md` opens with this app's tier and section targets (`**budget: …**`). Cut, merge or group; never cram. A section far under its share is thin, not efficient: it stopped answering its question.
 
-**Draft to the section targets, once.** Each section has a share of the tier (Part 7). Writing by feel overshoots and costs more to cut than to write. Write once, to those numbers, and let the validator count: it prints `sections: purpose 150/144 · …` and marks each over-share section with `!`. Fix only the marked sections, until none is marked. Never re-read the draft to count words; never rewrite the map to fix one number.
+**Draft to the section targets, once.** Each section has a share of the tier (Part 7). Writing by feel overshoots and costs more to cut than to write. Write once, to those numbers, and let the validator count: it prints `sections: purpose 150/144 · …` and marks each over-share section with `!` and each section under 60% of its share with `_`. A `!` section is cut; a `_` section is filled, to the share, not to the ceiling. Fix only the marked sections, until none is marked. Never re-read the draft to count words; never rewrite the map to fix one number.
 
 **P9. Rank, don't list.** Where a section holds items of unequal weight (rules, stories), order them by importance and give one line on why each ranks there.
 
