@@ -269,6 +269,8 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 **Qualify:** non-obvious **and** consequential **and** verifiable in code, and stated with its condition (P10a). Not code smells, not style guides (unless breaking them causes real damage), not doc mismatches (P4). Flawed behavior a developer must know to work safely (e.g. "the charged price comes from the browser") qualifies, stated as behavior, never as a vulnerability or an exploit (P6).
 
+**A surprise is not a rule either.** Something that behaves unexpectedly but changes nothing a developer must do does not earn a slot: writing it down forces the section to say "this is odd" instead of "this is what to do", and a reader who lacks your model of the system learns nothing from it. Keep it for the owner: `findings.md`, under *observations*, one line each with a citation. It may become a rule later, when it turns out to have a consequence.
+
 **A probable defect is not a rule.** The digest's *Security warnings, computed* section names prefixes that allow anonymous access and expose writes with no method-level check. The map states the condition neutrally ("`/api/shop/**` is anonymous, so `ProductController#create` needs no token") and the gap goes to `findings.md`; it never becomes a rule like "always check the tenant", because that is the missing code, not the code.
 
 **Rank** by **reach × damage**:

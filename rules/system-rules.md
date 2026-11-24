@@ -81,6 +81,8 @@ All single-app principles hold (essence not coverage, no filler, every claim cit
 - Rank by damage: money and core data first.
 
 ### 3.7 System rules (≤ 5, ranked)
+
+Not for this section: anything that behaves oddly but asks nothing of the reader. Those go to `findings.md` (owner-only) under *observations*, with a citation; they may mature into rules once their consequence is known.
 - Conventions every service must follow (auth/tenant propagation, correlation IDs, event naming and versioning, idempotent consumers) and traps (a header JMS listeners never receive, a topic two teams use differently, a library version that changes serialization).
 - Each with an importance line (reach × damage), as in single-app rules.
 
