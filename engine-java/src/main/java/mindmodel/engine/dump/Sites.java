@@ -95,6 +95,18 @@ public final class Sites {
                 else if ("field".equals(item.kind()))
                     generatedFields.put(item.owner() + "#" + item.name(), item.type() == null ? "" : item.type());
             }
+        // `Foo.<T>builder()` is written with a type argument Spoon counts as an argument: a generated member whose
+        // name has exactly one shape on its owner is also reachable without the count.
+        for (var e : synth.entrySet()) {
+            java.util.Map<String, java.util.List<String>> byName = new java.util.HashMap<>();
+            for (Lombok.Item item : e.getValue())
+                if ("method".equals(item.kind()))
+                    byName.computeIfAbsent(item.name(), k -> new java.util.ArrayList<>()).add(item.id());
+            for (var named : byName.entrySet())
+                if (named.getValue().size() == 1)
+                    generated.computeIfAbsent(e.getKey(), k -> new java.util.HashMap<>())
+                            .putIfAbsent(named.getKey(), named.getValue().get(0));
+        }
         // The other direction: which declared types a type inherits from, for a call written without a receiver.
         java.util.Map<String, java.util.Set<String>> supertypes = new java.util.HashMap<>();
         for (CtType<?> t : types) {
@@ -117,13 +129,21 @@ public final class Sites {
         // What Lombok writes, in the two shapes a chain needs: a member's return type, and the builder types it invents.
         java.util.Map<String, String> generatedTypes = new java.util.HashMap<>();
         java.util.Set<String> builders = new java.util.HashSet<>();
-        for (var entry : synth.entrySet())
+        for (var entry : synth.entrySet()) {
+            java.util.Map<String, java.util.List<String>> byName = new java.util.HashMap<>();
             for (Lombok.Item item : entry.getValue()) {
                 String type = item.typeFqn() != null ? item.typeFqn() : item.type();
-                if ("method".equals(item.kind())) generatedTypes.put(item.owner() + "#" + item.name() + "/" + item.params().size(), type);
-                else if ("field".equals(item.kind())) generatedTypes.put(item.owner() + "#" + item.name(), type);
+                if ("method".equals(item.kind())) {
+                    generatedTypes.put(item.owner() + "#" + item.name() + "/" + item.params().size(), type);
+                    if (type != null) byName.computeIfAbsent(item.name(), k -> new java.util.ArrayList<>()).add(type);
+                } else if ("field".equals(item.kind())) generatedTypes.put(item.owner() + "#" + item.name(), type);
                 if (type != null && type.endsWith(".Builder")) builders.add(type);
             }
+            // `Foo.<T>builder()`: Spoon counts the written type argument, so a single-shape name is also reachable bare.
+            for (var named : byName.entrySet())
+                if (named.getValue().size() == 1)
+                    generatedTypes.putIfAbsent(entry.getKey() + "#" + named.getKey(), named.getValue().get(0));
+        }
         Chains chains = new Chains(generatedTypes, builders);
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> type : types) {
@@ -174,7 +194,9 @@ public final class Sites {
         if (targets.isEmpty()) {
             // Unqualified call: its receiver is the class being written, so a generated sibling is the target.
             String generatedOwner = receiverName != null ? receiverName : Names.qualified(type);
-            String id = index.generated().getOrDefault(generatedOwner, java.util.Map.of()).get(name + "/" + argc);
+            java.util.Map<String, String> members = index.generated().getOrDefault(generatedOwner, java.util.Map.of());
+            String id = members.get(name + "/" + argc);
+            if (id == null) id = members.get(name);
             if (id != null) {
                 targets = List.of(id);
                 generated = true;
