@@ -70,8 +70,8 @@ export function checkSchema(v, s, defs, at, err) {
 const BUDGET = {
   actors: 7,
   externals: 7,
-  concepts: 5,
-  regions: [2, 7],
+  concepts: 6,
+  regions: [2, 8],
   lanes: [2, 5],
   flowSteps: 7,
   rules: 5,

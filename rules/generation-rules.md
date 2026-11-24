@@ -121,7 +121,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 ### 3.3 Core concepts (most important; take the most care)
 
-**Goal:** the reader learns the ≤ 5 things everything else is about, can tell look-alikes apart, and knows how the concepts depend on each other. Every later section is told in these names.
+**Goal:** the reader learns the ≤ 6 things everything else is about, can tell look-alikes apart, and knows how the concepts depend on each other. Every later section is told in these names.
 
 **What a concept is:** something the users or the business talk about that has an identity and a lifecycle. It may span several entities (Organization account = `OrgAccount` + `OrgUser`). It is never a technical artifact (log, token, settings row, DTO).
 
@@ -139,8 +139,8 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
    **Dead model:** an entity no code path creates, reads or changes (no repository use, no controller or service reference) is left off the map, however central its name sounds. The same holds for views no controller returns.
 4. **Shortlist** 10–15 with their evidence.
-5. **Choose ≤ 5**, merging entities that are one idea for the user. Prefer candidates that appear in the frontend **and** have services **and** a lifecycle.
-   - **Stages or variants of one idea share one card** (a prospect who becomes a customer; a guest buyer vs. a registered one). Name the card after the idea or both sides ("Lead & Client"), and spell out the difference in "Not to be confused with". This is chunking, not compromise: it keeps the count at ≤ 5 without losing the distinction.
+5. **Choose ≤ 6**, merging entities that are one idea for the user. Prefer candidates that appear in the frontend **and** have services **and** a lifecycle.
+   - **Stages or variants of one idea share one card** (a prospect who becomes a customer; a guest buyer vs. a registered one). Name the card after the idea or both sides ("Lead & Client"), and spell out the difference in "Not to be confused with". This is chunking, not compromise: it keeps the count at ≤ 6 without losing the distinction.
    - Only **independent** concepts (different identity, different lifecycle, not one turning into the other) need separate cards. If a map genuinely needs a sixth independent concept, that is evidence to revisit the limit, not a reason to exceed it.
 6. **Use the docs as evidence.** They often state the domain model outright (e.g. the tenancy model).
 
@@ -184,7 +184,7 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 2. **Layer-organized code** (`controller/ service/ repository/ entity/` at the top): derive capabilities by grouping controllers by URL prefix and by the entities they use; merge groups that serve one capability. Then give each region the services, repositories, entities and views it uses; the region's codeName lists the layer folders it spans. Entities and repositories no single capability owns (lookup tables, base classes) go to Shared infrastructure.
    - **A controller that mixes capabilities** goes to the region of its main purpose; its stray endpoints are named in that region's parts.
 3. **Shared packages** (`common/`, `core/`, `shared/`): carve out a separate region for any part that is a *capability* with its own concepts or its own external system (accounts & tenancy, payments). The remaining plumbing (security, email, storage, translations, API client layer) becomes **one "Shared infrastructure" card, always last**.
-4. **At most 6 regions + Shared infrastructure** (7 in total is a ceiling, not a target). Fewer, fuller regions beat thin ones: a region that is only a screen or two (one controller and its forms) is merged into the nearest region serving the same actor. In small apps, staff-only screens usually form **one** back-office region. Never split one capability across regions.
+4. **At most 7 regions + Shared infrastructure** (8 in total is a ceiling, not a target). Fewer, fuller regions beat thin ones: a region that is only a screen or two (one controller and its forms) is merged into the nearest region serving the same actor. In small apps, staff-only screens usually form **one** back-office region. Never split one capability across regions.
 5. **Each region spans tiers**: its frontend pages and its backend code together. Never a "Frontend" or "Backend" region.
 
 **Order:** along the main actor's journey through the product. *Example:* sign up → set up → sell → deliver → get paid → support → shared infrastructure.
@@ -411,8 +411,8 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 |---|---|
 | Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 3 run steps; ≤ 150 words |
 | People & outside systems | ≤ 7 each, ranked |
-| Core concepts | ≤ 5, one card each, plus 1 core sentence that mentions every concept |
-| Regions | ≤ 6 + Shared infrastructure; ≤ 7 parts each |
+| Core concepts | ≤ 6, one card each, plus 1 core sentence that mentions every concept |
+| Regions | ≤ 7 + Shared infrastructure; ≤ 7 parts each |
 | State & source of truth | 1 row per core concept; ≤ 5 copies; ≤ 4 seams; ≤ 400 words |
 | How a request travels | ≤ 7 steps, ≤ 5 lanes |
 | What runs on its own | ≤ 10 rows |
