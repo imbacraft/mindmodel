@@ -3,6 +3,7 @@
 // schema change invalidates every entry.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
@@ -37,6 +38,47 @@ export function cacheKey(name) {
   return `${name}-${crypto.createHash('sha256').update(`${engineKey}:${commitOf(name)}`).digest('hex').slice(0, 12)}`;
 }
 
+// A scan starts a JVM; four files scanning at once means four multi-gigabyte JVMs and a suite that takes three times
+// as long (or dies on memory). Slots are files, so the limit holds across the test runner's separate processes; a slot
+// whose process is gone is reclaimed rather than blocking the run.
+const SCAN_SLOTS = 2;
+const slotDir = path.join(os.tmpdir(), 'mindmodel-scan-slots');
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function withScanSlot(run) {
+  fs.mkdirSync(slotDir, { recursive: true });
+  const deadline = Date.now() + 15 * 60_000;
+  for (;;) {
+    for (let i = 0; i < SCAN_SLOTS; i++) {
+      const slot = path.join(slotDir, `slot-${i}`);
+      try {
+        fs.writeFileSync(slot, String(process.pid), { flag: 'wx' });
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        const holder = Number(fs.readFileSync(slot, 'utf8').trim() || 0);
+        if (holder && !alive(holder)) fs.rmSync(slot, { force: true });
+        continue;
+      }
+      try {
+        return run();
+      } finally {
+        fs.rmSync(slot, { force: true });
+      }
+    }
+    if (Date.now() > deadline) throw new Error('scan slot: waited 15 minutes for a free slot');
+    sleep(250);
+  }
+}
+
 // `withModel` needs the in-memory model, which is not serialisable: those callers scan (once per file) and share the
 // result themselves.
 const dirty = (dir) => {
@@ -48,13 +90,13 @@ const dirty = (dir) => {
 };
 
 export function cachedScan(name, dir, { withModel = false } = {}) {
-  if (withModel) return scan(dir, { withModel });
+  if (withModel) return withScanSlot(() => scan(dir, { withModel }));
   // An app under development changes without the commit moving: never serve it from cache.
-  if (dirty(dir)) return scan(dir);
+  if (dirty(dir)) return withScanSlot(() => scan(dir));
   fs.mkdirSync(cacheDir, { recursive: true });
   const file = path.join(cacheDir, `${cacheKey(name)}.json`);
   if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
-  const facts = scan(dir);
+  const facts = withScanSlot(() => scan(dir));
   fs.writeFileSync(file, JSON.stringify(facts));
   return facts;
 }
