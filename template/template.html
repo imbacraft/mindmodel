@@ -389,16 +389,6 @@ add('flow', 'How a request travels', `
   <figure class="figure"><div class="svgbox"><svg class="diagram seq" id="seq" role="img" aria-label="Sequence of a request"></svg></div></figure>
   <div class="flow-grid"><ol class="steps" id="flowSteps">${M.runtime.steps.map((s, i) => `<li data-step="${i}"><div><div class="head">${chip(s.region)}</div>${rich(s.text)}${cites(s.cites)}</div></li>`).join('')}</ol></div>`);
 
-// Straight from facts, so the writer's table is visibly a selection: the total, and the full list on demand.
-const bgInventory = () => {
-  const b = D?.background;
-  if (!b?.total) return '';
-  const rows = b.rows
-    .map((r) => `<tr><td><b>${esc(r.name)}</b>${cites([r.cite])}</td><td>${esc(r.kind)}</td><td>${esc(r.args)}</td></tr>`)
-    .join('');
-  return `<p class="also">From the code: ${b.total} scheduled / async / listener / socket handler${b.total === 1 ? '' : 's'}.</p>`;
-};
-
 // Knowledge, not weaknesses (rule S4): gaps are in the owner's findings, never on the page.
 const S = M.security;
 if (S) add('security', 'How security works', `
@@ -415,7 +405,7 @@ add('background', 'What runs on its own', `
   <p class="lede">${rich(M.background.intro)}</p>${cites(M.background.cites)}
   <div class="wtc"><table><thead><tr><th>What</th><th>When</th><th>Region</th></tr></thead><tbody>
   ${M.background.items.map((b) => `<tr><td><b>${esc(b.name)}</b><div class="also">${rich(b.what)}</div>${cites(b.cites)}</td><td class="when">${esc(b.when)}</td><td>${chip(b.region)}</td></tr>`).join('')}
-  </tbody></table></div>${bgInventory()}`);
+  </tbody></table></div>`);
 
 add('rules', 'Rules', `
   <h2>Rules</h2>

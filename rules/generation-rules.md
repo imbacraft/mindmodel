@@ -59,7 +59,7 @@ Work in this order. Later sections depend on earlier ones: everything is written
 | 4 | Regions (Part 3.4) | regions + region sentence |
 | 5 | State & source of truth (Part 3.5). Written after regions, because each writer is named by its region | owners |
 | 6 | How a request travels (Part 3.6) | request path |
-| 7 | What runs on its own (Part 3.7) | background table + generated total |
+| 7 | What runs on its own (Part 3.7) | background table |
 | 8 | Stories: choose, rank, trace (Part 3.9) | stories |
 | 9 | Rules (Part 3.8). Written after tracing, because most rules show up while tracing | ranked rules |
 | 10 | Overview, people & outside systems (Parts 3.1–3.2). Written last, when you understand the system | purpose, non-goals, boot, actors, externals |
@@ -252,9 +252,9 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 - **Table**, ≤ 10 rows, grouped by purpose (not one row per class): name · when (human terms: "every 20 s", "hourly", "nightly 03:00") · what it does, in one or two sentences · region · citations to each scheduler or worker.
 - If an item explains user-visible delay ("paid" arrives after the redirect), say it in that row.
 - If the app truly has nothing that runs on its own, say so in the intro: that is itself useful knowledge.
-- **The page also prints, from the code, how many handlers exist in total.** Your table is the selection that matters, not the inventory: never pad it to match the count, and never say a handler does not exist because it is not in your table.
+- **Your table is a selection, not an inventory.** Never pad it to include every handler, and never say a handler does not exist because it is not in your table; the digest's count is the only place the total is stated, for you to judge coverage.
 
-**Checks:** Does every row describe work that really runs with no request? Is every schedule copied exactly from the code or config? When the generated total is larger than your rows, does the intro or a row tell the reader what the rest of it is?
+**Checks:** Does every row describe work that really runs with no request? Is every schedule copied exactly from the code or config? When the digest's total is larger than your rows, does the intro or a row tell the reader what the rest of it is?
 
 ### 3.8 Rules
 
