@@ -39,6 +39,8 @@
 
 **P8. Budgets are hard limits.** Core map (everything except stories) ≤ 3,000 words. Per-section limits are given below. Cut, merge or group; never cram.
 
+**Draft to these targets, not to the total.** A first draft written by feel lands ~1,500 words over and costs more time than the writing itself to cut back. Approximate shares of the 3,000: purpose 120 · context 250 · concepts 550 · regions 550 · state 350 · runtime 250 · background 250 · rules 400 · security 200 (plus the section intros and the core sentence). Measure once after drafting and correct a section, not the whole map.
+
 **P9. Rank, don't list.** Where a section has several items of unequal weight (rules, stories), order them by importance and say in one line why each ranks where it does.
 
 **P10a. State the condition; absolutes only when the code guarantees them.** A claim is true under conditions — a tenant, a role, a configuration key, a transaction, a path prefix. Write them down: "when `sureness.excludedResource` lists it, `/api/webhooks/**` skips authentication", not "requests are authenticated". Words like *never*, *always*, *all requests*, *no one* are allowed only when the code guarantees them (a constant, an exhaustive switch, a single entry point); otherwise the rule carries a `condition` field saying when it holds, and the validator rejects an absolute without one. A probable defect does not become a rule either: rules describe how the system works, so the defect goes in the owner's findings and the map's text stays neutral (P6).
