@@ -5,7 +5,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import assert from 'node:assert';
 import { parseCite, resolveCites, checkSchema } from './validate.mjs';
 
 // "How it talks" as a table: per service, what it calls, what it publishes (and who listens), what it listens to.
@@ -69,18 +68,6 @@ export const unresolved = (sys) => [
     (s.unresolvedDest ?? []).map((name) => ({ service: s.name, name, what: 'URL setting' })),
   ),
 ];
-assert.deepStrictEqual(
-  unresolved({
-    channels: [{ kind: 'jms', name: null, unresolved: 'cfg.queue', out: [{ service: 'a' }], in: [] }],
-    rest: [{ from: 'a', to: 'pay-host', known: false }],
-    services: [{ name: 'gw', unresolvedDest: ['order.url'] }],
-  }),
-  [
-    { service: 'a', name: 'cfg.queue', what: 'jms channel' },
-    { service: 'a', name: 'pay-host', what: 'host' },
-    { service: 'gw', name: 'order.url', what: 'URL setting' },
-  ],
-);
 
 export function validateSystem(map, sys, root) {
   const errors = [],

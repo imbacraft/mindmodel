@@ -2,7 +2,6 @@
 // repository methods that read or write a keyed entity without the key (possible cross-tenant access), where the key
 // comes from (round 4's tenant sources), and code without a request (jobs, listeners, async, webhooks) that touches
 // keyed entities and whether it sets the tenant context first.
-import assert from 'node:assert/strict';
 import { isTestPath } from './entities.mjs';
 
 export const MIN_ENTITIES = 3;
@@ -13,7 +12,7 @@ export const MIN_FILTER_SHARE = 0.5;
 const IDENTIFIER = /(Id|ID|Uuid)$/;
 
 // A field name on the key candidates: ids, versions and timestamps are not tenancy.
-const NOT_A_KEY =
+export const NOT_A_KEY =
   /^(id|version|isNew|new\w*|(gmt|created|updated|modified|deleted|occurred|expires)_?\w*|created_?at|updated_?at|created_?by|updated_?by|creator|modifier|lastModified\w*|tenant\w*Id)$/i;
 
 const writeMethods = /^(save|saveAll|delete|deleteAll|deleteById|deleteAllById|flush|persist|merge|remove|insert|update)$/;
@@ -48,23 +47,85 @@ export function tenancyFacts(
     return { filtered, total: all.length, share: filtered / all.length };
   };
 
-  // (b2) the key is read or set in request-scoped code: a filter, interceptor, security component, tenant context or
-  // holder that names the key. The same rule catches `request.getHeader`-style sources only when they name the key.
-  const nounOf = (key) => key.replace(/(Id|ID)$/, '');
-  const requestLink = (key) => {
-    const noun = nounOf(key);
-    for (const t of model?.types?.values() ?? []) {
+  // (b2) the key is *stored into* a request/context holder — a ThreadLocal write, a field of a request-scoped bean,
+  // a request attribute — through a call chain of at most three hops. Being read off the request (a `@PathVariable`,
+  // a query parameter) is a foreign key in the path, not a tenant: naming it in request-scoped code used to be enough
+  // to outvote the repository evidence, so a child id in controllers became "the tenant". The key may be handed over
+  // directly or wrapped by a helper (`setupForSubscription(subscriptionId)` builds a context and stores it).
+  const flat = (s) => String(s ?? '').replace(/_/g, '').toLowerCase();
+  const namesKey = (key) => (s) => flat(s).includes(flat(key));
+  // Store calls, by their framework meaning: a ThreadLocal set on the declared type, a context/attribute write, or a
+  // setter on a request-scoped bean (its field assignment, the only write a dump can name).
+  const HOLDER_RECV =
+    /(ThreadLocal|SecurityContextHolder|SecurityContext|RequestContextHolder|HttpServletRequest|ServletRequest)$/;
+  const requestScoped = new Set();
+  for (const t of model?.types?.values() ?? []) {
+    const scoped = (t.ann ?? []).some((a) => {
+      const n = a.fqn ?? a.name ?? '';
+      return /(^|\.)RequestScoped?$/.test(n) || (/(^|\.)Scope$/.test(n) && /request/i.test(a.args ?? ''));
+    });
+    if (scoped) requestScoped.add(t.fqn);
+  }
+  const isHolderStore = (c) =>
+    c.name === 'setAttribute' ||
+    c.name === 'setContext' ||
+    c.name === 'setAuthentication' ||
+    (c.name === 'set' && HOLDER_RECV.test(c.recvFqn ?? '')) ||
+    (/^set[A-Z]/.test(c.name ?? '') && requestScoped.has(c.recvFqn));
+  const bare = (id) => String(id).replace(/\(.*$/, '');
+  const byId = new Map();
+  for (const t of model?.types?.values() ?? [])
+    for (const m of t.methods ?? []) byId.set(`${t.fqn}#${m.name}`, { t, m });
+  // A method *containing* a store call is a holder at distance 0; its callers are one hop from the store.
+  const storeOf = new Set();
+  for (const { t, m } of byId.values()) {
+    if (isTestPath(t.file)) continue;
+    if ((m.calls ?? []).some(isHolderStore)) storeOf.add(`${t.fqn}#${m.name}`);
+  }
+  const callersOfId = new Map();
+  for (const { t, m } of byId.values())
+    for (const c of m.calls ?? [])
+      for (const tg of (c.targets ?? []).map(bare)) {
+        if (!callersOfId.has(tg)) callersOfId.set(tg, new Set());
+        callersOfId.get(tg).add(`${t.fqn}#${m.name}`);
+      }
+  // Distance in calls to a method that stores (`dist` ≤ 3): the chain a key may travel and still count.
+  const dist = new Map([...storeOf].map((id) => [id, 0]));
+  let frontier = [...storeOf];
+  for (let d = 1; d <= 3 && frontier.length; d++) {
+    const next = [];
+    for (const id of frontier)
+      for (const caller of callersOfId.get(id) ?? [])
+        if (!dist.has(caller)) {
+          dist.set(caller, d);
+          next.push(caller);
+        }
+    frontier = next;
+  }
+  // The key names the holder when a method's own parameter or name carries it, or when a call passes it into a
+  // method within the remaining hops of a store. `setupForSubscription(Long subscriptionId)` covers the wrapper.
+  const holderStore = (key) => {
+    const named = namesKey(key);
+    const selfNamed = [],
+      viaArg = [];
+    for (const { t, m } of byId.values()) {
       if (isTestPath(t.file)) continue;
-      if (!/(Filter|Interceptor|Security|Auth|Tenant|Workspace|Context|Resolver|Holder)/i.test(t.name)) continue;
-      for (const m of t.methods ?? [])
-        for (const c of m.calls ?? [])
-          if ((c.name ?? '').includes(noun) || (c.name ?? '') === key) return `${t.name}#${m.name}`;
+      if (!dist.has(`${t.fqn}#${m.name}`)) continue;
+      if ((m.params ?? []).some((p) => named(p.name)) || named(m.name)) {
+        selfNamed.push(`${t.name}#${m.name}`);
+        continue;
+      }
+      const carries = (m.calls ?? []).some(
+        (c) =>
+          (c.args ?? []).some(named) &&
+          (c.targets ?? []).some((tg) => (dist.get(bare(tg)) ?? Infinity) <= 2),
+      );
+      if (carries) viaArg.push(`${t.name}#${m.name}`);
     }
-    return null;
+    return selfNamed[0] ?? viaArg[0] ?? null;
   };
-  // Stronger than "mentioned somewhere": the key is a parameter of a security/filter method, or a request parameter
-  // literal (`request.getParameter("workspaceId")`) — the request carries this key. A business FK mentioned in a
-  // resolver is not that.
+  // A tie-break only: the request names the key literally in a filter (`getParameter("workspaceId")`) or a filter
+  // method is named after it. It ranks candidates; it no longer decides on its own (being read is not being stored).
   const strongLink = (key) => {
     for (const t of model?.types?.values() ?? []) {
       if (isTestPath(t.file)) continue;
@@ -79,7 +140,7 @@ export function tenancyFacts(
     }
     return null;
   };
-  const assignsKey = (key) => requestLink(key);
+  const assignsKey = (key) => holderStore(key);
 
   // How much the repository queries actually filter by a field: every repository read in the app, not just those of the
   // entities carrying it. This is the number the owner can check against the code.
@@ -115,7 +176,9 @@ export function tenancyFacts(
       why: [
         `${set.size} of ${entities.length} entities carry ${field} (${Math.round((set.size / entities.length) * 100)}% ≥ 10% and ≥ 3)`,
         total ? `${filtered} of ${total} repository read methods filter by ${field} (${Math.round(share * 100)}%)` : 'no repository read methods to test',
-        holder ? `named in request-scoped code ${holder}` : 'not named in request-scoped code',
+        holder
+          ? `stored into a request/context holder by ${holder}`
+          : 'read in request-scoped code but never stored into a context holder',
       ],
     });
   }
@@ -414,5 +477,3 @@ export function noRequestPaths({ model, tenancy, repos, extra = [] }) {
   return out;
 }
 
-assert.equal(NOT_A_KEY.test('id'), true);
-assert.equal(NOT_A_KEY.test('workspaceId'), false);

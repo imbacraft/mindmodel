@@ -23,7 +23,7 @@ const usage = () => {
 };
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (!isMain) {
-  // Imported (the engine's own self-check runs every module): nothing to answer.
+  // Imported by a test that only loads the module (self-checks live in test/, never on import): nothing to answer.
 } else if (!dir || !command) {
   usage();
 } else {

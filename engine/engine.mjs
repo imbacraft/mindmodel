@@ -12,7 +12,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import assert from 'node:assert';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -98,17 +97,3 @@ export async function ensure({ download = true, log = () => {} } = {}) {
     if (other !== held.version) fs.rmSync(path.join(path.dirname(dir), other), { recursive: true, force: true });
   return { ok: true, path: cached, source: 'download' };
 }
-
-// --- self-checks (run on import) ---------------------------------------------------
-const sample = path.join(os.tmpdir(), 'mindmodel-sha-check.txt');
-fs.writeFileSync(sample, 'mindmodel\n');
-assert.equal(sha256(sample), crypto.createHash('sha256').update('mindmodel\n').digest('hex'));
-fs.rmSync(sample, { force: true });
-assert.match(cacheJar('1.2.3'), /mindmodel[/\\]engine[/\\]1\.2\.3[/\\]mindmodel-engine\.jar$/);
-const held = lock();
-assert.equal(held.sha256.length, 64);
-// https, or a loopback server standing in for it in a test: never plain http to somewhere else.
-assert.ok(/^https:\/\//.test(held.url) || /^http:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(held.url), 'the engine URL must be https');
-// A path that cannot exist: the check is about `matches`, never about what this machine happens to have cached.
-const absent = path.join(os.tmpdir(), `mindmodel-absent-${process.pid}-${Date.now()}.jar`);
-assert.equal(matches(absent, held), false, 'a path with no file must not read as satisfied');

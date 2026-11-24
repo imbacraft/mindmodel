@@ -23,6 +23,21 @@ function entityOf(model, type) {
   return null;
 }
 
+// A generic repository in an abstract base (`GenericRepo<T>`, written on the receiver's field): the entity is the
+// class's own type parameter, and only the binding at a concrete subclass says which entity that is. The fact names
+// the parameter and its owner; the flow substitutes them along the super hop.
+function varEntityOf(model, type, method, call) {
+  const recv = call.recv?.kind === 'name' ? call.recv.text : null;
+  if (!recv) return null;
+  const written =
+    (method.params ?? []).find((p) => p.name === recv)?.type ??
+    (method.locals ?? []).find((l) => l.name === recv)?.type ??
+    (type.fields ?? []).find((f) => f.name === recv)?.type;
+  const [arg] = typeArgsOf(written);
+  const name = String(arg ?? '').trim();
+  return name && (type.typeParams ?? []).includes(name) ? name : null;
+}
+
 export function extractState(model, selected) {
   const types = typeIndex(selected);
   // The repository test runs for every call on a project type: compute the answer once for the whole model.
@@ -61,6 +76,7 @@ export function extractState(model, selected) {
         }
         if (!call.recvFqn || !model.types.has(call.recvFqn) || !repo(model.types.get(call.recvFqn))) continue;
         const entity = entityOf(model, model.types.get(call.recvFqn));
+        const entityVar = entity ? null : varEntityOf(model, t, m, call);
         const mutating = WRITE.test(call.name) || (call.targets ?? []).some((id) => WRITE.test(id.slice(id.indexOf('#') + 1)));
         if (!mutating) continue;
         facts.push(
@@ -69,6 +85,7 @@ export function extractState(model, selected) {
             family: 'state-write',
             confidence: entity && call.targets?.length ? 'resolved' : 'inferred',
             ...(entity ? { entity } : {}),
+            ...(entityVar ? { entityVar, entityOwner: t.fqn } : {}),
             repository: call.recvFqn,
             operation: call.name,
             method: m.id,
@@ -76,7 +93,11 @@ export function extractState(model, selected) {
             evidence: [citeOf(t, m)],
             why: [
               `receiver ${call.recvFqn} is a repository (${(types.get(call.recvFqn) ?? types.get(model.types.get(call.recvFqn).supers?.find((s) => s.fqn && types.has(s.fqn))?.fqn))?.catalog.id ?? 'catalog'})`,
-              entity ? `entity ${entity} from the repository's type argument` : 'no entity: the type argument did not resolve',
+              entity
+                ? `entity ${entity} from the repository's type argument`
+                : entityVar
+                  ? `entity is the type parameter ${entityVar} of ${t.name}; the binding names it`
+                  : 'no entity: the type argument did not resolve',
             ],
           }),
         );

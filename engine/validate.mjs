@@ -12,14 +12,19 @@ const SCHEMA = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/mindmodel.schema.json'), 'utf8'),
 );
 
+// `path:start-end#symbol`, and the arity form `#symbol/2` that names one overload by its parameter count.
 export function parseCite(c) {
-  const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#(\S+))?$/.exec(c);
+  const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#(\S+?)(?:\/(\d+))?)?$/.exec(c);
   if (!m) return null;
-  return { file: m[1], start: m[2] ? +m[2] : null, end: m[3] ? +m[3] : m[2] ? +m[2] : null, symbol: m[4] ?? null };
+  return {
+    file: m[1],
+    start: m[2] ? +m[2] : null,
+    end: m[3] ? +m[3] : m[2] ? +m[2] : null,
+    symbol: m[4] ?? null,
+    arity: m[5] != null ? +m[5] : null,
+  };
 }
-assert.deepStrictEqual(parseCite('a/b.java:10-12'), { file: 'a/b.java', start: 10, end: 12, symbol: null });
-assert.deepStrictEqual(parseCite('CLAUDE.md'), { file: 'CLAUDE.md', start: null, end: null, symbol: null });
-assert.deepStrictEqual(parseCite('a/B.java:5#save'), { file: 'a/B.java', start: 5, end: 5, symbol: 'save' });
+export const parsed = (file, start, end, symbol, arity) => ({ file, start, end, symbol, arity });
 
 // The JSON Schema subset our schemas use (type, required, additionalProperties, enum, const, pattern, items,
 // min/maxItems, maxLength, $ref): enough to catch a misspelled field or a wrong enum, with no dependency.
@@ -82,9 +87,45 @@ const BUDGET = {
   runSteps: 3,
 };
 
+// A citation's target among the file's declarations: the same name, and the same arity when the cite gives one
+// (`#save/2`). Null when the file's declarations are unknown here (no dump, or not a Java file).
+export function citeCandidates(declared, pc) {
+  const decl = declared?.get(pc.file);
+  if (!decl) return null;
+  const named = [...(decl.methods ?? []), ...(decl.types ?? [])].filter((d) => d.name === pc.symbol);
+  return pc.arity == null ? named : named.filter((d) => d.arity == null || d.arity === pc.arity);
+}
+const overlaps = (d, pc) => pc.start != null && d.start <= pc.end && pc.start <= d.end;
+const containsSymbol = (lines, pc) =>
+  pc.start != null && pc.end <= lines.length && lines.slice(pc.start - 1, pc.end).join('\n').includes(pc.symbol);
+// The symbol as the writer wrote it, arity included: what a repaired citation keeps.
+const symbolWithArity = (pc) => (pc.arity == null ? pc.symbol : `${pc.symbol}/${pc.arity}`);
+
+// `path:start-end#name (N params)` for each declaration the citation could mean, so the error can list them all.
+export function citeCandidatesText(file, named) {
+  return named
+    .map((d) => `${file}:${d.start}-${d.end}#${d.name} (${d.arity == null ? 'arity unknown' : `${d.arity} params`})`)
+    .join(', ');
+}
+
+// Why a citation does not name the declaration it means, or null when it does. One declaration of that name keeps the
+// plain test (the cited lines must contain it); several make a bare name ambiguous, so only a range overlapping exactly
+// one of them, or the arity form `#name/2`, resolves it. Nothing is guessed: the writer is given the candidates.
+export function citeProblem(pc, named, lines) {
+  if (!pc.symbol) return null;
+  if (named && named.length > 1 && named.filter((d) => overlaps(d, pc)).length !== 1)
+    return `is ambiguous: ${citeCandidatesText(pc.file, named)}`;
+  if (named && !named.length && pc.arity != null) return `names no "${pc.symbol}" with ${pc.arity} params in that file`;
+  if (!lines) return null;
+  if (pc.start == null) return lines.join('\n').includes(pc.symbol) ? null : `does not contain "${pc.symbol}"`;
+  return containsSymbol(lines, pc) ? null : `does not contain "${pc.symbol}"`;
+}
+
 // Fill in or repair line ranges from symbols, in place: "path#method" gets the method's exact range, and a
 // range that misses its #symbol is moved to the method of that name nearest to it. Writers cite methods by
-// name and never need to look up line numbers. Returns how many citations changed.
+// name and never need to look up line numbers. Overloads are never guessed: a name the file declares several
+// times is left for validate() to report with its candidates, and a range that overlaps one declaration is kept
+// as written. Returns how many citations changed.
 export function resolveCites(map, root, declared = null) {
   const cache = new Map(),
     load = (abs) => {
@@ -98,30 +139,20 @@ export function resolveCites(map, root, declared = null) {
     const abs = path.join(root, pc.file);
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return c;
     const { lines } = load(abs);
-    if (
-      pc.start != null &&
-      pc.end <= lines.length &&
-      lines
-        .slice(pc.start - 1, pc.end)
-        .join('\n')
-        .includes(pc.symbol)
-    )
-      return c;
-    const named = [...at(pc.file).methods, ...at(pc.file).types].filter((m) => m.name === pc.symbol);
-    if (named.length) {
-      const near =
-        pc.start == null
-          ? named[0]
-          : named.sort(
-              (a, b) => Math.abs((a.nameLine ?? a.start) - pc.start) - Math.abs((b.nameLine ?? b.start) - pc.start),
-            )[0];
-      return `${pc.file}:${near.start}-${near.end}#${pc.symbol}`;
-    }
-    if (pc.start == null) {
+    const named = citeCandidates(declared, pc);
+    const cite = (d) => `${pc.file}:${d.start}-${d.end}#${symbolWithArity(pc)}`;
+    // The range names one declaration: nothing to repair, and nothing to guess.
+    if (named && named.filter((d) => overlaps(d, pc)).length === 1) return c;
+    // Several methods of that name: only the writer knows which one the claim is about.
+    if (named && named.length > 1) return c;
+    // The name is already in the cited lines: keep today's tolerance for a single declaration of that name.
+    if (pc.arity == null && containsSymbol(lines, pc)) return c;
+    if (named?.length === 1) return cite(named[0]);
+    if (pc.start == null && pc.arity == null) {
       const i = lines.findIndex((l) => l.includes(pc.symbol));
       if (i >= 0) {
         const m = at(pc.file).methods.find((mm) => mm.start <= i + 1 && i + 1 <= mm.end);
-        return m ? `${pc.file}:${m.start}-${m.end}#${pc.symbol}` : `${pc.file}:${i + 1}#${pc.symbol}`;
+        return m ? cite(m) : `${pc.file}:${i + 1}#${pc.symbol}`;
       }
     }
     return c;
@@ -238,8 +269,17 @@ export function declaredFromModel(model) {
   };
   for (const t of model.types.values()) {
     slot(t.file).types.push({ name: t.name, start: t.start, end: t.end, nameLine: t.nameLine });
-    for (const m of t.methods ?? [])
-      slot(t.file).methods.push({ name: m.name, start: m.start, end: m.end, nameLine: m.nameLine });
+    for (const m of t.methods ?? []) {
+      // A constructor carries its type's name: a `#Type` citation means the type, never one of its constructors.
+      if (m.name === t.name) continue;
+      slot(t.file).methods.push({
+        name: m.name,
+        start: m.start,
+        end: m.end,
+        nameLine: m.nameLine,
+        arity: Array.isArray(m.params) ? m.params.length : null,
+      });
+    }
   }
   return byFile;
 }
@@ -270,6 +310,7 @@ function declaredFromDump(root) {
           start: m.pos.line,
           end: m.pos.endLine ?? m.pos.line,
           nameLine: m.pos.line,
+          arity: Array.isArray(m.params) ? m.params.length : null,
         });
     return byFile;
   } catch {
@@ -480,8 +521,8 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     const dir = fs.statSync(abs).isDirectory();
     if (!dir && !lineCount.has(abs)) lineCount.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
     if (pc.start == null) {
-      if (pc.symbol && !dir && !lineCount.get(abs).join('\n').includes(pc.symbol))
-        err(`${where}: "${c}" does not contain "${pc.symbol}"`);
+      const why = dir ? null : citeProblem(pc, citeCandidates(declared, pc), lineCount.get(abs));
+      if (why) err(`${where}: "${c}" ${why}`);
       continue;
     }
     if (dir) {
@@ -494,15 +535,10 @@ export function validate(map, root, declared = declaredFromDump(root)) {
       err(`${where}: "${c}" outside file (${n} lines)`);
       continue;
     }
-    // #symbol: the cited range must contain it, so a citation can't silently point at the wrong lines
-    if (
-      pc.symbol &&
-      !fileLines
-        .slice(pc.start - 1, pc.end)
-        .join('\n')
-        .includes(pc.symbol)
-    )
-      err(`${where}: "${c}" does not contain "${pc.symbol}"`);
+    // #symbol: the cited lines must be the declaration the writer meant. Overloads are never guessed: with several
+    // methods of that name the range must overlap exactly one of them, and a bare name is ambiguous.
+    const why = citeProblem(pc, citeCandidates(declared, pc), fileLines);
+    if (why) err(`${where}: "${c}" ${why}`);
   }
   for (const [where, list] of [
     ['request path', map.runtime.steps],

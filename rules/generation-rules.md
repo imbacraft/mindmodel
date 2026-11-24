@@ -25,7 +25,7 @@
 | Rules | What must you never get wrong? |
 | Stories | How do the main flows actually run, end to end? |
 
-**P3. Every claim is traced to code.** Each statement has a citation (`path`, `path:line` or `path:start-end`, optionally `#symbol`, which the validator checks is in the cited lines). The cited lines must contain what the text says. A claim you cannot trace is dropped, or, only in stories, marked *inferred*.
+**P3. Every claim is traced to code.** Each statement has a citation (`path`, `path:line` or `path:start-end`, optionally `#symbol`, which the validator checks is in the cited lines). The cited lines must contain what the text says. Where a file declares several methods of that name, a bare `#name` is ambiguous: the validator rejects it and lists the candidates (`path:start-end#name (N params)`), and you cite the one you meant by its own range or by adding its arity (`#save/2`). A claim you cannot trace is dropped, or, only in stories, marked *inferred*.
 
 **P4. The code wins, silently.** Read the project's docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then verify against the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose documentation. Configuration files are code: a config setting that the code ignores or overrides can be a rule (3.8).
 

@@ -73,6 +73,9 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       start: startsAt(row, row.pos?.line ?? 1),
       end: row.pos?.endLine ?? row.pos?.line ?? 1,
       nameLine: startsAt(row, row.pos?.line ?? 1),
+      // A generic base (`AbstractVersionService<T>`) binds its parameters where a subclass names its arguments; the
+      // flow needs the parameter list to do that.
+      typeParams: row.typeParams ?? [],
       modifiers: row.modifiers ?? [],
       ann: annOf(row, row.pos?.line ?? 1, (name) => resolveIn(file, name)),
       supers: (row.supertypes ?? []).map((s) => ({ kind: s.kind, text: s.text, fqn: s.fqn ?? null })),

@@ -5,7 +5,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import assert from 'node:assert';
 import { ensure } from './engine.mjs';
 
 const git = (root, args) => {
@@ -28,13 +27,6 @@ export function parseBranchLine(line) {
     behind: +(/behind (\d+)/.exec(nums)?.[1] ?? 0),
   };
 }
-assert.deepStrictEqual(parseBranchLine('## main...origin/main [ahead 1, behind 3]'), {
-  branch: 'main',
-  upstream: 'origin/main',
-  ahead: 1,
-  behind: 3,
-});
-assert.deepStrictEqual(parseBranchLine('## feature/x'), { branch: 'feature/x', upstream: null, ahead: 0, behind: 0 });
 
 // The Java runtime the Spoon engine runs on, from `java -version` (which prints to stderr). macOS's /usr/bin/java is a
 // stub that follows JAVA_HOME, so the answer can differ per environment and both are tried.
@@ -43,7 +35,6 @@ export function javaMajor(env = process.env) {
   const m = /version "(?:1\.)?(\d+)/.exec(`${r.stdout ?? ''}${r.stderr ?? ''}`);
   return m ? +m[1] : null;
 }
-assert.equal(javaMajor({ PATH: '' }), null);
 
 function preflightInner(root) {
   const warnings = [];
@@ -121,12 +112,18 @@ function preflightInner(root) {
       const prevSha = prev.split(/\s/)[0];
       const behindBy =
         prevSha && /^[0-9a-f]{6,}$/.test(prevSha) ? git(root, ['rev-list', '--count', `${prevSha}..HEAD`]) : null;
+      const since = `${prev || 'an unknown commit'}${behindBy != null ? `, ${behindBy} commit(s) ago` : ''}`;
       warnings.push({
         level: 'info',
-        text: `An existing map (built from ${prev || 'an unknown commit'}${behindBy != null ? `, ${behindBy} commit(s) ago` : ''}) will be replaced.`,
+        text:
+          `An existing map (built from ${since}) will be replaced: the scan moves it to ` +
+          'mindmodel/.work/previous-mindmodel.json and the writer starts from the facts.',
       });
     } catch {
-      warnings.push({ level: 'info', text: 'An existing mindmodel/mindmodel.json will be replaced.' });
+      warnings.push({
+        level: 'info',
+        text: 'An existing mindmodel/mindmodel.json will be moved to mindmodel/.work/previous-mindmodel.json and replaced.',
+      });
     }
   }
   return {

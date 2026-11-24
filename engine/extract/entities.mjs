@@ -1,6 +1,5 @@
 // Entities as the model sees them (§5.1, slice 3): the annotations say which type is an entity, the model says which
 // fields it has (inherited ones included) and what each field's type resolves to. No line windows, no per-file search.
-import assert from 'node:assert/strict';
 import { meanOf } from '../catalogs/catalog.mjs';
 
 const RELATIONS = new Set(['relation']);
@@ -15,7 +14,7 @@ export const elementType = (text) =>
     .map((s) => s.trim().replace(/<.*/, ''))
     .pop();
 
-const snake = (name) =>
+export const snake = (name) =>
   name
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
     .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
@@ -156,8 +155,3 @@ export function entityFacts(model, index, types = new Map()) {
   return { entities, repos, repoMethods };
 }
 
-assert.deepStrictEqual(elementType('List<Booking>'), 'Booking');
-assert.deepStrictEqual(elementType('Set<TenantFile>'), 'TenantFile');
-assert.deepStrictEqual(elementType('String'), 'String');
-assert.equal(snake('WorkspaceMember'), 'workspace_member');
-assert.equal(snake('ALERTRecord'), 'alert_record');

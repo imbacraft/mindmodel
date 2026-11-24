@@ -4,7 +4,6 @@
 // Usage: node shape.mjs [system]   (no argument: the single-app schema)
 import fs from 'node:fs';
 import path from 'node:path';
-import assert from 'node:assert';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -25,17 +24,6 @@ export function shape(node, defs, depth = 0) {
   }
   return node.type ?? 'any';
 }
-assert.equal(
-  shape(
-    {
-      type: 'object',
-      required: ['a'],
-      properties: { a: { type: 'string' }, b: { type: 'array', items: { type: 'integer' } } },
-    },
-    {},
-  ),
-  '{\n  a: string\n  b?: [integer]\n}',
-);
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const schema = JSON.parse(
@@ -45,7 +33,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     ),
   );
   console.log(
-    '// "?" = optional. cite = "path", "path:line" or "path:start-end", optionally "#symbol". [[id|text]] links a concept/region in sentences.',
+    '// "?" = optional. cite = "path", "path:line" or "path:start-end", optionally "#symbol"; where a file declares ' +
+      'several methods of that name, cite one by its own range, or add its arity ("#save/2"). ' +
+      '[[id|text]] links a concept/region in sentences.',
   );
   console.log(shape(schema, schema.$defs ?? {}));
 }

@@ -1,7 +1,7 @@
 // Snapshot tests: everything the engine produces for the test apps (facts, digests, validation results and rendered
 // pages), compared with the last accepted run. The test apps are public repos cloned under test/apps.json's root
-// (or $MINDMODEL_TEST_APPS); missing ones are skipped. Snapshots stay local in test/snapshots/ (gitignored).
-// Run: node --test        Accept intended changes: UPDATE=1 node --test
+// (or $MINDMODEL_TEST_APPS); missing ones are skipped. Snapshots stay local in test/snapshots/ (gitignored), so the
+// first run on a fresh clone records them and skips; later runs compare. Accept intended changes: UPDATE=1 node --test
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -38,15 +38,19 @@ const readMap = (dir, rel) =>
   rel && fs.existsSync(path.join(dir, rel)) ? JSON.parse(fs.readFileSync(path.join(dir, rel), 'utf8')) : null;
 
 // Compare part by part and show the first lines that differ, not a diff of a megabyte of JSON.
+// A snapshot that does not exist yet is written and the test is skipped: on a fresh clone (snapshots are gitignored)
+// the first run records the baseline instead of failing, and the second run compares against it.
 function check(t, name, actual) {
   const file = path.join(snapDir, `${name}.json`);
-  if (process.env.UPDATE) {
+  const exists = fs.existsSync(file);
+  if (process.env.UPDATE || !exists) {
     fs.mkdirSync(snapDir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(actual, null, 1));
+    if (!exists && !process.env.UPDATE)
+      return t.skip(`snapshot created: ${path.relative(here, file)} — re-run to compare`);
     t.diagnostic(`snapshot written: ${path.relative(here, file)}`);
     return;
   }
-  assert.ok(fs.existsSync(file), `${name}: no snapshot (run UPDATE=1 node --test to create it)`);
   const expected = JSON.parse(fs.readFileSync(file, 'utf8'));
   for (const key of new Set([...Object.keys(expected), ...Object.keys(actual)])) {
     const a = JSON.stringify(actual[key], null, 1)?.split('\n') ?? [],

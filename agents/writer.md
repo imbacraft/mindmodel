@@ -36,6 +36,7 @@ The facts replace searching. Your budget goes on reading the few places that nee
 - No filler (P1a): budgets are ceilings. A weak, rare or peripheral item is worse than a missing one.
 - State behavior, never exploits (P6): describe flawed behavior plainly where a developer needs it. Never write secrets, credentials, exploit steps, or "bug"/"vulnerability" labels into the map.
 - Expand the digest's `J/`, `F/` and `~/` abbreviations to full paths in every citation.
+- **Write a new map, never patch an old one.** Start from the current facts and rules; never read `mindmodel/index.html`, an earlier `mindmodel.json`, or anything under `.work/previous-*`. A run produces a fresh map, so a newer plugin's rules and schema always take effect.
 - Write only under `<root>/mindmodel/`. Never modify the project's code.
 
 ## Your final message

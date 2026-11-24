@@ -1,13 +1,12 @@
 // Channels (slice 5): the queues and topics a service listens to or sends on, from the model — a listener is an
 // annotation with a destination argument, a send is a call on a messaging client with a channel argument. The name is
 // the argument when it is a literal or a resolvable static constant, else the argument text.
-import assert from 'node:assert/strict';
 
 const LISTENERS = new Set(['KafkaListener', 'JmsListener', 'RabbitListener', 'StreamListener', 'MessageDriven', 'SqsListener']);
 const CLIENTS = /(KafkaTemplate|JmsTemplate|RabbitTemplate|StreamBridge|JMSProducer|JMSContext|KafkaProducer|MessageProducer|SqsClient)$/;
 const SENDS = new Set(['send', 'convertAndSend', 'publish', 'sendAndReceive', 'convertSendAndReceive', 'syncSend']);
 
-const firstString = (args = []) => args.map((a) => String(a).trim()).find((a) => /^".*"$/.test(a));
+export const firstString = (args = []) => args.map((a) => String(a).trim()).find((a) => /^".*"$/.test(a));
 
 export function channelFacts(model, { config = new Map(), extraConstants = new Map() } = {}) {
   const facts = [];
@@ -143,5 +142,3 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
   return facts.filter((f) => !seen.has(f.id) && seen.add(f.id));
 }
 
-assert.equal(firstString(['"orders"', 'x']), '"orders"');
-assert.equal(firstString(['x']), undefined);

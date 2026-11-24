@@ -9,8 +9,6 @@ export function chosenInline({ enumName, value, stmt, methodText }) {
   return /\.(set\w*Status|status)\s*\(/.test(methodText ?? '');
 }
 
-assert.equal(chosenInline({ enumName: 'S', value: 'A', stmt: 'x ? S.A : S.B', methodText: 'o.setStatus(x)' }), true);
-assert.equal(chosenInline({ enumName: 'S', value: 'A', stmt: 'x ? S.A : S.B', methodText: 'return 1;' }), false);
 
 // The calls on one line, with their argument lists split at top-level commas. A status literal that sits in one of
 // those arguments is handed to a method, and only what the callee does with that parameter decides set or read.
@@ -177,6 +175,9 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
   );
   const STATUS_VAR = /(\.set\w*(Status|State)|\.\w*(status|Status|state|State))\s*\(\s*[a-z]\w*\s*\)/;
   const lifecycle = [];
+  // The same sets, as facts: entity, value, and the method that performs them. The flow rank reads these — a flow
+  // that sets a status moves that entity through its lifecycle — while the lines above stay the digest's wording.
+  const statusSites = [];
   // Every project method by name and arity, so a status literal handed to a call can be followed into the callee.
   const methodsByName = new Map();
   for (const f of files)
@@ -196,6 +197,17 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
             .filter((mm) => mm.start <= i + 1 && i + 1 <= mm.end)
             .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
           const where = m ? cite(f, m) : `${f.p}:${i + 1}`;
+          // A plain set is one status fact at this method and line; the digest's wording (`where`) rides along.
+          const markSet = (wording) => {
+            s.set.push(wording);
+            statusSites.push({
+              entity: owner.get(en),
+              value: x[1],
+              method: m?.id ?? null,
+              line: i + 1,
+              evidence: [m ? cite(f, m) : `${f.p}:${i + 1}`],
+            });
+          };
           const stmt = f.lines.slice(Math.max(0, i - 2), i + 1).join(' ');
           // The call and the value must share a line: a transition on one line and a status literal three lines
           // later (a repository query argument) are not the same statement.
@@ -222,23 +234,23 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
               `(\\.set\\w*(Status|State)\\s*\\(\\s*|\\.(status|state)\\s*\\(\\s*|\\w*(status|Status|state|State)\\s*=\\s*)${en}\\.${x[1]}\\b`,
             ).test(l)
           )
-            s.set.push(where);
+            markSet(where);
           // Handed to a method: a set only when the callee writes that parameter into a status. The previous status in
           // `change(model, NEW, previous)` is an argument the callee reads, so it is a read.
           else if (setByArgument(methodsByName, l, en, x[1]) === true)
-            s.set.push(`${where} (set by the callee from the argument)`);
+            markSet(`${where} (set by the callee from the argument)`);
           else if (setByArgument(methodsByName, l, en, x[1]) === false) s.read++;
           // Chosen into a variable (ternary or assignment) in a method that sets the status from a variable.
           // A status chosen inline (`cond ? ENUM.A : ENUM.B`) sets both values (extract/lifecycle.mjs).
           else if (m && chosenInline({ enumName: en, value: x[1], stmt, methodText: f.lines.slice(m.start - 1, m.end).join('\n') }))
-            s.set.push(`${where} (chosen inline)`);
+            markSet(`${where} (chosen inline)`);
           else if (
             m &&
             /\?[^;]*\b${en}\b/.test(l) &&
             STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n')) &&
             new RegExp(`\\?[^;]*${en}\\.${x[1]}\\b`).test(l)
           )
-            s.set.push(`${where} (chosen inline)`);
+            markSet(`${where} (chosen inline)`);
           else if (
             m &&
             !new RegExp(`[=!]=\\s*${en}\\.${x[1]}|${en}\\.${x[1]}\\s*[=!]=|case\\s+${en}|equals\\(`).test(l) &&
@@ -247,7 +259,7 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
             new RegExp(`[?:=]\\s*[^;]*\\b${en}\\.${x[1]}\\b`).test(l.replace(/[=!]=/g, '')) &&
             STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n'))
           )
-            s.set.push(`${where} (via a variable)`);
+            markSet(`${where} (via a variable)`);
           else s.read++;
         }
       });
@@ -271,6 +283,13 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
         )) {
           const st = (sites[v[1]] ??= { set: [], conditional: [], read: 0 });
           st.set.push(`${cite(f, m)} (chosen in ${cite(f, helper)})`);
+          statusSites.push({
+            entity: owner.get(en),
+            value: v[1],
+            method: m?.id ?? null,
+            line: i + 1,
+            evidence: [cite(f, m)],
+          });
         }
       });
     }
@@ -327,6 +346,13 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
         if (!ent) return;
         const v = (x[2] ?? x[3] ?? x[4]).split('.').pop();
         (sites[ent][v] ??= new Set()).add(m ? cite(f, m) : `${f.p}:${i + 1}`);
+        statusSites.push({
+          entity: ent,
+          value: v,
+          method: m?.id ?? null,
+          line: i + 1,
+          evidence: [m ? cite(f, m) : `${f.p}:${i + 1}`],
+        });
       });
     for (const [ent, vals] of Object.entries(sites)) {
       if (!Object.keys(vals).length) continue;
@@ -367,7 +393,7 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
       lifecycle.push(`  ${v}: set in ${[...where].slice(0, 6).join(', ')}${where.size > 6 ? ` +${where.size - 6}` : ''}`);
   }
 
-  return lifecycle;
+  return { lifecycle, sites: statusSites };
 }
 
 
@@ -393,7 +419,7 @@ export function javaFacts({ java, repoEntity, enums, entities, shortlist }) {
         .filter((x) => /^[A-Z]/.test(x.type))
         .map((x) => [x.name, x.type.replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop()]),
     );
-  const lifecycle = lifecycleFacts({ files, enums, entities, shortlist, cite, repoEntity });
+  const { lifecycle, sites } = lifecycleFacts({ files, enums, entities, shortlist, cite, repoEntity });
   const schedules = scheduleFacts({ files, cite });
-  return { lifecycle, schedules };
+  return { lifecycle, statusSets: sites, schedules };
 }

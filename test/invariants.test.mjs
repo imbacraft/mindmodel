@@ -151,7 +151,9 @@ for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))
     show(badIndex, 'index violation(s)', app.name);
 
     // 4. Every citation in a map points inside its own file.
-    if (app.map) {
+    // A scan retires an existing map to .work/previous-mindmodel.json, so a checkout with no fresh map has none to
+    // check here: the citation invariants are about a map, not about the scan.
+    if (app.map && fs.existsSync(path.join(dir, app.map))) {
       const map = JSON.parse(fs.readFileSync(path.join(dir, app.map), 'utf8'));
       const cites = citesOf(map);
       const badCites = [];

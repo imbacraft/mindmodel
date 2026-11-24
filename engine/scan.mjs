@@ -5,7 +5,6 @@
 import fs from 'node:fs';
 import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
-import assert from 'node:assert';
 import { javaFacts } from './extract/lifecycle.mjs';
 import { bootFacts, deployables } from './extract/boot.mjs';
 import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
@@ -22,6 +21,7 @@ import { extractSchedules } from './extract/schedules.mjs';
 import {
   anonymousWrites,
   authSources,
+  identityWarnings,
   methodSecurityFacts,
   securityModel as buildSecurityModel,
   shiroCodeRules,
@@ -149,20 +149,14 @@ export function routePath(line, angular = false) {
   const a = angular && /\bpath:\s*["']([^"'/][^"']*|)["']/.exec(line);
   return a ? '/' + a[1] : null;
 }
-assert.equal(routePath('<Route path="/orders/:id" element={<Order/>} />'), '/orders/:id');
-assert.equal(routePath("  { path: '/cart', component: Cart },"), '/cart');
-assert.equal(routePath("  { path: 'users/:id', component: UserComponent },", true), '/users/:id');
-assert.equal(routePath("  { path: '', component: HomeComponent },", true), '/');
-assert.equal(routePath("  { path: 'users', component: X },"), null);
 
 // --- helpers ------------------------------------------------------------------
-const norm = (p) =>
+export const norm = (p) =>
   ('/' + p)
     .replace(/\/+/g, '/')
     .replace(/\$\{[^}]*\}|\{[^}]*\}|:\w+/g, '{}')
     .replace(/\?.*$/, '')
     .replace(/\/$/, '') || '/';
-assert.strictEqual(norm('/api/orders/${o.id}/items?x=1'), '/api/orders/{}/items');
 const linesMatching = (text, re) =>
   text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
 
@@ -215,6 +209,36 @@ function callStatsOf(model, dump) {
       }
   const answered = dump.calls.reduce((n, row) => n + (row.origin === 'error' ? 0 : 1), 0);
   return { sites, answered, targets, ambiguous, unanswered, droppedTargets: 0 };
+}
+
+// The run's scratch folder. `.work/` holds facts, the Java dump and report files (megabytes nobody should commit);
+// `mindmodel.json` and `index.html` beside it are the deliverables and stay visible.
+export function ensureWork(root) {
+  const work = path.join(root, 'mindmodel', '.work');
+  fs.mkdirSync(work, { recursive: true });
+  // A `.gitignore` inside `.work/` keeps the scan data out of `git status` without editing the project's own file.
+  const ignore = path.join(work, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
+  return work;
+}
+
+/**
+ * A run writes a new map from the current facts, so the previous `mindmodel.json` must not sit at the path the writer
+ * writes: left there, the writer patches the old map and a plugin upgrade never shows. Renaming keeps the old file
+ * byte-identical inside `.work/`, where it is out of the writer's way but still there for a diff.
+ */
+export function retirePreviousMap(root) {
+  const map = path.join(root, 'mindmodel', 'mindmodel.json');
+  let isFile = false;
+  try {
+    isFile = fs.statSync(map).isFile();
+  } catch {
+    // no map yet: nothing to retire
+  }
+  if (!isFile) return null;
+  const kept = path.join(ensureWork(root), 'previous-mindmodel.json');
+  fs.renameSync(map, kept); // an older copy is replaced: the latest previous map is the only useful one
+  return kept;
 }
 
 export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
@@ -446,7 +470,12 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       .filter((f) => /web\.xml$/.test(f) && !/\/src\/test\//.test(f))
       .flatMap((f) => webXmlRules(read(f), R(f))),
   ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
-  const securityWarnings = anonymousWrites(securityRules, endpoints, methodSecurityIndex);
+  // Two warning kinds in one family: an anonymous prefix that exposes writes, and an identity the client asserts
+  // (a filter takes a header/cookie value as the caller with no verification call between).
+  const securityWarnings = [
+    ...anonymousWrites(securityRules, endpoints, methodSecurityIndex),
+    ...identityWarnings(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p)),
+  ];
   const tenantFacts = tenantSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p));
   // Entities and tenancy on the model (§5.4, slice 3): fields (inherited too), relations and their owning side,
   // repository → entity from resolved type arguments; the tenant key decided by counts.
@@ -811,6 +840,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     entries: flowEntryList,
     exactTargets,
     stateWrites: stateFacts.filter((x) => x.family === 'state-write'),
+    statusSets: deep.statusSets,
     outsideCalls,
     transactions,
     entities: entFacts.entities,
@@ -1172,10 +1202,12 @@ export function summarize(f) {
       'securityRules',
     ),
   );
-  if (f.securityWarnings.length) {
+  const anonymousWarnings = f.securityWarnings.filter((w) => w.kind !== 'client-asserted-identity');
+  const identityWarningsOut = f.securityWarnings.filter((w) => w.kind === 'client-asserted-identity');
+  if (anonymousWarnings.length) {
     sec('Security warnings, computed (a prefix allows anonymous access and exposes writes with no method-level check)');
     const byRule = new Map();
-    for (const w of f.securityWarnings) {
+    for (const w of anonymousWarnings) {
       if (!byRule.has(w.rule)) byRule.set(w.rule, []);
       byRule.get(w.rule).push(w);
     }
@@ -1185,6 +1217,19 @@ export function summarize(f) {
           const example = list[0];
           return `- ${rule.split(' is ')[0]} allows anonymous writes: ${list.length} endpoint(s), e.g. ${example.verb} ${example.path} (${example.handler}) — no @PreAuthorize/@Secured/@RolesAllowed`;
         }),
+        12,
+        'securityWarnings',
+      ),
+    );
+  }
+  if (identityWarningsOut.length) {
+    sec('Security warnings, computed (a request value becomes the caller with no verification call)');
+    push(
+      cap(
+        identityWarningsOut.map(
+          (w) =>
+            `- ${w.method} takes the caller from ${w.source} (${w.evidence[0]}) and ${w.holder} stores it unverified — any client can claim that identity`,
+        ),
         12,
         'securityWarnings',
       ),
@@ -1443,6 +1488,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const root = path.resolve(process.argv[2] ?? '.');
   const out = path.resolve(process.argv[3] ?? path.join(root, 'mindmodel', '.work', 'facts.json'));
   const facts = scan(root);
+  // Right before the writer: create the scratch folder (self-ignoring) and move any previous map out of its path.
+  ensureWork(root);
+  const retired = retirePreviousMap(root);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(facts, null, 1));
   fs.writeFileSync(out.replace(/\.json$/, '.md'), summarize(facts));
@@ -1450,4 +1498,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(
     `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.securityRules.length} security rules, ${f.recurring.length} recurring job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
   );
+  if (retired) console.log(`previous map kept at ${retired}`);
 }

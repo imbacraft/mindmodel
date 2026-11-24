@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { accessFor } from './security.mjs';
+import { superBindings } from '../model/type-args.mjs';
 
 // Flow skeletons (§5.3, revised): a path from an entry point to at least one effect. An effect is a state write (a
 // repository or EntityManager call, from the state family), an outside call (HTTP, mail, messaging, from the outside
@@ -31,6 +32,7 @@ const NOISE =
 export const FLOW_WEIGHTS = {
   entityWrite: 3, // the first distinct entity written: the flow changes this aggregate
   entityFurther: 1, // each further entity: breadth, not importance — a five-table signup is not five times a checkout
+  statusChange: 3, // a status set on an entity on the path: the flow moves a core object through its lifecycle
   outsideCall: 3, // per outside call (HTTP, mail, payment, and the message send below counted in addition)
   message: 2, // per message sent
   risk: 2, // a transaction-boundary fact on the path: a tie-break, never what makes a flow the main flow
@@ -82,12 +84,13 @@ function effectIndex({ stateWrites = [], outsideCalls = [] }) {
   for (const w of stateWrites) {
     if (!w.method || w.line == null) continue;
     // An EntityManager write names no entity (the argument is a local); it still counts as a state write, under the
-    // persistence API that performed it.
+    // persistence API that performed it. A write through a type parameter names the parameter; the flow binds it.
     const what = w.entity ? simple(w.entity) : `via ${simple(w.repository ?? 'state')}`;
     by.set(siteKey(w.method, w.line, w.operation), {
       kind: 'entity',
       label: `writes ${what}`,
       key: what,
+      ...(w.entityVar ? { entityVar: w.entityVar, entityOwner: w.entityOwner } : {}),
       // The call site, not the caller: six writes in one method are six effects.
       site: siteKey(w.method, w.line, w.operation),
       cite: w.evidence?.[0] ?? null,
@@ -104,6 +107,31 @@ function effectIndex({ stateWrites = [], outsideCalls = [] }) {
       site: siteKey(o.method, o.line, name),
       cite: o.evidence?.[0] ?? null,
     });
+  }
+  return by;
+}
+
+// Status sets by method: the lifecycle family already says which entity's status each site sets, so a flow that walks
+// that method moves the entity through its lifecycle. Keyed by method, not by call site — a status set is a
+// statement, not a call, and the walk knows it reached the method.
+function statusIndex(statusSets = []) {
+  const by = new Map();
+  for (const s of statusSets) {
+    if (!s.method || !s.entity) continue;
+    const site = siteKey(s.method, s.line ?? 0, `status:${s.value}`);
+    const list = by.get(s.method) ?? [];
+    if (!list.some((x) => x.site === site)) {
+      list.push({
+        kind: 'status',
+        label: `sets ${s.entity} status ${s.value}`,
+        key: `${s.entity}|${s.value}`,
+        entity: s.entity,
+        value: s.value,
+        site,
+        cite: s.evidence?.[0] ?? null,
+      });
+    }
+    by.set(s.method, list);
   }
   return by;
 }
@@ -198,6 +226,7 @@ export function buildFlows(
     entries = [],
     stateWrites = [],
     outsideCalls = [],
+    statusSets = [],
     transactions = [],
     entities = [],
     activityOf = () => 0,
@@ -210,6 +239,7 @@ export function buildFlows(
 ) {
   const { isPoll, isExecutor } = callClassifier(selected);
   const effects = effectIndex({ stateWrites, outsideCalls });
+  const statuses = statusIndex(statusSets);
   const boundary = new Map(); // method id -> boundary kind
   for (const t of transactions) if (BOUNDARY.has(t.kind) && t.method) boundary.set(t.method, t.kind);
   const refs = new Map((entities ?? []).map((e) => [e.name, e.refs ?? 0]));
@@ -223,23 +253,86 @@ export function buildFlows(
   const DEPTH = exactTargets ? FLOW_DEPTH : 3;
   // Collects, per method and context, the effect-bearing trails under it. Memoized: a shared service is walked once.
   const memo = new Map();
-  const trailsOf = (t, m, ctx, depth) => {
-    const key = `${ctx}|${m.id}|${depth}`;
+  // A write found through a class's type parameter (`GenericRepo<T>.save` in a generic base) names its entity only
+  // where the base is bound; the concrete type is what the flow changes.
+  const concrete = (eff, bind) => {
+    const fqn = eff?.entityVar ? bind.get(eff.entityOwner)?.get(eff.entityVar) : null;
+    if (!fqn || !model.types.has(fqn)) return eff;
+    return { ...eff, entity: fqn, key: simple(fqn), label: `writes ${simple(fqn)}` };
+  };
+  const bindKey = (bind) =>
+    !bind.size
+      ? ''
+      : [...bind].map(([k, v]) => `${k}:${[...v].map(([a, b]) => `${a}=${simple(b)}`).join(',')}`).join(';');
+  // The bindings a hop into a supertype opens: `VoucherService extends AbstractVersionService<Voucher>` binds T there.
+  const bindInto = (bind, from, to) => {
+    if (from === to.fqn) return bind;
+    const opened = superBindings(model, from, to.fqn, bind);
+    return opened.size ? new Map(bind).set(to.fqn, opened) : bind;
+  };
+  // A port declaration has no body: when exactly one project type implements it, the port call runs there. Two
+  // implementations would be a guess, so the walk stops at the declaration exactly as it did before.
+  const implMemo = new Map();
+  const implementationsOf = (fqn) => {
+    if (implMemo.has(fqn)) return implMemo.get(fqn);
+    const out = [],
+      seen = new Set([fqn]),
+      queue = [fqn];
+    while (queue.length)
+      for (const sub of model.implsOf?.get(queue.shift()) ?? []) {
+        if (seen.has(sub)) continue;
+        seen.add(sub);
+        const t = model.types.get(sub);
+        if (!t) continue;
+        // An abstract adapter or a further interface is not the code that runs; its own subtypes are still walked.
+        if (t.kind !== 'interface' && !isAbstract(t)) out.push(sub);
+        queue.push(sub);
+      }
+    implMemo.set(fqn, out);
+    return out;
+  };
+  const soleImplMemo = new Map();
+  const soleImpl = (nt, nm) => {
+    const key = `${nt.fqn}#${nm.name}/${nm.params?.length ?? 0}`;
+    if (soleImplMemo.has(key)) return soleImplMemo.get(key);
+    const impls = implementationsOf(nt.fqn);
+    let hit = null;
+    if (impls.length === 1) {
+      const impl = model.types.get(impls[0]);
+      const m = impl?.methods.find(
+        (x) => x.name === nm.name && (x.params?.length ?? 0) === (nm.params?.length ?? 0) && x.hasBody !== false,
+      );
+      if (m) hit = { t: impl, m };
+    }
+    soleImplMemo.set(key, hit);
+    return hit;
+  };
+  // The method a target id reaches: the declaration itself, or the only implementation of an open declaration.
+  const bodyAt = (id) => {
+    const nt = model.types.get(id.split('#')[0]);
+    const nm = nt?.methods.find((x) => x.id === id);
+    if (!nm) return null;
+    if (nm.hasBody !== false) return { t: nt, m: nm };
+    return nt.kind === 'interface' || isAbstract(nt) ? soleImpl(nt, nm) : null;
+  };
+  const trailsOf = (t, m, ctx, depth, bind) => {
+    const key = `${ctx}|${m.id}|${depth}|${bindKey(bind)}`;
     if (memo.has(key)) return memo.get(key);
     const out = [];
     memo.set(key, out); // inserted before the walk: a cyclic call graph terminates and yields what it found
+    // A status set in this method is an effect of reaching it, whether or not the method calls anything else.
+    for (const eff of statuses.get(m.id) ?? []) out.push({ ids: [], hops: [], effects: [eff] });
     for (const c of m.calls ?? []) {
       if (c.kind === 'new' || NOISE.test(c.name)) continue;
-      const eff = effects.get(siteKey(m.id, c.line, c.name));
+      const eff = concrete(effects.get(siteKey(m.id, c.line, c.name)), bind);
       if (eff) {
         out.push({ ids: [], hops: [], effects: [eff] });
         continue;
       }
       for (const id of targetsOf(c, ctx)) {
-        const [fqn] = id.split('#');
-        const nt = model.types.get(fqn);
-        const nm = nt?.methods.find((x) => x.id === id);
-        if (!nm || nm.hasBody === false) continue;
+        const hit = bodyAt(id);
+        if (!hit) continue;
+        const { t: nt, m: nm } = hit;
         // A super call to the same name continues this method in its parent: a pass-through, not a hop deeper. Only
         // with exact targets, because an ambiguous super target would branch without ever using a depth step.
         const step = exactTargets && c.recvHow === 'super' && nm.name === m.name ? 0 : 1;
@@ -247,7 +340,8 @@ export function buildFlows(
         // The context only changes where the engine gave a per-class answer; without one, switching it per hop
         // would split the memo for no gain.
         const nextCtx = c.targetsIn?.[ctx] ? ctxAfter(nt, ctx) : ctx;
-        for (const sub of trailsOf(nt, nm, nextCtx, depth - step))
+        const nextBind = bindInto(bind, m.id.split('#')[0], nt);
+        for (const sub of trailsOf(nt, nm, nextCtx, depth - step, nextBind))
           out.push({ ids: [nm.id, ...sub.ids], hops: [`${nt.name}#${nm.name}`, ...sub.hops], effects: sub.effects });
       }
     }
@@ -305,7 +399,13 @@ export function buildFlows(
     let queue = [[t, m]];
     for (let d = 0; d < WORKER_DEPTH && queue.length && parent.size < WORKER_METHODS; d++) {
       const next = [];
-      for (const [tt, mm] of queue)
+      for (const [tt, mm] of queue) {
+        for (const eff of statuses.get(mm.id) ?? []) {
+          if (effectsSeen.has(eff.site)) continue;
+          effectsSeen.add(eff.site);
+          found.push(eff);
+          record(mm);
+        }
         for (const c of mm.calls ?? []) {
           if (isPoll(c)) continue;
           if (isExecutor(c)) {
@@ -314,6 +414,7 @@ export function buildFlows(
           }
           next.push(...process(tt, mm, c));
         }
+      }
       queue = next;
       if (found.length >= 6) break;
     }
@@ -325,7 +426,7 @@ export function buildFlows(
     // The context is the concrete class the entry runs for; an inherited mapping runs the owner's method for it.
     const ctx = entryCtx ?? t.fqn;
     const codeOf = owner ?? t;
-    const trails = kind === 'worker' ? null : trailsOf(t, m, ctx, DEPTH);
+    const trails = kind === 'worker' ? null : trailsOf(t, m, ctx, DEPTH, new Map());
     if (kind !== 'worker' && !trails.length) continue; // no effect reachable: not a flow
     // One line per entry: the union of the effect-bearing trails, in discovery order, effects named at the end.
     let hops = [],
@@ -349,6 +450,14 @@ export function buildFlows(
     const entities = Math.min(written.length, importCap);
     const outs = new Set(found.filter((e) => e.kind === 'outside').map((e) => e.key)).size;
     const msgs = new Set(found.filter((e) => e.kind === 'message').map((e) => e.key)).size;
+    // A lifecycle change is one fact about the flow: it moves a core object through its statuses, however many sites
+    // on the path set it. Weighted once, like centrality, so a CRUD sweep cannot outrank a real transition.
+    // Only a status change on an entity the flow itself writes moves a core object through its lifecycle. Every flow
+    // touches a notification or email row whose status it sets; counting those adds the same points to all of them.
+    const writtenSet = new Set(written);
+    const statusesSet = [...new Set(
+      found.filter((e) => e.kind === 'status' && writtenSet.has(e.entity)).map((e) => `${e.entity}.${e.value}`),
+    )];
     // Risk: any method on the path — the entry or a hop — carries a transaction-boundary fact.
     const pathIds = new Set([m.id]);
     for (const tr of trails ?? []) for (const id of tr.ids) pathIds.add(id);
@@ -381,6 +490,7 @@ export function buildFlows(
       `entities ${written.length}${written.length > entities ? ` (cap ${entities})` : ''}${written.length ? ` (${written.join(', ')})` : ''}`,
       entities ? FLOW_WEIGHTS.entityWrite + (entities - 1) * FLOW_WEIGHTS.entityFurther : 0,
     );
+    add(`status ${statusesSet.slice(0, 3).join(', ')}`, statusesSet.length ? FLOW_WEIGHTS.statusChange : 0);
     add(`outside ${outs}`, outs * FLOW_WEIGHTS.outsideCall);
     add(`messages ${msgs}`, msgs * FLOW_WEIGHTS.message);
     add(`risk ${withRisk}`, withRisk ? FLOW_WEIGHTS.risk : 0);
@@ -437,6 +547,8 @@ export function buildFlows(
 }
 
 const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener|MessageDrivenBean)$/.test(s.fqn ?? s.text ?? ''));
+// A model built from source carries `abstract`; one built from the dump carries the modifier list.
+const isAbstract = (t) => !!t?.abstract || (t?.modifiers ?? []).includes('abstract');
 
 // ---------------------------------------------------------------------------------------------------------------
 // Fixtures: an effectless path is not a flow; a transaction boundary outranks an otherwise equal flow; the order is

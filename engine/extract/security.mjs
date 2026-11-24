@@ -43,6 +43,10 @@ function accessOf(rule, args) {
 // Spring Security chains. Each `securityMatcher` is the chain's scope; a chain without one covers every path.
 export function springChains(java, fileMethods) {
   const rules = [];
+  // Types this repo declares: a configurer applied here whose class is absent is a rule set the scan cannot read.
+  const declared = new Set();
+  for (const j of java)
+    for (const m of String(j.text ?? '').matchAll(/\b(?:class|interface|enum|record)\s+(\w+)/g)) declared.add(m[1]);
   for (const j of java) {
     if (!/SecurityFilterChain/.test(j.text ?? '')) continue;
     const lines = j.text.split('\n');
@@ -67,42 +71,71 @@ export function springChains(java, fileMethods) {
       const order = Number(/@Order\(\s*(\d+)\s*\)/.exec(orderLine ?? '')?.[1] ?? NaN);
 
       const authAt = body.indexOf('authorizeHttpRequests');
-      if (authAt < 0) continue;
-      const authOpen = body.indexOf('(', authAt);
-      const block = body.slice(authOpen, balanced(body, authOpen) + 1);
-      const ruleRe = /\.(requestMatchers|anyRequest)\s*\(([^)]*)\)\s*\.\s*([A-Za-z]+)\s*\(([^)]*)\)/g;
-      for (const r of block.matchAll(ruleRe)) {
-        const [, kind, args, fn, fnArgs] = r;
-        // `requestMatchers(HttpMethod.OPTIONS, "/api/**")` applies to OPTIONS only; a matcher without a verb applies
-        // to every method. Ignoring the verb made an OPTIONS-only permit open the whole API.
-        const verbs = [...args.matchAll(/HttpMethod\.(\w+)/g)].map((x) => x[1].toUpperCase());
-        const access = accessOf(fn, fnArgs);
-        // `anyRequest()` means "everything this chain matches": its prefix is the chain's securityMatcher.
-        const patterns =
-          kind === 'anyRequest'
-            ? scope.length
-              ? scope
-              : ['**']
-            : [...args.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
-        if (!patterns.length) continue;
-        for (const pattern of patterns)
+      // A configurer applied to this chain whose class the repo does not declare: its requestMatchers rules exist only
+      // in that library, so this chain's paths are unknown — say so instead of reporting them as "unknown" with no
+      // reason. Only `new X(...)` is claimed: a value passed to `apply` has no class the text can name.
+      const applied = [...body.matchAll(/\.(?:apply|with)\s*\(\s*new\s+([\w.]+)\s*\(/g)]
+        .map((x) => x[1])
+        .find((fqn) => !declared.has(fqn.split('.').pop()));
+      const before = rules.length;
+      if (authAt >= 0) {
+        const authOpen = body.indexOf('(', authAt);
+        const block = body.slice(authOpen, balanced(body, authOpen) + 1);
+        const ruleRe = /\.(requestMatchers|anyRequest)\s*\(([^)]*)\)\s*\.\s*([A-Za-z]+)\s*\(([^)]*)\)/g;
+        for (const r of block.matchAll(ruleRe)) {
+          const [, kind, args, fn, fnArgs] = r;
+          // `requestMatchers(HttpMethod.OPTIONS, "/api/**")` applies to OPTIONS only; a matcher without a verb applies
+          // to every method. Ignoring the verb made an OPTIONS-only permit open the whole API.
+          const verbs = [...args.matchAll(/HttpMethod\.(\w+)/g)].map((x) => x[1].toUpperCase());
+          const access = accessOf(fn, fnArgs);
+          // `anyRequest()` means "everything this chain matches": its prefix is the chain's securityMatcher.
+          const patterns =
+            kind === 'anyRequest'
+              ? scope.length
+                ? scope
+                : ['**']
+              : [...args.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+          if (!patterns.length) continue;
+          for (const pattern of patterns)
+            rules.push({
+              id: `security-rule:${pattern}:${access}${verbs.length ? `:${verbs.join(',')}` : ''}`,
+              family: 'security-rule',
+              confidence: 'resolved',
+              source: 'spring-security',
+              scope: scope.length ? scope : ['**'],
+              pattern,
+              verbs: verbs.length ? verbs : ['*'],
+              access,
+              ...(cond ? { condition: `${cond[1]}(${cond[2]})` } : {}),
+              ...(applied ? { outside: applied } : {}),
+              chain: `${m.name}${Number.isNaN(order) ? '' : ` (@Order(${order}))`}`,
+              evidence: [`${j.p}:${i + 1}#${m.name}`],
+              why: [
+                `${kind === 'anyRequest' ? 'anyRequest' : `requestMatchers(${verbs.length ? `${verbs.join('/')}, ` : ''}"${pattern}")`} → ${fn}(${fnArgs})${cond ? ` [${cond[1]}]` : ''}`,
+                ...(applied ? [`path rules also come from ${applied}, outside this repo: not seen`] : []),
+              ],
+            });
+        }
+      }
+      // The chain's matcher is known but none of its rules are: the configurer it applies holds them, and that class is
+      // not here. One rule per scope, so the prefix is reported with its reason instead of as a bare "unknown". A chain
+      // without a matcher says nothing about which paths it governs, so its note claims no verb and shadows no rule.
+      if (applied && rules.length === before)
+        for (const pattern of scope.length ? scope : ['**'])
           rules.push({
-            id: `security-rule:${pattern}:${access}${verbs.length ? `:${verbs.join(',')}` : ''}`,
+            id: `security-rule:${pattern}:unknown:outside`,
             family: 'security-rule',
-            confidence: 'resolved',
+            confidence: 'inferred',
             source: 'spring-security',
             scope: scope.length ? scope : ['**'],
             pattern,
-            verbs: verbs.length ? verbs : ['*'],
-            access,
-            ...(cond ? { condition: `${cond[1]}(${cond[2]})` } : {}),
-            chain: `${m.name}${Number.isNaN(order) ? '' : ` (@Order(${order}))`}`,
+            verbs: scope.length ? ['*'] : [],
+            access: 'unknown',
+            outside: applied,
+            chain: `${m.name} applies ${applied}`,
             evidence: [`${j.p}:${i + 1}#${m.name}`],
-            why: [
-              `${kind === 'anyRequest' ? 'anyRequest' : `requestMatchers(${verbs.length ? `${verbs.join('/')}, ` : ''}"${pattern}")`} → ${fn}(${fnArgs})${cond ? ` [${cond[1]}]` : ''}`,
-            ],
+            why: [`path rules come from ${applied}, outside this repo: not seen`],
           });
-      }
     }
   }
   // @Order decides which chain sees a request first; a chain without an order sorts last.
@@ -461,33 +494,306 @@ export function webXmlRules(text, file) {
 // what a reached method *stores* (security context, request attribute, ThreadLocal). A filter that stores the caller
 // and reads an Authorization/token header is an API-token source. Sureness's configured processors come from catalog
 // data (`auth-type`), not from names.
+//
+// The caller's identity also arrives in cookies — one cookie switching to a system-user context, another naming the
+// clerk to act as. Cookies are read (and named) here next to headers, because a filter that trusts one is a user
+// source no matter how the value arrived.
+
+// A store of the caller for the user-source fact: any holder a filter fills, from the security context to a
+// ThreadLocal or a request attribute. A user source says where the caller comes from; the warning below is stricter
+// and needs a *security* holder.
+const STORES_CALLER =
+  /setAuthentication\s*\(|SecurityContextHolder|setAttribute\s*\(|\b[A-Z][A-Z0-9_]{2,}\s*\.\s*set\s*\(/;
+
+// A verification call is a property of its receiver's *type*, never of a method or class name: `validate` on a
+// WorkspaceValidator checks a workspace, `decode` on a cache parses a cache key, and a filter named
+// *AuthenticationFilter may still trust whatever arrives.
+const VERIFIER_TYPES = new Set([
+  'org.springframework.security.authentication.AuthenticationManager',
+  'org.springframework.security.authentication.ProviderManager',
+  'org.springframework.security.oauth2.jwt.JwtDecoder',
+  'io.jsonwebtoken.JwtParser',
+  'java.security.MessageDigest',
+  'javax.crypto.Mac',
+  'java.security.Signature',
+  'org.springframework.security.crypto.password.PasswordEncoder',
+  'org.springframework.security.oauth2.server.resource.web.BearerTokenResolver',
+]);
+const VERIFIER_SIMPLE = new Set([...VERIFIER_TYPES].map((fqn) => fqn.split('.').pop()));
+// The app's own token service, also by type: a receiver the app declares whose type name ends in TokenService.
+const TOKEN_SERVICE = /TokenService$/;
+// The security holders themselves: the context a caller is made current in, and Spring Security's caller slots.
+const SECURITY_CONTEXT = 'org.springframework.security.core.context.SecurityContext';
+const CALLER_SIMPLE = new Set(['Authentication', 'Principal']);
+
+const baseType = (text) => String(text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
+const simpleType = (text) => baseType(text).split('.').pop();
+
+// A written type's FQN, from the file's imports. Null when the file does not name it: the caller of these helpers
+// still reads the written simple name, so an import that is missing never hides a type.
+const fqnOf = (model, file, written) => {
+  const text = baseType(written);
+  if (!text) return null;
+  return model.resolveIn?.(file, text) ?? null;
+};
+
+// The declared type of every name a method can hold: its parameters, its class's fields (the model resolved those),
+// and the locals its body declares. The dump carries no locals, and a local's type is written only in the source.
+const LOCAL_DECL = /(?:^|[;{(\s])([A-Z][\w.]*(?:\s*<[^;=(){}]*>)?)\s+([a-z_]\w*)\s*[=;,)]/g;
+function declaredTypes(t, m, b) {
+  const out = new Map();
+  for (const p of m.params ?? []) if (p.name) out.set(p.name, p.type ?? '');
+  for (const f of t.fields ?? []) if (f.name) out.set(f.name, f.typeFqn ?? f.type ?? '');
+  for (const d of b.matchAll(LOCAL_DECL)) if (!out.has(d[2])) out.set(d[2], d[1]);
+  return out;
+}
+
+// The type a call is made on: the receiver's compiler answer when the dump has one, else the declared type of the
+// receiver's name, as written.
+const receiverTypeOf = (c, declared, model, file) => {
+  const name = c.recv?.kind === 'name' ? c.recv.text : null;
+  const written = name ? declared.get(name) : null;
+  return c.recvFqn ?? (written ? fqnOf(model, file, written) : null) ?? (written ? baseType(written) : null);
+};
+
+const isVerifierType = (type, model) => {
+  if (!type) return false;
+  const simple = simpleType(type);
+  return (
+    VERIFIER_TYPES.has(type) ||
+    VERIFIER_SIMPLE.has(simple) ||
+    (TOKEN_SERVICE.test(simple) && (model.types?.has(type) || type === simple))
+  );
+};
+
+// A verification call in the entry method or within two hops of it, in the same file. This is what makes a cookie
+// read a fact about where the caller comes from instead of a warning about believing it.
+function verifiesIn(model, bodies, file) {
+  for (const x of bodies) {
+    if (x.t.file !== file) continue;
+    const declared = declaredTypes(x.t, x.m, x.b);
+    for (const c of x.m.calls ?? []) {
+      const type = receiverTypeOf(c, declared, model, x.t.file);
+      if (isVerifierType(type, model))
+        return { type, cite: `${x.t.file}:${c.line ?? x.m.start}` };
+    }
+  }
+  return null;
+}
+
+// A security identity holder a method writes, with the text of the value it stores there. Only a caller slot counts:
+// the security context, an Authentication/Principal field, or a project method called with a caller parameter. A
+// ThreadLocal of a String (an IP, a request id, a workspace id), a request attribute or a context holder of the app's
+// own is a user-source fact and never a warning.
+function securitySinks(t, m, b, model, byId) {
+  const sinks = [];
+  const declared = declaredTypes(t, m, b);
+  const lineAt = (idx) => Math.max(1, m.start + b.slice(0, idx).split('\n').length - 1);
+  const argAt = (open) => {
+    const close = balanced(b, open);
+    return b.slice(open + 1, close < 0 ? b.length : close);
+  };
+  // SecurityContextHolder.getContext().setAuthentication(value) — the framework's own way to make a caller current.
+  for (const s of b.matchAll(/SecurityContextHolder\s*\.\s*getContext\s*\(\s*\)\s*\.\s*setAuthentication\s*\(/g))
+    sinks.push({
+      what: 'SecurityContextHolder.getContext().setAuthentication',
+      cite: `${t.file}:${lineAt(s.index)}`,
+      arg: argAt(s.index + s[0].length - 1),
+    });
+  // SecurityContext.setAuthentication(value): the same store through a SecurityContext the method holds.
+  for (const s of b.matchAll(/(\w+)\s*\.\s*setAuthentication\s*\(/g)) {
+    if (s[1] === 'SecurityContextHolder') continue;
+    const written = declared.get(s[1]) ?? '';
+    if (fqnOf(model, t.file, written) === SECURITY_CONTEXT || simpleType(written) === 'SecurityContext')
+      sinks.push({
+        what: `${s[1]}.setAuthentication`,
+        cite: `${t.file}:${lineAt(s.index)}`,
+        arg: argAt(s.index + s[0].length - 1),
+      });
+  }
+  // A field of the caller type (`Authentication`, `Principal`) that the method assigns.
+  for (const f of t.fields ?? []) {
+    const fqn = f.typeFqn ?? fqnOf(model, t.file, f.type);
+    if (!CALLER_SIMPLE.has(simpleType(f.type ?? '')) && !CALLER_SIMPLE.has(simpleType(fqn ?? ''))) continue;
+    const a = new RegExp(`(?:this\\s*\\.\\s*)?\\b${f.name}\\s*=\\s*([^;]+)`).exec(b);
+    if (a)
+      sinks.push({
+        what: `field ${f.name} (${simpleType(f.type ?? fqn)})`,
+        cite: `${t.file}:${lineAt(a.index)}`,
+        arg: a[1],
+      });
+  }
+  // A call handing the value to a project method whose parameter is the caller: `void bind(Authentication caller)`.
+  for (const c of m.calls ?? [])
+    for (const tg of c.targets ?? []) {
+      const hit = byId.get(tg);
+      if (!hit) continue;
+      const slot = (hit.m.params ?? []).find((p) => {
+        const type = fqnOf(model, hit.t.file, p.type) ?? baseType(p.type);
+        return CALLER_SIMPLE.has(simpleType(type));
+      });
+      if (!slot) continue;
+      sinks.push({
+        what: `${hit.t.name}#${hit.m.name}(${slot.name})`,
+        cite: `${t.file}:${c.line ?? m.start}`,
+        arg: (c.args ?? []).join(', ') || null,
+      });
+    }
+  return sinks;
+}
+
+// The value the client sent has to reach the holder. A read the code only compares, logs, or hands to a check and
+// nothing else does not become the caller. Followed one assignment deep (`user = users.loadByLogin(actor)`); when the
+// read's variable cannot be named — the servlet cookie loop compares a name, then takes getValue() — the read itself
+// is the source and the warning stands.
+function valueReaches(read, bodies, arg) {
+  const value = read.value;
+  if (!value || !arg) return true;
+  const mentions = (text, name) => new RegExp(`\\b${name}\\b`).test(text);
+  if (mentions(arg, value)) return true;
+  for (const name of new Set(String(arg).match(/\b[a-z_]\w*\b/g) ?? [])) {
+    if (name === value) continue;
+    for (const { b } of bodies)
+      for (const a of b.matchAll(new RegExp(`\\b${name}\\s*=\\s*([^;]*)`, 'g')))
+        if (mentions(a[1], value)) return true;
+  }
+  return false;
+}
+
+// `static final String NAME = "value"` per file: a cookie or header name is usually one of these.
+const constantMap = (text) =>
+  new Map(
+    [...text.matchAll(/(?:static\s+final|final\s+static)\s+String\s+(\w+)\s*=\s*"([^"]*)"/g)].map((z) => [z[1], z[2]]),
+  );
+
+// The name in a read's argument list: a literal, or a constant of the same file (qualified or imported statically).
+const nameOf = (expr, consts) => {
+  const lit = /^\s*"([^"]+)"\s*$/.exec(String(expr ?? '').trim())?.[1];
+  if (lit) return lit;
+  const ref = String(expr ?? '')
+    .split(/[.,]/)
+    .map((x) => x.trim())
+    .reverse()
+    .find((z) => consts.has(z));
+  return ref ? consts.get(ref) : null;
+};
+
+// Cookie reads: `"actAs".equals(cookie.getName())`, `cookie.getName().equals("actAs")`, and
+// `WebUtils.getCookie(request, "actAs")`. The servlet loop names its cookie at the comparison, not at getCookies().
+const COOKIE_READ = new RegExp(
+  [
+    '"([^"]+)"\\s*\\.\\s*equals(?:IgnoreCase)?\\s*\\(\\s*\\w+\\s*\\.\\s*getName\\s*\\(\\s*\\)\\s*\\)',
+    '(\\w+)\\s*\\.\\s*getName\\s*\\(\\s*\\)\\s*\\.\\s*equals(?:IgnoreCase)?\\s*\\(\\s*"([^"]+)"\\s*\\)',
+    'getCookie\\s*\\(\\s*[^,]+,\\s*([^)]+)\\)',
+  ].join('|'),
+  'g',
+);
+
+// Every value a filter reads off the request as a possible identity, with the line it is read on and the name it
+// lands in (the variable a later store can be followed to).
+function requestReads(x, consts) {
+  const out = [];
+  const lineOf = (needle, idx) => x.m.start + x.b.slice(0, idx).split('\n').length - 1;
+  const assignedTo = (idx) => /(\w+)\s*=\s*[^;=]*$/.exec(x.b.slice(Math.max(0, idx - 200), idx))?.[1] ?? null;
+  for (const m of x.b.matchAll(/getHeader\s*\(\s*([^)]*)\)/g)) {
+    // A header name that does not resolve (`HttpHeaders.AUTHORIZATION`) is reported as written: the reader still has to
+    // see which header the filter reads, and the old fact did the same.
+    const name = nameOf(m[1], consts) ?? String(m[1]).replace(/["']/g, '').trim();
+    if (name)
+      out.push({
+        kind: 'header',
+        name,
+        value: assignedTo(m.index),
+        cite: `${x.t.file}:${Math.max(1, lineOf(m[0], m.index))}`,
+      });
+  }
+  const cookieValue = /\b(\w+)\s*=\s*\w+\s*\.\s*getValue\s*\(\s*\)/.exec(x.b)?.[1] ?? null;
+  for (const m of x.b.matchAll(COOKIE_READ)) {
+    const name = m[1] ?? m[3] ?? nameOf(m[4], consts);
+    const cite = `${x.t.file}:${Math.max(1, lineOf(m[0], m.index))}`;
+    out.push({ kind: 'cookie', name: name ?? 'unnamed cookie', value: cookieValue, cite });
+  }
+  // @CookieValue is a cookie read the model resolves: the name is in the annotation.
+  for (const p of x.m.params ?? [])
+    for (const a of p.ann ?? [])
+      if (/(?:^|\.)CookieValue$/.test(a.fqn ?? '')) {
+        const name = nameOf(a.args, consts);
+        if (name) out.push({ kind: 'cookie', name, value: p.name ?? null, cite: `${x.t.file}:${a.line ?? x.m.nameLine}` });
+      }
+  return out;
+}
+
+// Project methods by id and by `Type#name`, which is how a call's targets are written.
+function methodIndex(model) {
+  const byId = new Map();
+  for (const t of model.types.values())
+    for (const m of t.methods ?? []) {
+      const entry = { t, m };
+      byId.set(m.id ?? `${t.fqn}#${m.name}`, entry);
+      byId.set(`${t.fqn}#${m.name}`, entry);
+    }
+  return byId;
+}
+
+// The entry method, its callees and their callees (same class or a holder class), each once.
+function reachOf(t, m, byId) {
+  const reach = [{ t, m }];
+  const seen = new Set([`${t.fqn}#${m.name}`]);
+  const follow = (from) => {
+    for (const c of from.m.calls ?? [])
+      for (const tg of c.targets ?? []) {
+        const hit = byId.get(tg) ?? byId.get(tg.replace(/\(.*$/, ''));
+        const key = hit ? `${hit.t.fqn}#${hit.m.name}` : null;
+        if (!hit || seen.has(key)) continue;
+        seen.add(key);
+        reach.push(hit);
+      }
+  };
+  follow({ m });
+  for (const r of [...reach].slice(1)) follow(r);
+  return reach;
+}
+
 export function authSources(model, textOf, isTest = () => false) {
   const facts = [];
-  const byId = new Map();
+  const byId = methodIndex(model);
   const body = (t, m) => textOf(t.file).split('\n').slice(m.start - 1, m.end).join('\n');
-  for (const t of model.types.values()) for (const m of t.methods ?? []) byId.set(`${t.fqn}#${m.name}`, { t, m });
   for (const t of model.types.values()) {
     if (isTest(t.file)) continue;
     for (const m of t.methods ?? []) {
       if (!/^(doFilter|doFilterInternal|preHandle)$/.test(m.name)) continue;
-      const reach = [{ t, m }];
-      for (const c of m.calls ?? []) for (const tg of c.targets ?? []) {
-        const hit = byId.get(tg.replace(/\(.*$/, ''));
-        if (hit) reach.push(hit);
-      }
-      for (const r of [...reach].slice(1)) for (const c of r.m.calls ?? []) for (const tg of c.targets ?? []) {
-        const hit = byId.get(tg.replace(/\(.*$/, ''));
-        if (hit) reach.push(hit);
-      }
-      const bodies = reach.map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
-      // A store into the security context, a request attribute, or a static ThreadLocal field (`NAME.set(...)`).
-      const stores = bodies.find((x) => /setAuthentication\s*\(|SecurityContextHolder|setAttribute\s*\(|\b[A-Z][A-Z0-9_]{2,}\s*\.\s*set\s*\(/.test(x.b));
+      const bodies = reachOf(t, m, byId).map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
+      const stores = bodies.find((x) => STORES_CALLER.test(x.b));
       if (!stores) continue;
-      const headerLine = bodies
-        .flatMap((x) => [...x.b.matchAll(/getHeader\s*\(\s*([^)]*)\)/g)].map((hm) => ({ name: hm[1].replace(/["']/g, '').trim(), t: x.t, m: x.m, idx: hm.index, b: x.b })))
-        .find((h) => /authorization|bearer|token|api[-_]?key/i.test(h.name));
+      const reads = bodies.flatMap((x) => requestReads(x, constantMap(textOf(x.t.file))));
+      // The same verification the warning uses: the receiver's type, never the method's name.
+      const verified = Boolean(verifiesIn(model, bodies, t.file));
+      const cookie = reads.find((r) => r.kind === 'cookie');
+      if (cookie) {
+        // The unverified state belongs in the kind: it is the one field of a user source the digest keeps, and a
+        // caller the code believes without checking it is what a reader has to know.
+        facts.push({
+          id: `user-source:cookie:${t.name}:${cookie.name}`,
+          family: 'user-source',
+          confidence: 'resolved',
+          kind: `cookie ${cookie.name}${verified ? '' : ' (unverified)'}`,
+          method: `${t.name}#${m.name}`,
+          name: cookie.name,
+          verified,
+          evidence: [`${cookie.cite}#${m.name}`],
+          why: [
+            `${t.name}#${m.name} reads cookie ${cookie.name} and stores the caller (${stores.b.trim().slice(0, 60)})`,
+            verified
+              ? 'a verification call runs before the caller is stored'
+              : 'nothing verifies the cookie: the caller asserts its own identity',
+          ],
+        });
+        continue;
+      }
+      const headerLine = reads.find(
+        (r) => r.kind === 'header' && /authorization|bearer|token|api[-_]?key/i.test(r.name),
+      );
       if (!headerLine) continue;
-      const line = headerLine.m.start + headerLine.b.slice(0, headerLine.idx).split('\n').length - 1;
       facts.push({
         id: `user-source:api-token:${t.name}`,
         family: 'user-source',
@@ -495,12 +801,105 @@ export function authSources(model, textOf, isTest = () => false) {
         kind: 'API token',
         method: `${t.name}#${m.name}`,
         name: headerLine.name,
-        evidence: [`${headerLine.t.file}:${Math.max(1, line + 1)}#${m.name}`],
-        why: [`${t.name}#${m.name} reads the ${headerLine.name} header and stores the caller (${stores.b.trim().slice(0, 60)})`],
+        evidence: [`${headerLine.cite}#${m.name}`],
+        why: [
+          `${t.name}#${m.name} reads the ${headerLine.name} header and stores the caller (${stores.b.trim().slice(0, 60)})`,
+        ],
       });
     }
   }
   return facts;
+}
+
+// The caller the code believes because the request said so. Two conditions, both required: the value reaches a
+// *security* identity holder (the security context, or an Authentication/Principal slot), and no verification call is
+// reachable in the same method (same file, two hops) from a receiver of a security-library or token-service type.
+// Anything less certain stays a user source — a ThreadLocal of an IP, a request id or a workspace id is not a caller.
+// One warning per (method, holder): every source that reaches that holder is listed in the one entry.
+export function identityWarnings(model, textOf, isTest = () => false) {
+  const warnings = [];
+  const byId = methodIndex(model);
+  const body = (t, m) => textOf(t.file).split('\n').slice(m.start - 1, m.end).join('\n');
+  for (const t of model.types.values()) {
+    if (isTest(t.file)) continue;
+    for (const m of t.methods ?? []) {
+      if (!/^(doFilter|doFilterInternal|preHandle)$/.test(m.name)) continue;
+      const bodies = reachOf(t, m, byId).map(({ t: rt, m: rm }) => ({ t: rt, m: rm, b: body(rt, rm) }));
+      // The sink decides first: without a security holder there is no warning to make, whatever is read.
+      const holders = new Map();
+      for (const x of bodies)
+        for (const sink of securitySinks(x.t, x.m, x.b, model, byId)) {
+          const key = `${x.t.name}#${x.m.name}`;
+          if (!holders.has(key)) holders.set(key, { x, sinks: [] });
+          holders.get(key).sinks.push(sink);
+        }
+      if (!holders.size) continue;
+      if (verifiesIn(model, bodies, t.file)) continue;
+      // One entry per value the client can send, not per place it was read.
+      const reads = [
+        ...new Map(
+          bodies.flatMap((x) => requestReads(x, constantMap(textOf(x.t.file)))).map((r) => [`${r.kind}:${r.name}`, r]),
+        ).values(),
+      ];
+      for (const [key, { x, sinks }] of holders) {
+        const used = reads.filter((r) => sinks.some((s) => valueReaches(r, bodies, s.arg)));
+        if (!used.length) continue;
+        warnings.push({
+          id: `security-warning:client-asserted-identity@${t.name}:${key}`,
+          family: 'security-warning',
+          confidence: 'inferred',
+          kind: 'client-asserted-identity',
+          method: `${t.name}#${m.name}`,
+          source: used.map((r) => `${r.kind}:${r.name}`).join(', '),
+          holder: key,
+          evidence: [...used.map((r) => r.cite), `${x.t.file}:${x.m.start}#${x.m.name}`],
+          why: [
+            `${t.name}#${m.name} takes the caller from ${used.map((r) => `${r.kind} ${r.name} (${r.cite})`).join(', ')}`,
+            `${key} stores it as the caller (${[...new Set(sinks.map((s) => s.what))].join(', ')}) with no verification ` +
+              'call: any client can claim that identity',
+          ],
+        });
+      }
+    }
+  }
+  return warnings;
+}
+
+{
+  // Type reading: a local's type comes from the source, a verification call from its receiver's type, and a read that
+  // never reaches the holder is not a caller.
+  const model = {
+    types: new Map([
+      ['shop.Svc', { fqn: 'shop.Svc', file: 'x', methods: [], fields: [] }],
+      ['shop.JwtTokenService', { fqn: 'shop.JwtTokenService', file: 'x', methods: [], fields: [] }],
+      ['shop.TwoFactorService', { fqn: 'shop.TwoFactorService', file: 'x', methods: [], fields: [] }],
+    ]),
+    resolveIn: () => null,
+  };
+  const t = { fqn: 'shop.F', name: 'F', file: 'src/F.java', fields: [] };
+  const m = { name: 'doFilterInternal', start: 1, end: 4, params: [], calls: [] };
+  const b = ['SecurityContext context = SecurityContextHolder.getContext();', 'context.setAuthentication(user);'].join('\n');
+  assert.deepStrictEqual([...declaredTypes(t, m, b)], [['context', 'SecurityContext']]);
+  assert.deepStrictEqual(securitySinks(t, m, b, model, new Map()).map((s) => s.what), ['context.setAuthentication']);
+  assert.deepStrictEqual(
+    securitySinks(t, m, 'ThreadLocal<String> ID = new ThreadLocal<>();\nID.set(id);', model, new Map()),
+    [],
+  );
+  assert.ok(isVerifierType('org.springframework.security.oauth2.jwt.JwtDecoder', model));
+  assert.ok(isVerifierType('java.security.MessageDigest', model));
+  assert.ok(isVerifierType('shop.JwtTokenService', model));
+  assert.ok(!isVerifierType('shop.TwoFactorService', model));
+  assert.ok(!isVerifierType('java.lang.String', model));
+  assert.ok(
+    valueReaches({ kind: 'cookie', name: 'actAs', value: 'actor' }, [{ b: 'User u = users.loadByLogin(actor);' }], 'u'),
+  );
+  assert.ok(
+    !valueReaches(
+      { kind: 'header', name: 'T', value: 'token' },
+      [{ b: 'TfaToken t = tfa.fetch(user, token);\nAuthentication updated = addAuthority(authentication);' }],
+      'updated',
+    ),
+  );
 }
 
 // The model in one fact: prefixes and their access, where the user and the tenant come from, and what a developer
@@ -551,8 +950,15 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
       const a = accessOfEndpoint(e);
       counts[a] = (counts[a] ?? 0) + 1;
     }
-    const [access, n] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] ?? ['unknown', 0];
-    const example = eps.find((e) => accessOfEndpoint(e) === access) ?? eps[0];
+    const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const [modal, n] = ranked[0] ?? ['unknown', 0];
+    // A prefix rule is stated only when every endpoint under the prefix has it. The modal value used to be reported as
+    // the prefix's rule, so `/api/v1/**: role:role:X` covered 142 endpoints when only the external
+    // controllers carried the annotation and the rest were merely authenticated. A share ("role:A on 95 of 142") still
+    // names the commonest check, which is what a reader acts on, and never claims it for the whole prefix.
+    const mixed = ranked.length > 1;
+    const access = mixed ? `${modal} on ${n} of ${eps.length}` : modal;
+    const example = eps.find((e) => accessOfEndpoint(e) === modal) ?? eps[0];
     const checks = eps.flatMap(checkedFor).map((f) => `${f.annotation}${f.args || ''}`).filter((x, i, a) => a.indexOf(x) === i);
     const checkedCount = eps.filter((e) => checkedFor(e).length).length;
     prefixes.push({
@@ -560,11 +966,18 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
       access,
       endpoints: eps.length,
       agreement: Math.round((n / eps.length) * 100),
+      ...(mixed ? { dominant: modal, accessCounts: counts } : {}),
       example: `${example.verb} ${example.path}`,
       checks,
       checked: checkedCount,
       evidence: [...new Set(eps.map((e) => e.evidence?.[1] ?? e.evidence?.[0]).filter(Boolean))].slice(0, 3),
-      why: [`${n} of ${eps.length} endpoints under ${prefix} are ${access}`, checks.length ? `method checks used: ${checks.join(', ')}` : 'no method-level checks'],
+      why: [
+        mixed
+          ? `${ranked.map(([a, c]) => `${a} on ${c}`).join(', ')} of ${eps.length} endpoints under ${prefix}: ` +
+            'no single rule covers them'
+          : `${n} of ${eps.length} endpoints under ${prefix} are ${access}`,
+        checks.length ? `method checks used: ${checks.join(', ')}` : 'no method-level checks',
+      ],
     });
   }
   // Sibling prefixes under one parent with the same access are one zone (`/health/live`, `/health/ready` → `/health/**`).
@@ -582,20 +995,45 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     } else merged.push(...list);
   }
   merged.sort((a, b) => b.endpoints - a.endpoints);
-  const developerRule = merged
-    .filter((p) => p.endpoints >= 2)
-    .slice(0, 8)
-    .map((p) => ({
+  // A configurer outside the repo holds rules this scan cannot read: the reader has to know that a prefix's silence is
+  // not proof that it is unprotected. It comes first, because the digest shows the first few lines only.
+  const outsideRules = [...new Map(rules.filter((r) => r.outside).map((r) => [r.outside, r])).entries()];
+  // A caller taken from a cookie or header and stored without a verification call is knowledge the reader must have:
+  // the digest prints the user source's kind, and the "<...> (unverified)" suffix is how that state survives it.
+  const unverified = userSources.filter((u) => /\(unverified\)$/.test(u.kind ?? ''));
+  const developerRule = [
+    ...unverified.map((u) => ({
       text:
-        p.access === 'anonymous'
-          ? `endpoints under ${p.prefix} are public: ${p.checks.length ? `${p.checked} of ${p.endpoints} use ${p.checks[0]}; the rest must protect themselves` : 'each endpoint must protect itself'}`
-          : p.access === 'authenticated'
-            ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? `; ${p.checked} of ${p.endpoints} also use ${p.checks[0]}` : ''}`
-            : p.access.startsWith('role:')
-              ? `endpoints under ${p.prefix} need role ${p.access.slice(5)}`
-              : `endpoints under ${p.prefix} are ${p.access}`,
-      cites: p.evidence,
-    }));
+        `the caller's identity comes from ${u.kind.replace(/\s*\(unverified\)$/, '')}, stored with no ` +
+        `verification call (${u.cites?.[0] ?? 'no cite'}): any client can claim it`,
+      cites: u.cites ?? [],
+    })),
+    ...outsideRules.map(([type, rule]) => ({
+      text: `path rules come from ${type}, outside this repo: not seen`,
+      cites: rule.evidence,
+      outside: type,
+    })),
+    ...merged
+      .filter((p) => p.endpoints >= 2)
+      .slice(0, 8)
+      .map((p) => ({
+        text:
+          p.accessCounts
+            ? `endpoints under ${p.prefix} differ (${Object.entries(p.accessCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([a, c]) => `${a} on ${c} of ${p.endpoints}`)
+                .join(', ')}): no single rule covers the prefix`
+            : p.access === 'anonymous'
+              ? `endpoints under ${p.prefix} are public: ${p.checks.length ? `${p.checked} of ${p.endpoints} use ${p.checks[0]}; the rest must protect themselves` : 'each endpoint must protect itself'}`
+              : p.access === 'authenticated'
+                ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? `; ${p.checked} of ${p.endpoints} also use ${p.checks[0]}` : ''}`
+                : p.access.startsWith('role:')
+                  ? `endpoints under ${p.prefix} need role ${p.access.slice(5)}`
+                  : `endpoints under ${p.prefix} are ${p.access}`,
+        cites: p.evidence,
+      })),
+  ];
   return {
     id: 'security-model',
     family: 'security-model',

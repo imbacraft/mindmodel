@@ -5,7 +5,6 @@
 import fs from 'node:fs';
 import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
-import assert from 'node:assert';
 import { scan, summarize } from './scan.mjs';
 import { configKeys } from './extract/config.mjs';
 
@@ -18,12 +17,6 @@ export function resolve(value, keys) {
   if (k && !/^\$\{/.test(k.value)) return { name: k.value, via: `${m[1]}` };
   return m[2] != null && m[2] !== '' ? { name: m[2], via: `${m[1]} default` } : { name: null, unresolved: m[1] };
 }
-assert.deepStrictEqual(resolve('${t.orders:orders}', new Map()), { name: 'orders', via: 't.orders default' });
-assert.deepStrictEqual(resolve('${t.orders}', new Map([['t.orders', { value: 'orders-v2' }]])), {
-  name: 'orders-v2',
-  via: 't.orders',
-});
-assert.deepStrictEqual(resolve('${t.x}', new Map()), { name: null, unresolved: 't.x' });
 
 // Messaging is detected by patterns: built-ins for Spring Kafka, Kafka Streams, Spring Cloud Stream, JMS and
 // Eventuate Tram, plus a company's own wrapper patterns from <folder>/mindmodel-system.json. EXPR captures the
@@ -62,28 +55,6 @@ export function messaging(text, patterns = BUILTIN) {
   });
   return out;
 }
-{
-  const t =
-    '@KafkaListener(id = "o", topics = "orders", groupId = "p")\ntemplate.send("payment-orders", id, o);\nbuilder.stream("stock-orders").to("orders");\n@JmsListener(destination = "${q.audit:audit}")\njmsTemplate.convertAndSend("invoices", x);\n.fromChannel(KitchenServiceChannels.COMMAND_CHANNEL)\ndomainEventPublisher.publish(Consumer.class, id, events);\n.andForAggregateType(K.CH)';
-  assert.deepStrictEqual(
-    messaging('StreamSupport.stream(result.spliterator(), false)\nlist.stream().map(x).collect(toList())').length,
-    0,
-  );
-  assert.deepStrictEqual(
-    messaging(t).map((x) => `${x.kind}:${x.dir}:${x.expr}`),
-    [
-      'kafka:in:"orders"',
-      'kafka:out:"payment-orders"',
-      'kafka:in:"stock-orders"',
-      'kafka:out:"orders"',
-      'jms:in:"${q.audit:audit}"',
-      'jms:out:"invoices"',
-      'kafka:in:KitchenServiceChannels.COMMAND_CHANNEL',
-      'kafka:out:Consumer.class',
-      'kafka:in:K.CH',
-    ],
-  );
-}
 
 // Jakarta EE JMS, which line patterns can't read: a message-driven bean's destination sits in a multi-line activation
 // config, and a sender sends to a field injected by JNDI name (@Resource(lookup = "...")). Both sides use the JNDI name.
@@ -108,18 +79,6 @@ export function jakartaJms(text) {
       if (jndi.has(m[1])) out.push({ kind: 'jms', dir: 'out', name: jndi.get(m[1]), line: lineAt(m.index) });
   return out;
 }
-assert.deepStrictEqual(
-  jakartaJms(
-    '@MessageDriven(activationConfig = {\n  @ActivationConfigProperty(\n    propertyName = "destinationLookup",\n    propertyValue = "java:app/jms/Q")})\nclass C {}',
-  ),
-  [{ kind: 'jms', dir: 'in', name: 'java:app/jms/Q', line: 3 }],
-);
-assert.deepStrictEqual(
-  jakartaJms(
-    '@Resource(lookup = "java:app/jms/Q")\nprivate Destination q;\nvoid f() { ctx.createProducer()\n  .send(q, x); }',
-  ),
-  [{ kind: 'jms', dir: 'out', name: 'java:app/jms/Q', line: 4 }],
-);
 
 // Folder-wide index for resolving channel expressions: string constants (Class.NAME) and class names to FQNs.
 export function codeIndex(files) {
@@ -165,28 +124,6 @@ export function channelName(x, text, keys, ix) {
   }
   return { name: null, unresolved: e };
 }
-{
-  const ix = {
-    constants: new Map([['K.CH', 'kitchenService']]),
-    fqn: new Map([['Ticket', 'a.b.Ticket']]),
-    aggregateOf: new Map([['TicketPub', 'Ticket']]),
-  };
-  assert.equal(channelName({ expr: 'K.CH' }, '', new Map(), ix).name, 'kitchenService');
-  assert.equal(
-    channelName({ expr: 'ticket', publisher: true, recv: 'pub' }, 'private TicketPub pub;', new Map(), ix).name,
-    'a.b.Ticket',
-  );
-  assert.equal(channelName({ expr: 'Ticket.class' }, '', new Map(), ix).name, 'a.b.Ticket');
-  assert.equal(
-    channelName(
-      { expr: 'queueName' },
-      '@Value("${risk.queueName}")\n\tprivate String queueName;',
-      new Map([['risk.queueName', { value: 'risk-q' }]]),
-      ix,
-    ).name,
-    'risk-q',
-  );
-}
 
 // REST calls to other services: Feign clients, URLs with a host name, lb:// gateway routes.
 export function restCalls(text) {
@@ -206,12 +143,6 @@ export function restCalls(text) {
   });
   return out;
 }
-assert.deepStrictEqual(
-  restCalls(
-    '.uri("http://customers-service/owners/{id}")\n@FeignClient(name = "billing")\ndiscoveryClient.getInstances("customers-service").get(0)',
-  ).map((x) => `${x.host}${x.path}`),
-  ['customers-service/owners/{id}', 'billing', 'customers-service'],
-);
 
 // Gateway routes in YAML: "uri: lb://vets-service" followed by "- Path=/api/vet/**".
 export function gatewayRoutes(yml) {
@@ -228,9 +159,6 @@ export function gatewayRoutes(yml) {
   });
   return out;
 }
-assert.deepStrictEqual(gatewayRoutes('uri: lb://vets-service\n  predicates:\n    - Path=/api/vet/**'), [
-  { host: 'vets-service', line: 1, paths: ['/api/vet/**'] },
-]);
 
 // --- discovery -----------------------------------------------------------------------
 const IGNORE = /(^|\/)(node_modules|target|build|\.git|mindmodel|mindmodel-system|docs|docker|scripts)(\/|$)/;

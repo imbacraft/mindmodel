@@ -169,7 +169,7 @@
   },
   "tenancy": {
    "type": "object",
-   "description": "\u00a75.4: the key (inferred from counts, never from the name), its coverage, repository reads that skip it, and the request sources.",
+   "description": "§5.4: the key (inferred from counts, never from the name), its coverage, repository reads that skip it, and the request sources.",
    "additionalProperties": true
   },
   "inventory": {
@@ -363,22 +363,23 @@
      "condition": {
       "type": "string",
       "description": "@ConditionalOnProperty/@Profile the chain is gated by"
+     },
+     "outside": {
+      "type": "string",
+      "description": "A configurer this repo does not declare whose requestMatchers rules the chain applies: the prefix's rules are not seen"
      }
     }
    }
   },
   "securityWarnings": {
    "type": "array",
-   "description": "Computed: an anonymous prefix exposes write endpoints with no method-level check.",
+   "description": "Computed: an anonymous prefix exposes write endpoints with no method-level check, or an identity value reaches a security holder unverified.",
    "items": {
     "type": "object",
     "additionalProperties": false,
     "required": [
      "id",
      "kind",
-     "path",
-     "verb",
-     "rule",
      "evidence"
     ],
     "properties": {
@@ -394,7 +395,8 @@
      "kind": {
       "type": "string",
       "enum": [
-       "anonymous-write"
+       "anonymous-write",
+       "client-asserted-identity"
       ]
      },
      "path": {
@@ -418,6 +420,15 @@
       "items": {
        "type": "string"
       }
+     },
+     "method": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string"
+     },
+     "holder": {
+      "type": "string"
      }
     }
    }
@@ -960,6 +971,12 @@
     "entity": {
      "type": "string"
     },
+    "entityVar": {
+     "type": "string"
+    },
+    "entityOwner": {
+     "type": "string"
+    },
     "repository": {
      "type": "string"
     },
@@ -1039,7 +1056,8 @@
      "enum": [
       "entity",
       "outside",
-      "message"
+      "message",
+      "status"
      ]
     },
     "label": {
@@ -1049,6 +1067,9 @@
      "type": "string"
     },
     "entity": {
+     "type": "string"
+    },
+    "value": {
      "type": "string"
     },
     "site": {

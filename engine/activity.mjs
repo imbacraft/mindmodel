@@ -3,7 +3,6 @@
 // Usage: node activity.mjs <root> <window> <pathPrefix>...   window = "YYYY-MM-DD" (since) or "last N commits"
 // Prints: {"commits":n,"of":total,"since":"..."}
 import { execFileSync } from 'node:child_process';
-import assert from 'node:assert';
 
 export function count(log, prefixes) {
   // log: newest first, blocks "@@<sha>" followed by name-status lines; renames map old paths to their current name
@@ -32,13 +31,6 @@ export function count(log, prefixes) {
   if (touched) hits++;
   return { commits: hits, of: total };
 }
-assert.deepStrictEqual(
-  count(
-    '@@a\nM\tsrc/new/A.java\n@@b\nR100\tsrc/old/A.java\tsrc/new/A.java\n@@c\nM\tsrc/old/A.java\n@@d\nM\tREADME.md',
-    ['src/new'],
-  ),
-  { commits: 3, of: 4 },
-);
 
 export const git = (root, args) => {
   try {
@@ -55,7 +47,6 @@ export const git = (root, args) => {
 // git reads a bare date in --since as that date at the current time of day, so the commit count would drift as the
 // day passes. Pin the cutoff to midnight UTC instead.
 export const sinceCutoff = (date) => `${date}T00:00:00Z`;
-assert.equal(sinceCutoff('2026-05-23'), '2026-05-23T00:00:00Z');
 
 // The activity window (rules 3.4): 6 months before HEAD; under 20 commits there, the last 50; under 10 in total, none.
 // headDate and total may be passed in by a caller that already asked git for them.

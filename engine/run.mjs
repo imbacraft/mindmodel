@@ -36,7 +36,7 @@ export function fingerprint(root, files) {
  */
 export function dumpFor(root, files, { outDir, force = false } = {}) {
   const jar = jarPath();
-  if (!fs.existsSync(jar)) return { ok: false, reason: `engine jar not found: ${jar}` };
+  if (!jar || !fs.existsSync(jar)) return { ok: false, reason: `engine jar not found: ${jar}` };
   const dir = outDir ?? path.join(root, 'mindmodel', '.work', 'dump');
   const stamp = path.join(dir, 'fingerprint');
   const want = fingerprint(root, files);
@@ -47,22 +47,36 @@ export function dumpFor(root, files, { outDir, force = false } = {}) {
   fs.mkdirSync(staging, { recursive: true });
   const list = path.join(os.tmpdir(), `mindmodel-files-${process.pid}.txt`);
   fs.writeFileSync(list, files.join('\n') + '\n');
-  // Spoon models the whole checkout in memory: the heap flag is not optional on a large repo (fineract needs 4 GB).
-  const heap = process.env.MINDMODEL_ENGINE_XMX || '4g';
-  const run = spawnSync('java', [`-Xmx${heap}`, '-jar', jar, 'dump', '--compliance', compliance(), root, list, staging], {
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: Number(process.env.MINDMODEL_ENGINE_TIMEOUT_MS) || 900000,
-  });
-  if (run.status !== 0) {
-    const tail = (run.stderr || '').split('\n').filter((l) => l.trim() && !/^SLF4J/.test(l)).pop();
-    return { ok: false, reason: tail || `engine exit ${run.status}${run.signal ? ` (${run.signal})` : ''}` };
-  }
-  fs.writeFileSync(path.join(staging, 'fingerprint'), want + '\n');
   const retired = `${dir}.${process.pid}.old`;
-  fs.rmSync(retired, { recursive: true, force: true });
-  if (fs.existsSync(dir)) fs.renameSync(dir, retired);
-  fs.renameSync(staging, dir);
-  fs.rmSync(retired, { recursive: true, force: true });
-  return { ok: true, dir };
+  let swapped = false;
+  try {
+    // Spoon models the whole checkout in memory: the heap flag is not optional on a large repo (fineract needs 4 GB).
+    const heap = process.env.MINDMODEL_ENGINE_XMX || '4g';
+    const run = spawnSync('java', [`-Xmx${heap}`, '-jar', jar, 'dump', '--compliance', compliance(), root, list, staging], {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: Number(process.env.MINDMODEL_ENGINE_TIMEOUT_MS) || 900000,
+    });
+    if (run.status !== 0) {
+      const tail = (run.stderr || '').split('\n').filter((l) => l.trim() && !/^SLF4J/.test(l)).pop();
+      const how =
+        run.error?.message || (run.signal ? `engine exit ${run.status} (${run.signal})` : `engine exit ${run.status}`);
+      return { ok: false, reason: tail || how };
+    }
+    fs.writeFileSync(path.join(staging, 'fingerprint'), want + '\n');
+    fs.rmSync(retired, { recursive: true, force: true });
+    if (fs.existsSync(dir)) fs.renameSync(dir, retired);
+    fs.renameSync(staging, dir);
+    swapped = true;
+    return { ok: true, dir };
+  } finally {
+    // A failed run (non-zero exit, timeout, a swap that threw) must not leave staging folders behind in the project.
+    if (!swapped) {
+      fs.rmSync(staging, { recursive: true, force: true });
+      // The swap retires the old dump first: put it back rather than leaving the checkout without a warm dump.
+      if (!fs.existsSync(dir) && fs.existsSync(retired)) fs.renameSync(retired, dir);
+    }
+    fs.rmSync(retired, { recursive: true, force: true });
+    fs.rmSync(list, { force: true });
+  }
 }

@@ -1,5 +1,5 @@
-// Unit tests: each engine module carries small self-checks (assert) next to the code they test, and they run on
-// import. Importing every module here runs them all; a module that fails to load fails its test.
+// Load tests: every module under engine/ must import cleanly. The assert self-checks live in
+// test/asserts.<module>.test.mjs, not at the top of the modules (Task 9); a module that fails to load fails its test.
 import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,5 +21,5 @@ function modules(dir, out = []) {
 
 for (const f of modules(engine).sort()) {
   const name = path.relative(engine, f).split(path.sep).join('/');
-  test(`self-checks: ${name}`, () => import(f));
+  test(`loads: ${name}`, () => import(f));
 }

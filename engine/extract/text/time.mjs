@@ -1,5 +1,4 @@
 // Plain-language timing for schedules (moved unchanged from deep.mjs).
-import assert from 'node:assert';
 export function humanMs(ms) {
   if (ms % 3_600_000 === 0) return `${ms / 3_600_000} h`;
   if (ms % 60_000 === 0) return `${ms / 60_000} min`;
@@ -40,12 +39,6 @@ export function humanSchedule(args) {
   if (num('initialDelay') != null) parts.push(`first run after ${humanMs(num('initialDelay'))}`);
   return parts.join(', ') || args;
 }
-assert.equal(humanCron('0 0 3 * * *'), 'daily 03:00');
-assert.equal(humanCron('0 */15 * * * *'), 'every 15 min');
-assert.equal(humanSchedule('(fixedRate = 600_000)'), 'every 10 min');
-assert.equal(humanSchedule('(fixedDelay = 30000)'), '30 s after each run ends');
-assert.equal(humanSchedule('(minute = "*/2", hour = "*")'), 'every 2 min');
-assert.equal(humanSchedule('(hour = "3")'), 'daily 03:00');
 
 // Time windows and retry settings written inside a method (e.g. "older than 5 min").
 const WINDOW =
