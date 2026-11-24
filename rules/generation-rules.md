@@ -25,7 +25,9 @@
 | Rules | What must you never get wrong? |
 | Stories | How do the main flows actually run, end to end? |
 
-**P3. Every claim is traced to code.** Each statement has a citation (`path`, `path:line` or `path:start-end`, optionally `#symbol`, which the validator checks is in the cited lines). The cited lines must contain what the text says. Where a file declares several methods of that name, a bare `#name` is ambiguous: the validator rejects it and lists the candidates (`path:start-end#name (N params)`), and you cite the one you meant by its own range or by adding its arity (`#save/2`). A claim you cannot trace is dropped, or, only in stories, marked *inferred*.
+**P3. Every claim is traced to code, once per claim block.** Each block — a rule, a region part, a concept card, a story step — carries one or two citations (`path`, `path:line` or `path:start-end`, optionally `#symbol`, which the validator checks is in the cited lines) and the prose rides on them. A citation on every sentence is wrong: it costs the writer a lookup per sentence and the reader attention to lines the block already establishes. Where a block states several unrelated things, cite each part once, not each sentence of a part. The cited lines must contain what the text says. Where a file declares several methods of that name, a bare `#name` is ambiguous: the validator rejects it and lists the candidates (`path:start-end#name (N params)`), and you cite the one you meant by its own range or by adding its arity (`#save/2`). A claim you cannot trace is dropped, or, only in stories, marked *inferred*.
+
+**P3a. The cite count is a signal, not a score.** A map needs roughly 2 cites per rule, 4 per region, 2 per concept, 1 per step (request path and stories), 1 per background row and per state owner — about 90–120 on a seven-region app. The validator warns above 1.4× that; far more cites than blocks means sentences are being cited one by one.
 
 **P4. The code wins, silently.** Read the project's docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then verify against the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose documentation. Configuration files are code: a config setting that the code ignores or overrides can be a rule (3.8).
 
@@ -37,9 +39,9 @@
 
 **P7. Words first.** About 80% words. The only diagram is the request-path sequence. Draw any other diagram only if the relations it shows branch, loop or are many-to-many (a chain is a sentence).
 
-**P8. Budgets are hard limits.** Core map (everything except stories) ≤ 3,000 words. Per-section limits are given below. Cut, merge or group; never cram.
+**P8. Budgets are size tiers, with flat caps where overflow lives.** The core map (everything except stories) is capped by the app's size, measured by its endpoint count: ≤ 50 → 2,200 words · ≤ 150 → 2,800 · ≤ 400 → 3,600 · > 400 → 4,200. Regions never exceed 1,000 words and state never exceeds 400, whatever the tier. `facts.md` opens with this app's tier and section targets (`**budget: …**`); the validator prints the same numbers at the end. Cut, merge or group; never cram.
 
-**Draft to these targets, not to the total.** A first draft written by feel lands ~1,500 words over and costs more time than the writing itself to cut back. Approximate shares of the 3,000: purpose 120 · context 250 · concepts 550 · regions 550 · state 350 · runtime 250 · background 250 · rules 400 · security 200 (plus the section intros and the core sentence). Measure once after drafting and correct a section, not the whole map.
+**Draft to the section targets, once.** Each section has a share of the tier (Part 7); a draft written by feel overshoots by about a third and then costs more to cut than to write. Write the map once, to those numbers, and let the validator count: it prints `sections: purpose 150/144 · …` and marks every section over its share with `!`. Correct only the marked sections, with edits to those fields, and stop when no section is marked. Never re-read the draft to count words yourself, and never rewrite the map to fix one section's number.
 
 **P9. Rank, don't list.** Where a section has several items of unequal weight (rules, stories), order them by importance and say in one line why each ranks where it does.
 
@@ -379,11 +381,14 @@ Run this on the whole draft before rendering. Every "no" must be fixed or explic
 - [ ] Stories are main flows, ranked, each with a reason; none is a change story.
 
 **Size**
-- [ ] All budgets are met (Part 7); core map ≤ 3,000 words.
+- [ ] The core map is within its tier (Part 7), regions ≤ 1,000 words and state ≤ 400 words.
+- [ ] Citations are per block, not per sentence (P3a): no section is cited line by line.
 
 ---
 
 ## Part 5. When over budget: what to cut first
+
+Cut in the section the validator marks (`sections: … state 500/400!`), and only that section: the marks name the overflow, so the total follows.
 
 1. Region "parts" beyond the 4 most important.
 2. Region card text that describes behavior instead of layout.
@@ -415,9 +420,11 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 
 ## Part 7. Size budgets
 
+The core-word ceiling is set by the app's endpoint count; each section has a share of it. `facts.md` opens with this app's tier and numbers, and the validator prints them again and checks every section against its share.
+
 | Element | Budget (a ceiling, never a target) |
 |---|---|
-| Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 3 run steps; ≤ 150 words |
+| Overview | 1 purpose sentence (+ optional metaphor, + non-goals if stated); boot: 1 entry per deployable, ≤ 3 run steps |
 | People & outside systems | ≤ 7 each, ranked |
 | Core concepts | ≤ 6, one card each, plus 1 core sentence that mentions every concept |
 | Regions | ≤ 7 + Shared infrastructure; ≤ 7 parts each |
@@ -427,7 +434,22 @@ Never cut citations, the core or region sentence, "Not to be confused with", the
 | Rules | ≤ 5 |
 | Stories | 1–5, each ≤ 10 steps and about 250–500 words |
 | Diagrams | 1: the request-path sequence |
-| Words, core map (everything except stories) | ≤ 3,000 |
+| Words, core map (everything except stories) | the tier's ceiling in the table below |
+| Words, regions and state | flat caps: regions ≤ 1,000, state ≤ 400 |
+
+| Section | Tier 1 (≤ 50 endpoints) | Tier 2 (≤ 150) | Tier 3 (≤ 400) | Tier 4 (> 400) | Hard cap |
+|---|---|---|---|---|---|
+| core | 2200 | 2800 | 3600 | 4200 | — |
+| purpose | 88 | 112 | 144 | 168 | — |
+| context | 176 | 224 | 288 | 336 | — |
+| concepts | 396 | 504 | 648 | 756 | — |
+| regions | 396 | 504 | 648 | 756 | 1000 |
+| state | 286 | 364 | 400 | 400 | 400 |
+| runtime | 176 | 224 | 288 | 336 | — |
+| background | 176 | 224 | 288 | 336 | — |
+| rules | 286 | 364 | 468 | 546 | — |
+| security | 154 | 196 | 252 | 294 | — |
+| intros | 66 | 84 | 108 | 126 | — |
 
 ## How security works (S4)
 

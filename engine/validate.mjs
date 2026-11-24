@@ -83,9 +83,104 @@ const BUDGET = {
   stories: [1, 5],
   storySteps: 10,
   parts: 7,
-  coreWords: 3000,
   runSteps: 3,
 };
+
+// P8 size tiers: the core ceiling scales with the app, because a 40-endpoint tool and a 900-endpoint platform cannot
+// say the same thing in the same number of words. Regions and state keep a flat cap: that is where overflow lives.
+const TIERS = [
+  { tier: 1, maxEndpoints: 50, core: 2200 },
+  { tier: 2, maxEndpoints: 150, core: 2800 },
+  { tier: 3, maxEndpoints: 400, core: 3600 },
+  { tier: 4, maxEndpoints: Infinity, core: 4200 },
+];
+const SECTION_SHARES = {
+  purpose: 0.04,
+  context: 0.08,
+  concepts: 0.18,
+  regions: 0.18,
+  state: 0.13,
+  runtime: 0.08,
+  background: 0.08,
+  rules: 0.13,
+  security: 0.07,
+  intros: 0.03,
+};
+// Hard caps whatever the tier, clamped onto the share so a section target never exceeds them.
+export const CAPS = { regions: 1000, state: 400 };
+
+// The budget for an app with this many endpoints (null when the count is unknown: use the widest tier, so a missing
+// facts file never makes a legal map look over budget).
+export function budgetFor(endpoints) {
+  const t = TIERS.find((x) => (endpoints ?? Infinity) <= x.maxEndpoints);
+  const sections = {};
+  for (const [name, share] of Object.entries(SECTION_SHARES))
+    sections[name] = Math.min(Math.round(t.core * share), CAPS[name] ?? Infinity);
+  return { tier: t.tier, endpoints, core: t.core, sections, caps: CAPS };
+}
+
+// Words, with JSON keys dropped and path/symbol tokens ignored: the page's prose, not its citations.
+export function wordCount(o) {
+  return JSON.stringify(o ?? {})
+    .replace(/"[a-zA-Z]+":/g, ' ')
+    .split(/\s+/)
+    .filter((w) => /[a-zA-Z]{2,}/.test(w) && !w.includes('/')).length;
+}
+
+// Each section measured on its own, so a writer can fix the one that is over instead of rewriting the map.
+const SECTION_KEYS = {
+  intros: ['version', 'project'],
+  purpose: ['purpose'],
+  context: ['context'],
+  concepts: ['coreSentence', 'concepts'],
+  regions: ['regionSentence', 'regions'],
+  state: ['state'],
+  runtime: ['runtime'],
+  background: ['background'],
+  rules: ['rules'],
+  security: ['security'],
+};
+export function sectionWords(map) {
+  const out = {};
+  for (const [name, keys] of Object.entries(SECTION_KEYS))
+    out[name] = wordCount(Object.fromEntries(keys.filter((k) => map[k] !== undefined).map((k) => [k, map[k]])));
+  return out;
+}
+
+// P3: a citation covers a claim block — a rule, a region part, a concept card, a story step — not a sentence. This is
+// the count a block-cited map of this shape needs; far above it means the writer cited line by line.
+export function citeTarget(map) {
+  const steps = (map.runtime?.steps?.length ?? 0) + (map.stories ?? []).reduce((n, s) => n + (s.steps?.length ?? 0), 0);
+  return (
+    2 * (map.rules?.length ?? 0) +
+    4 * (map.regions?.length ?? 0) +
+    2 * (map.concepts?.length ?? 0) +
+    steps +
+    (map.background?.items?.length ?? 0) +
+    (map.state?.owners?.length ?? 0) +
+    6
+  );
+}
+
+// One warning per section over its share, plus the total: the writer fixes a section, never the whole map.
+export function budgetWarnings(counts, budget) {
+  const out = [];
+  for (const [name, n] of Object.entries(counts)) {
+    const target = budget.sections[name];
+    if (n <= target) continue;
+    const cap = CAPS[name];
+    out.push(
+      `${name}: ~${n} words > tier ${budget.tier} target ${target}${cap && n > cap ? ` (over the hard cap ${cap})` : ''}`,
+    );
+  }
+  const total = Object.values(counts).reduce((n, x) => n + x, 0);
+  if (total > budget.core)
+    out.push(
+      `core map ~${total} words > tier ${budget.tier} budget ${budget.core}` +
+        `${budget.endpoints == null ? ' (no facts.json: endpoint count unknown)' : ` (${budget.endpoints} endpoints)`}`,
+    );
+  return out;
+}
 
 // A citation's target among the file's declarations: the same name, and the same arity when the cite gives one
 // (`#save/2`). Null when the file's declarations are unknown here (no dump, or not a Java file).
@@ -318,6 +413,18 @@ function declaredFromDump(root) {
   }
 }
 
+// The scan facts, when the run has them: the endpoint count sets the size tier (P8), and the security warnings say
+// which files must not become rules. Facts are optional for validation; an unreadable file is not a validation error.
+function readFacts(root) {
+  const file = path.join(root, 'mindmodel', '.work', 'facts.json');
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 export function validate(map, root, declared = declaredFromDump(root)) {
   resolveCites(map, root, declared);
   fillActivity(map, root);
@@ -474,19 +581,14 @@ export function validate(map, root, declared = declaredFromDump(root)) {
 
   // A rule that cites an endpoint under an anonymous-write warning is describing missing code, not the system's
   // conventions. The warning is not fatal, but it should point the writer at findings.md.
-  const factsFile = path.join(root, 'mindmodel', '.work', 'facts.json');
-  if (fs.existsSync(factsFile)) {
-    try {
-      const facts = JSON.parse(fs.readFileSync(factsFile, 'utf8'));
-      const warned = new Set((facts.securityWarnings ?? []).map((w) => String(w.evidence?.[0] ?? '').replace(/:.*$/, '')));
-      map.rules.forEach((r, i) => {
-        const files = (r.cites ?? []).map((c) => String(typeof c === 'string' ? c : c.path ?? '').replace(/[:#].*$/, ''));
-        if (files.some((f) => warned.has(f)))
-          warn(`rule ${i + 1}: cites code covered by an anonymous-write warning; state the condition neutrally and put the gap in findings.md`);
-      });
-    } catch {
-      // Facts are optional for validation; an unreadable file is not a validation error.
-    }
+  const secFacts = readFacts(root);
+  if (secFacts) {
+    const warned = new Set((secFacts.securityWarnings ?? []).map((w) => String(w.evidence?.[0] ?? '').replace(/:.*$/, '')));
+    map.rules.forEach((r, i) => {
+      const files = (r.cites ?? []).map((c) => String(typeof c === 'string' ? c : c.path ?? '').replace(/[:#].*$/, ''));
+      if (files.some((f) => warned.has(f)))
+        warn(`rule ${i + 1}: cites code covered by an anonymous-write warning; state the condition neutrally and put the gap in findings.md`);
+    });
   }
   if (map.stories.some((s) => s.kind === 'change'))
     err('change stories are not part of the map; stories are ranked main flows');
@@ -548,15 +650,16 @@ export function validate(map, root, declared = declaredFromDump(root)) {
       if (!s.cites?.length) err(`${where} step ${i + 1}: no citation (R7)`);
     });
 
-  // Words budget for the core map (everything except stories).
-  const words = (o) =>
-    JSON.stringify(o)
-      .replace(/"[a-zA-Z]+":/g, ' ')
-      .split(/\s+/)
-      .filter((w) => /[a-zA-Z]{2,}/.test(w) && !w.includes('/')).length;
-  const core = { ...map, stories: undefined };
-  const coreWords = words(core);
-  if (coreWords > BUDGET.coreWords) warn(`core map ~${coreWords} words > budget ${BUDGET.coreWords}`);
+  // Words budget (P8): the core map (everything except stories) against its tier, and each section against its share.
+  const counts = sectionWords(map);
+  const coreWords = Object.values(counts).reduce((n, x) => n + x, 0);
+  const facts = readFacts(root);
+  const endpoints = facts?.endpoints?.length ?? null;
+  const budget = budgetFor(endpoints);
+  budgetWarnings(counts, budget).forEach(warn);
+  const citeNeeded = citeTarget(map);
+  if (cites.length > Math.round(citeNeeded * 1.4))
+    warn(`citations: ${cites.length} > 1.4x the ~${citeNeeded} a block-cited map needs (P3: one or two per block)`);
 
   // P6 wording and secrets, then the owner-only findings the map may not carry.
   const p6 = p6Issues(map);
@@ -568,7 +671,20 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     warn('mindmodel/.work/findings.md not written yet: the main session saves the writer\'s findings block' +
       ' (or "none")');
 
-  return { errors, warnings, stats: { citations: cites.length, coreWords, storyWords: words(map.stories) } };
+  return {
+    errors,
+    warnings,
+    stats: {
+      citations: cites.length,
+      citeTarget: citeNeeded,
+      tier: budget.tier,
+      coreWords,
+      budget: budget.core,
+      sections: counts,
+      targets: budget.sections,
+      storyWords: wordCount(map.stories),
+    },
+  };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -585,9 +701,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   warnings.forEach((w) => console.log(`warn  ${w}`));
   errors.forEach((e) => console.log(`ERROR ${e}`));
-  console.log(
-    `${errors.length ? 'FAILED' : 'OK'}: ${errors.length} error(s), ${warnings.length} warning(s)`,
-    stats ?? '',
-  );
+  console.log(`${errors.length ? 'FAILED' : 'OK'}: ${errors.length} error(s), ${warnings.length} warning(s)`);
+  // The tier, the total and every section against its share, so the next edit is one section, not the whole map.
+  if (stats) {
+    const parts = Object.entries(stats.sections).map(
+      ([k, n]) => `${k} ${n}/${stats.targets[k]}${n > stats.targets[k] ? '!' : ''}`,
+    );
+    console.log(
+      `budget: tier ${stats.tier} — core ${stats.coreWords}/${stats.budget} words · citations ${stats.citations}` +
+        ` (target ~${stats.citeTarget}) · stories ${stats.storyWords} words`,
+    );
+    console.log(`sections: ${parts.join(' · ')}`);
+  }
   process.exit(errors.length ? 1 : 0);
 }

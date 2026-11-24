@@ -37,6 +37,7 @@ import { extractState } from './extract/state.mjs';
 import { extractTransactions } from './extract/transactions.mjs';
 import { coverage } from './checks/coverage.mjs';
 import { coordinatesOf, readBuild } from './evidence/build.mjs';
+import { budgetFor, CAPS } from './validate.mjs';
 
 // The shipped catalogs are read once per process; a project catalog is merged here when it lands.
 const CATALOGS = loadCatalogs();
@@ -1060,6 +1061,19 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   return factsOut;
 }
 
+// P8: the size tier and its section targets, on the digest's second line, so the writer drafts to numbers instead of
+// meeting them at validation. The validator prints the same numbers from the same function.
+export function budgetLine(endpoints) {
+  const b = budgetFor(endpoints),
+    thousands = (n) => n.toLocaleString('en-US');
+  return (
+    `**budget: tier ${b.tier} — core ≤ ${thousands(b.core)} words, regions ≤ ${thousands(CAPS.regions)}, ` +
+    `state ≤ ${CAPS.state}**; sections ${Object.entries(b.sections)
+      .map(([k, n]) => `${k} ${n}`)
+      .join(' · ')}`
+  );
+}
+
 // Compact digest the writer reads first; facts.json keeps the details for targeted lookup.
 export function summarize(f) {
   const L = [];
@@ -1129,6 +1143,7 @@ export function summarize(f) {
     "Paths are relative to the project root. Details: facts.json (search it, don't read it whole).",
   );
   if (f.coverage?.line) L.push(`**Coverage:** ${f.coverage.line}`);
+  L.push(budgetLine(f.endpoints.length));
   // The blind spots by name: a writer checks the code behind anything listed here before claiming it (rule P4a).
   if (f.coverage) {
     const c = f.coverage;
@@ -1221,7 +1236,7 @@ export function summarize(f) {
   sec(`Entities (${f.entities.model.length}; from the model: table, relations, keys)`);
   for (const e of [...f.entities.model].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15))
     L.push(
-      `- ${e.name} table ${e.table} · ${e.relations.length} relation(s)${e.relations.length ? ': ' + e.relations.slice(0, 6).join('; ') : ''} · keys ${e.keys.slice(0, 8).join(', ')}${e.unique?.length ? ` · unique ${e.unique.join(', ')}` : ''}`,
+      `- ${e.name} ${ab(`${e.file}:${e.line}`)} table ${e.table} · ${e.relations.length} relation(s)${e.relations.length ? ': ' + e.relations.slice(0, 6).join('; ') : ''} · keys ${e.keys.slice(0, 8).join(', ')}${e.unique?.length ? ` · unique ${e.unique.join(', ')}` : ''}`,
     );
   if (f.entities.model.length > 15) L.push(`- +${f.entities.model.length - 15} more in facts.json`);
 
@@ -1300,7 +1315,8 @@ export function summarize(f) {
       cap(
         [...byRule.entries()].map(([rule, list]) => {
           const example = list[0];
-          return `- ${rule.split(' is ')[0]} allows anonymous writes: ${list.length} endpoint(s), e.g. ${example.verb} ${example.path} (${example.handler}) — no @PreAuthorize/@Secured/@RolesAllowed`;
+          const where = example.evidence?.[0] ? ` (${ab(example.evidence[0])})` : '';
+          return `- ${rule.split(' is ')[0]} allows anonymous writes: ${list.length} endpoint(s), e.g. ${example.verb} ${example.path} (${example.handler})${where} — no @PreAuthorize/@Secured/@RolesAllowed`;
         }),
         12,
         'securityWarnings',
