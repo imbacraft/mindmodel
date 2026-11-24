@@ -428,7 +428,6 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     need('intro', map.security.cites);
     for (const p of map.security.prefixes ?? []) need(`prefix ${p.prefix}`, p.cites);
     for (const u of map.security.userSources ?? []) need(`user source ${u.kind}`, u.cites);
-    for (const d of map.security.developerRule ?? []) need('developer rule', d.cites);
     if (map.security.tenant) need('tenant', map.security.tenant.cites);
   }
 

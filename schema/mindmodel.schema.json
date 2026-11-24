@@ -787,7 +787,6 @@
     "intro",
     "prefixes",
     "userSources",
-    "developerRule",
     "cites"
    ],
    "properties": {
@@ -865,28 +864,6 @@
        "minItems": 1,
        "items": {
         "$ref": "#/$defs/cite"
-       }
-      }
-     }
-    },
-    "developerRule": {
-     "type": "array",
-     "items": {
-      "type": "object",
-      "required": [
-       "text",
-       "cites"
-      ],
-      "properties": {
-       "text": {
-        "type": "string"
-       },
-       "cites": {
-        "type": "array",
-        "minItems": 1,
-        "items": {
-         "$ref": "#/$defs/cite"
-        }
        }
       }
      }

@@ -407,11 +407,8 @@ if (S) add('security', 'How security works', `
   <div class="wtc"><table><thead><tr><th>Paths</th><th>Who may call</th><th>What to know</th></tr></thead><tbody>
   ${S.prefixes.map((p) => `<tr><td>${p.prefix.split(/,\s*/).map((x) => `<code>${esc(x)}</code>`).join(' ')}</td><td>${rich(p.access)}</td><td>${rich(p.note ?? '')}${cites(p.cites)}</td></tr>`).join('')}
   </tbody></table></div>
-  <div class="cols2">
-    <div><h4>Who the caller is</h4><ul class="ctx-list">${S.userSources.map((u) => `<li><b>${esc(u.kind)}</b>${u.note ? `<span>${rich(u.note)}</span>` : ''}${cites(u.cites)}</li>`).join('')}
-      ${S.tenant ? `<li><b>Tenant: <code>${esc(S.tenant.key ?? '')}</code></b>${S.tenant.note ? `<span>${rich(S.tenant.note)}</span>` : ''}${cites(S.tenant.cites)}</li>` : ''}</ul></div>
-    <div><h4>When you add an endpoint</h4><ul class="ctx-list">${S.developerRule.map((d) => `<li><span>${rich(d.text)}</span>${cites(d.cites)}</li>`).join('')}</ul></div>
-  </div>`);
+  <h4>Who the caller is</h4><ul class="ctx-list">${S.userSources.map((u) => `<li><b>${esc(u.kind)}</b>${u.note ? `<span>${rich(u.note)}</span>` : ''}${cites(u.cites)}</li>`).join('')}
+    ${S.tenant ? `<li><b>Tenant: <code>${esc(S.tenant.key ?? '')}</code></b>${S.tenant.note ? `<span>${rich(S.tenant.note)}</span>` : ''}${cites(S.tenant.cites)}</li>` : ''}</ul>`);
 
 add('background', 'What runs on its own', `
   <h2>What runs on its own</h2>
