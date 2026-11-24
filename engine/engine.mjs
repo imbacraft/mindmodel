@@ -109,4 +109,6 @@ const held = lock();
 assert.equal(held.sha256.length, 64);
 // https, or a loopback server standing in for it in a test: never plain http to somewhere else.
 assert.ok(/^https:\/\//.test(held.url) || /^http:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(held.url), 'the engine URL must be https');
-assert.equal(matches(cacheJar(held.version), held), false, 'a lock with no cached jar must not read as satisfied');
+// A path that cannot exist: the check is about `matches`, never about what this machine happens to have cached.
+const absent = path.join(os.tmpdir(), `mindmodel-absent-${process.pid}-${Date.now()}.jar`);
+assert.equal(matches(absent, held), false, 'a path with no file must not read as satisfied');

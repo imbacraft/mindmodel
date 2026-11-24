@@ -3,7 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { cacheJar, lock, matches, sha256 } from '../engine/engine.mjs';
 
 const REPO = path.resolve(import.meta.dirname, '..');
@@ -34,4 +37,20 @@ test('the cache path is per version and inside the user cache', () => {
   const at = cacheJar('9.9.9');
   assert.match(at, /mindmodel[/\\]engine[/\\]9\.9\.9[/\\]mindmodel-engine\.jar$/);
   assert.equal(matches(at, lock()), false, 'a version with no cached copy must not read as satisfied');
+});
+
+// A machine that already downloaded must work as well as a fresh one: the module's self-checks may not depend on the
+// cache being empty, or the second run of the plugin dies on import.
+test('a populated cache does not break importing the engine', { skip: !fs.existsSync(BUILT) && 'run mvn package first' }, () => {
+  const cache = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-cache-'));
+  const target = path.join(cache, 'mindmodel', 'engine', lock().version);
+  fs.mkdirSync(target, { recursive: true });
+  fs.copyFileSync(BUILT, path.join(target, 'mindmodel-engine.jar'));
+  const engineUrl = pathToFileURL(path.join(REPO, 'engine', 'engine.mjs')).href;
+  const out = execFileSync(process.execPath, ['-e', `import(${JSON.stringify(engineUrl)})`], {
+    encoding: 'utf8',
+    env: { ...process.env, XDG_CACHE_HOME: cache, MINDMODEL_ENGINE_JAR: '' },
+  });
+  assert.equal(out, '', 'importing with a cached jar must stay silent');
+  fs.rmSync(cache, { recursive: true, force: true });
 });
