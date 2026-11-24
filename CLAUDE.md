@@ -33,7 +33,11 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
   next to the code they check, which run on import.
 
 ## Testing
-- `node --test` runs every module's self-checks and the snapshot tests. Run it after every engine change.
+- **Run the full suite once, at the end of a piece of work — not after every edit.** While working, run only the
+  file you touched: `node --test test/<name>.test.mjs`, or `node engine/<module>.mjs` for that module's self-checks.
+  The full `node --test` takes ~4 minutes (four corpus scans in parallel, each spawning a JVM); repeating it per
+  change is the single largest cost of a round. Use `SKIP_SLOW=1 node --test` for a mid-round pass when you must.
+- `node --test` runs every module's self-checks and the snapshot tests.
 - `mvn -f engine-java/pom.xml package` builds the jar and runs the JUnit tests. `engine/jvm.mjs` self-checks only run
   when the jar exists; without it a scan silently keeps the Node guesses, so check `runtime.engine` in facts.json.
 - Snapshot tests scan the public test apps cloned under `~/Projects/test-apps` (list in `test/apps.json`) and compare
