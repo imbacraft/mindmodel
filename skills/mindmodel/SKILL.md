@@ -40,18 +40,30 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    > Validator: `${CLAUDE_PLUGIN_ROOT}/engine/validate.mjs`
    > Write `<root>/mindmodel/mindmodel.json` and make it pass the validator.
 
-   Wait for it to finish. Don't do the analysis yourself, and don't read the project's code in this session; the subagent keeps that work out of the user's context.
+   Wait for it to finish. Don't do the analysis yourself, and don't read the project's code in this session; the subagent keeps that work out of the user's context. Its reply ends with two fenced blocks, `findings` and `observations`; step 5 saves them.
 
-5. **Render:**
+5. **Save the findings.** Do this before rendering: the writer subagent is not reliably allowed to write this file (a harness refused it once), so the blocks in its reply are the source of truth. Write `<root>/mindmodel/.work/findings.md` in exactly this shape:
+   ````text
+   # Findings
+
+   ## Weaknesses and serious bugs
+   <the body of the reply's ```findings``` block, verbatim>
+
+   ## Observations
+   <the body of the reply's ```observations``` block, verbatim>
+   ````
+   Copy the block bodies line for line (one line per finding, fields separated by ` | `); a block whose only line is `none` becomes `none` under its heading. Overwrite anything the writer managed to write there: the reply wins. If the reply has neither block, write `none` and say so in the report. `validate.mjs` warns while this file is absent — that is expected until this step has run and is not a problem with the map.
+
+6. **Render:**
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/engine/render.mjs" "<root>/mindmodel/mindmodel.json"
    ```
    It refuses to render an invalid map. If it reports errors, send them to the same subagent once to fix, then render again.
 
-6. **Report** to the user, briefly:
+7. **Report** to the user, briefly:
    - where the page is (`<root>/mindmodel/index.html`; it opens offline in any browser);
    - the map in brief (core sentence, regions, ranked rules and stories), from the subagent's message;
-   - **the owner-only findings** (security weaknesses, serious bugs) from `mindmodel/.work/findings.md`, clearly marked as *not in the map*: severity, claim, evidence, why it matters, suggested fix. The digest's computed security warnings are where most of them start;
+   - **the owner-only findings** (security weaknesses, serious bugs) from the blocks you saved, clearly marked as *not in the map*: severity, claim, evidence, why it matters, suggested fix. The digest's computed security warnings are where most of them start. Say in one line that they were saved to `mindmodel/.work/findings.md` (or that there were none);
    - the fact corrections the subagent reported, if any (also in `mindmodel/.work/corrections.md`), as engine feedback;
    - that `mindmodel/.work/` holds scan data and is usually not worth committing.
 - Tenancy: the digest's **Tenancy** section names the tenant key with its counts, the entities that lack it, the repository reads that skip it, and any job/listener/worker that reaches a keyed entity without setting the tenant context. Use it; do not infer a key from a field name. Gaps go to `findings.md`, not to rules.

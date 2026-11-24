@@ -562,8 +562,11 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   const p6 = p6Issues(map);
   errors.push(...p6.errors);
   warnings.push(...p6.warnings);
+  // The writer's harness may refuse this write, so the main session saves the writer's `findings` reply block after
+  // the writer returns: absence here means "not written yet", not a mistake in the map.
   if (!fs.existsSync(path.join(root, 'mindmodel/.work/findings.md')))
-    warn('no mindmodel/.work/findings.md: write the owner-only findings (or "none")');
+    warn('mindmodel/.work/findings.md not written yet: the main session saves the writer\'s findings block' +
+      ' (or "none")');
 
   return { errors, warnings, stats: { citations: cites.length, coreWords, storyWords: words(map.stories) } };
 }

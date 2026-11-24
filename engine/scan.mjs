@@ -150,6 +150,30 @@ export function routePath(line, angular = false) {
   return a ? '/' + a[1] : null;
 }
 
+// --- end-to-end test code -------------------------------------------------------
+// A Cypress/Playwright spec runs in a browser against a *running* application, so the calls it makes belong to
+// whoever wrote the test, not to this app's frontend: 31 of one app's 48 "unmatched frontend API calls" were helpers in
+// `cypress/cypress/integration/utils/`. The rule mirrors the Java scan's `src/test/` exclusion: a test folder — or the
+// Cypress `*.cy.*` naming — says the file is a test, wherever it sits.
+const E2E_DIRS = new Set([
+  'cypress',
+  'e2e',
+  'e2e-tests',
+  'playwright',
+  'playwright-tests',
+  'playwright-e2e',
+  '__e2e__',
+  '__tests__',
+  'test',
+  'tests',
+]);
+export const isE2ePath = (p) => {
+  const rel = p ?? '';
+  if (/\.cy\.[cm]?[jt]sx?$/i.test(rel)) return true;
+  // The folder, not the file: `src/App.tsx` is the app, `cypress/e2e/App.tsx` is a test.
+  return rel.split('/').slice(0, -1).some((s) => E2E_DIRS.has(s.toLowerCase()));
+};
+
 // --- helpers ------------------------------------------------------------------
 export const norm = (p) =>
   ('/' + p)
@@ -398,7 +422,10 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         /\.(tsx?|jsx?|vue|svelte)$/.test(f) &&
         !/\.(test|spec|d)\.[tj]sx?$/.test(f) &&
         !/vendor|slick|jquery|bootstrap/i.test(f) &&
-        !built(f),
+        !built(f) &&
+        // End-to-end test code: Cypress/Playwright helpers call *another* application's API, so a spec is not this
+        // app's frontend — the same rule that keeps `src/test/` out of the Java model.
+        !isE2ePath(R(f)),
     )
     .map((p) => ({ p: R(p), text: read(p) }));
   const views = files

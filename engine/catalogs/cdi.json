@@ -4,11 +4,20 @@
   "when": {
     "deps": [
       "jakarta.platform:jakarta.jakartaee-api",
-      "jakarta.enterprise:jakarta.enterprise.cdi-api"
+      "jakarta.enterprise:jakarta.enterprise.cdi-api",
+      "javax:javaee-api",
+      "javax.enterprise:cdi-api",
+      "javax.inject:javax.inject"
     ],
     "imports": [
       "jakarta.enterprise.",
-      "jakarta.inject."
+      "jakarta.inject.",
+      "jakarta.decorator.",
+      "jakarta.interceptor.",
+      "javax.enterprise.",
+      "javax.inject.",
+      "javax.decorator.",
+      "javax.interceptor."
     ]
   },
   "annotations": [

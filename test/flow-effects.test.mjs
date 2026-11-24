@@ -174,10 +174,61 @@ const CRUD = {
   ),
 };
 
+// Test D (below) needs the branch facts the engine's dump would carry; until the dump writes them, this file derives
+// them from the same source with the same vendored grammar: the line ranges of if/else arms, switch groups and catch
+// bodies. The condition expression is never an arm, so a call written in an `if (...)` test stays unconditional.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Parser, Language } from '../engine/vendor/tree-sitter/web-tree-sitter.mjs';
+
+await Parser.init();
+const parser = new Parser();
+parser.setLanguage(
+  await Language.load(path.join(path.dirname(fileURLToPath(import.meta.url)), '../engine/vendor/tree-sitter/tree-sitter-java.wasm')),
+);
+
+function branchArms(text) {
+  const tree = parser.parse(text);
+  const arms = [];
+  const push = (node, kind) => {
+    if (node) arms.push({ start: node.startPosition.row + 1, end: node.endPosition.row + 1, kind });
+  };
+  const walk = (node) => {
+    if (node.type === 'if_statement') {
+      push(node.childForFieldName('consequence'), 'if');
+      push(node.childForFieldName('alternative'), 'else');
+    } else if (node.type === 'catch_clause') {
+      push(
+        node.namedChildren.find((c) => c.type === 'block'),
+        'catch',
+      );
+    } else if (node.type === 'switch_block_statement_group' || node.type === 'switch_rule') push(node, 'switch');
+    for (const child of node.namedChildren) walk(child);
+  };
+  walk(tree.rootNode);
+  tree.delete();
+  return arms;
+}
+
+// The dump's `branches` on each method: every arm that lies wholly inside the method's line range.
+function attachBranches(model, files) {
+  for (const t of model.types.values()) {
+    const text = files[t.file];
+    if (!text) continue;
+    const arms = branchArms(text);
+    for (const m of t.methods) {
+      const inner = arms.filter((a) => m.start <= a.start && a.end <= m.end);
+      if (inner.length) m.branches = inner;
+    }
+  }
+}
+
 // One build: syntax -> model -> catalogs -> the real extractors, exactly the order scan.mjs uses.
-function build(files, { frontendPaths = [] } = {}) {
+function build(files, { frontendPaths = [], branches = false } = {}) {
   const model = buildModel(Object.entries(files).map(([p, text]) => ({ p, text, ix: index(text) })));
   linkCallsTyped(model);
+  // Branch facts must be on the model before the walk reads them, exactly as the dump supplies them before the scan.
+  if (branches) attachBranches(model, files);
   const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
   const selected = selectCatalogs(loadCatalogs(), { imports });
   const endpoints = extractEndpoints(model, selected);
@@ -341,4 +392,112 @@ test('fixture C: a plain CRUD sweep called by the SPA ranks below the publish fl
       .map((f) => `${f.score} ${f.entry.path}`)
       .join(', ')}`,
   );
+});
+
+// Fixture D: the entry saves unconditionally and charges only inside `if (flag)`. With the arm's line range on the
+// method, the charge is conditional and counts at half weight (3 -> 1, rounded down); the save does not change.
+const CHARGE = {
+  'src/main/java/shop/Item.java': L(
+    'package shop;',
+    'import jakarta.persistence.Entity;',
+    'import jakarta.persistence.Id;',
+    '@Entity',
+    'public class Item {',
+    '  @Id',
+    '  private Long id;',
+    '}',
+  ),
+  'src/main/java/shop/ItemRepo.java': L(
+    'package shop;',
+    'import org.springframework.data.jpa.repository.JpaRepository;',
+    'public interface ItemRepo extends JpaRepository<Item, Long> { }',
+  ),
+  'src/main/java/shop/OrderController.java': L(
+    'package shop;',
+    'import org.springframework.web.bind.annotation.PostMapping;',
+    'import org.springframework.web.bind.annotation.RestController;',
+    'import org.springframework.web.client.RestTemplate;',
+    '@RestController',
+    'public class OrderController {',
+    '  private final ItemRepo items;',
+    '  private final RestTemplate restTemplate;',
+    '  public OrderController(ItemRepo items, RestTemplate restTemplate) {',
+    '    this.items = items;',
+    '    this.restTemplate = restTemplate;',
+    '  }',
+    '  @PostMapping("/items")',
+    '  public void create(Item item, boolean flag) {',
+    '    items.save(item);',
+    '    if (flag) {',
+    '      restTemplate.postForEntity("https://billing.example/charge", item, Void.class);',
+    '    }',
+    '  }',
+    '}',
+  ),
+};
+
+test('fixture D: an effect only an if arm reaches is conditional and weighs half', () => {
+  const { flowOf } = build(CHARGE);
+  const flow = flowOf('/items');
+  assert.ok(flow, 'the endpoint is a flow');
+  const save = flow.effects.find((e) => e.kind === 'entity');
+  const charge = flow.effects.find((e) => e.kind === 'outside');
+  assert.ok(save && charge, flow.effects.map((e) => e.label).join(', '));
+
+  // Today, with no branch fact: both effects are unconditional and the score is the full 3 + 3 + 3.
+  assert.ok(!save.conditional && !charge.conditional);
+  assert.ok(!JSON.stringify(flow).includes('conditional'), 'a flow with no branch facts says nothing about branches');
+  assert.deepEqual(flow.why, ['entry POST +3', 'entities 1 (Item) +3', 'outside 1 +3']);
+  assert.equal(flow.score, 9);
+
+  // The same app, with the arm the dump would write: only the charge is behind the decision.
+  const arm = build(CHARGE, { branches: true }).flowOf('/items');
+  const armSave = arm.effects.find((e) => e.kind === 'entity');
+  const armCharge = arm.effects.find((e) => e.kind === 'outside');
+  assert.equal(armCharge.conditional, true, 'the charge is inside `if (flag)`');
+  assert.equal(armCharge.label, 'HTTP postForEntity() (conditional)');
+  assert.ok(!armSave.conditional, 'the save is on the default path');
+  assert.equal(armSave.label, 'writes Item');
+  // Half of the outside-call weight (3), rounded down, and the fact says so in the score's own words.
+  assert.deepEqual(arm.why, ['entry POST +3', 'entities 1 (Item) +3', 'outside 1 +1, 1 conditional']);
+  assert.equal(arm.score, 7);
+  assert.ok(arm.steps.includes('HTTP postForEntity() (conditional)'), arm.steps.join('; '));
+});
+
+test('fixture D2: an effect reached both conditionally and unconditionally is not conditional', () => {
+  // The charge is called on the default path and again inside an arm: some path always runs it, so it keeps full
+  // weight. The guard is an early return, the shape a service uses far more often than if/else.
+  const both = {
+    ...CHARGE,
+    'src/main/java/shop/OrderController.java': L(
+      'package shop;',
+      'import org.springframework.web.bind.annotation.PostMapping;',
+      'import org.springframework.web.bind.annotation.RestController;',
+      'import org.springframework.web.client.RestTemplate;',
+      '@RestController',
+      'public class OrderController {',
+      '  private final ItemRepo items;',
+      '  private final RestTemplate restTemplate;',
+      '  public OrderController(ItemRepo items, RestTemplate restTemplate) {',
+      '    this.items = items;',
+      '    this.restTemplate = restTemplate;',
+      '  }',
+      '  @PostMapping("/items")',
+      '  public void create(Item item, boolean flag) {',
+      '    items.save(item);',
+      '    restTemplate.postForEntity("https://billing.example/charge", item, Void.class);',
+      '    if (flag) {',
+      '      restTemplate.postForEntity("https://billing.example/charge", item, Void.class);',
+      '    }',
+      '  }',
+      '}',
+    ),
+  };
+  const flow = build(both, { branches: true }).flowOf('/items');
+  const outside = flow.effects.filter((e) => e.kind === 'outside');
+  assert.equal(outside.length, 2, 'two call sites are two effects, and the score counts the one client target once');
+  assert.ok(outside.every((e) => !e.conditional), 'one unconditional site makes the effect unconditional');
+  assert.ok(!JSON.stringify(flow).includes('(conditional)'), flow.effects.map((e) => e.label).join(', '));
+  assert.deepEqual(flow.why, ['entry POST +3', 'entities 1 (Item) +3', 'outside 1 +3']);
+  assert.equal(flow.score, 9);
 });

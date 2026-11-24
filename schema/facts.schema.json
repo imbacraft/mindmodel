@@ -1075,7 +1075,14 @@
     "site": {
      "type": "string"
     },
-    "cite": {}
+    "conditional": {
+     "type": "boolean",
+     "description": "Present and true when the effect is reached only through an if/else/switch arm or catch body on the entry's path: it may not happen on the default path, so it is labelled `(conditional)` and scored at half weight."
+    },
+    "cite": {},
+    "line": {
+     "type": "integer"
+    }
    }
   }
  }

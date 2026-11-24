@@ -306,6 +306,8 @@ Kinds that differ only by permission level (OWNER vs EDITOR) are one actor; say 
 
 **Start from `facts.md` → Flow skeletons, computed:** each state-changing entry point with what happens in order (outside effects, saves, status changes, async hand-offs, after-commit work), ranked by how much of the core it touches. Pick and trace stories from these; open only the methods a step needs explained.
 
+**An effect marked `(conditional)` may not happen.** It sits inside an `if`/`else`/`switch` arm or a `catch` on the traced path, so the entry's default path never reaches it — the default signup that calls Stripe only when the trial flag is off is the case this marks. Never write a conditional effect as if it always runs: give its condition in that step ("when `startTrial` is false, …"), or leave it out. It also counts for less in the flow's rank, so do not promote it to the main path to make a story read better.
+
 **Choose the candidates:**
 - For each **primary actor** (from People & outside systems), find the flows that deliver what they come for: where value is created, money moves, or the core entity is created. Look at entry points that write core concepts, external-payment calls and webhook handlers, and the product's main screens.
 - Always consider: **how the tenant/customer comes to exist** (signup or onboarding), and **the failure path of the top flow**: what actually happens when it fails (retries, idempotency, cleanup, or, if failures are swallowed, that the flow continues as if it succeeded).

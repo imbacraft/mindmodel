@@ -83,6 +83,77 @@ export function setByArgument(methodsByName, line, enumName, value) {
 }
 
 
+// The return type a method declares: the dump says it (`returns`), the syntax index says it (`returnText`), and the
+// declaration line says it when neither does (the test fixtures build the model from source alone).
+export function returnTypeOf(f, m) {
+  const named = m.returns ?? m.returnText;
+  if (named) return String(named).replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop();
+  const head = f.lines.slice(m.start - 1, m.start + 2).join(' ');
+  const at = head.indexOf(`${m.name}(`);
+  if (at < 0) return null;
+  const before = head
+    .slice(0, at)
+    .replace(/@[\w.]+(\s*\([^)]*\))?/g, ' ') // annotations sit before the modifiers
+    .trim();
+  return before.split(/\s+/).filter(Boolean).pop()?.replace(/<.*/, '').replace(/\[\]/g, '').split('.').pop() ?? null;
+}
+
+// A method writes the status from its own argument or a variable: the setter shapes a switch result reaches.
+const SETS_STATUS = new RegExp(
+  '\\.set\\w*(?:Status|State)\\s*\\(\\s*\\w+\\s*\\)' + // setStatus(s), setBookingStatus(s)
+    '|\\.(?:status|state)\\s*\\(\\s*\\w+\\s*\\)' + // the builder field: .status(s)
+    '|\\b(?:status|state)\\s*=\\s*\\w+\\s*;', // this.status = s
+);
+
+// The status constants a method *chooses* instead of receiving: a switch expression's arms
+// (`case FIXED -> Status.PENDING_PAYMENT`), a `return Status.X`, or a switch whose result the method then sets
+// (`Status s = switch (...) { ... }; row.setStatus(s)`). Two type tests decide, never a name: the method declares the
+// entity's status enum as its return type, or a switch result feeds a status setter. A method that only reads a
+// status (`return row.getStatus()`) names no constant, so it contributes nothing.
+export function chosenByMethod(f, m, enumName) {
+  const lines = f.lines.slice(m.start - 1, m.end);
+  const body = lines.join('\n');
+  const returnsEnum = returnTypeOf(f, m) === enumName;
+  const switchIntoStatus = /=switch\(/.test(body.replace(/\s+/g, '')) && SETS_STATUS.test(body);
+  if (!returnsEnum && !switchIntoStatus) return [];
+  const out = [];
+  lines.forEach((l, k) => {
+    for (const hit of l.matchAll(new RegExp(`(?:->\\s*|\\breturn\\s+)${enumName}\\.([A-Z][A-Z0-9_]*)\\b`, 'g')))
+      out.push({ value: hit[1], line: m.start + k });
+  });
+  return out;
+}
+
+{
+  const f = {
+    lines: ['  private BookingStatus resolve(PricingType t) {', '    case FIXED -> BookingStatus.PENDING_PAYMENT;', '  }'],
+  };
+  const m = { name: 'resolve', start: 1, end: 3, returnText: 'BookingStatus' };
+  assert.deepEqual(chosenByMethod(f, m, 'BookingStatus').map((x) => x.value), ['PENDING_PAYMENT']);
+  // A reader names no constant; another enum's constant is not this lifecycle's.
+  const get = { name: 'get', start: 1, end: 1, returnText: 'BookingStatus' };
+  const readLine = ['  public BookingStatus get() { return b.getStatus(); }'];
+  assert.deepEqual(chosenByMethod({ lines: readLine }, get, 'BookingStatus'), []);
+  assert.deepEqual(chosenByMethod(f, { ...m, returnText: 'void' }, 'BookingStatus'), []);
+  // A switch assigned into a variable the method sets is the same choice without the enum as the return type.
+  const g = {
+    lines: [
+      '  void create(PricingType t) {',
+      '    BookingStatus s = switch (t) {',
+      '      case FIXED -> BookingStatus.PENDING_PAYMENT;',
+      '    };',
+      '    booking.setStatus(s);',
+      '  }',
+    ],
+  };
+  const picks = chosenByMethod(g, { name: 'create', start: 1, end: 6, returnText: 'void' }, 'BookingStatus');
+  assert.deepEqual(picks.map((x) => x.value), ['PENDING_PAYMENT']);
+  // The declaration line answers when the model carries no return type at all.
+  assert.equal(returnTypeOf(f, { name: 'resolve', start: 1, end: 3 }), 'BookingStatus');
+  const h = { lines: ['  public Optional<BookingStatus> find() {', '    return Optional.empty();', '  }'] };
+  assert.equal(returnTypeOf(h, { name: 'find', start: 1, end: 3 }), 'Optional');
+}
+
 // A status enum declared in the organisation's shared library: imported from a package under the project's root
 // package (the first three segments of the most common package), declared by no scanned file, and not an entity
 // field type — the constants pass reads those. The map is keyed by the enum's full name and lists the files that
@@ -188,14 +259,29 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
   for (const [en, e] of statusEnums) {
     if (!owner.has(en)) continue; // every status enum with an owner, not only the shortlisted entities
     const sites = Object.fromEntries(e.values.map((v) => [v, { set: [], conditional: [], read: 0 }]));
+    // Which values each method chooses rather than receives: a switch expression's arms or a returned constant
+    // (`chosenByMethod`). Computed once per enum so the per-line pass is a lookup; a file that never names the enum
+    // cannot choose one of its values.
+    const chosen = new Map();
+    for (const f of files) {
+      if (f.name === en || (f.text && !f.text.includes(en))) continue;
+      for (const m of f.methods ?? []) {
+        const picks = chosenByMethod(f, m, en);
+        if (picks.length) chosen.set(`${f.p}:${m.start}`, new Set(picks.map((p) => p.value)));
+      }
+    }
     for (const f of files) {
       if (f.name === en) continue;
       f.lines.forEach((l, i) => {
         for (const x of l.matchAll(new RegExp(`\\b${en}\\.([A-Z][A-Z0-9_]*)\\b`, 'g'))) {
           const s = (sites[x[1]] ??= { set: [], conditional: [], read: 0 }); // values the enum parser missed still count
-          const m = f.methods
+          const pickTop = f.methods
             .filter((mm) => mm.start <= i + 1 && i + 1 <= mm.end)
             .sort((a, b) => a.end - a.start - (b.end - b.start))[0];
+          // A Lombok accessor keeps the position of the field it reads, so its range is a declaration line, not a
+          // body. `getStatus` covers `status = BookingStatus.CONFIRMED` and sets nothing: that line's site belongs to
+          // the field, not to the accessor, and no branch below may treat the accessor's range as a body.
+          const m = pickTop && namesItsOwnBody(f, pickTop) ? pickTop : null;
           const where = m ? cite(f, m) : `${f.p}:${i + 1}`;
           // A plain set is one status fact at this method and line; the digest's wording (`where`) rides along.
           const markSet = (wording) => {
@@ -260,32 +346,34 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
             STATUS_VAR.test(f.lines.slice(m.start - 1, m.end).join('\n'))
           )
             markSet(`${where} (via a variable)`);
+          // Chosen by the method itself: a switch expression's arm or a returned constant, where the method's declared
+          // return type is the entity's status enum or its switch result is what it sets (extract/lifecycle.mjs).
+          else if (m && chosen.get(`${f.p}:${m.start}`)?.has(x[1])) markSet(`${where} (chosen by a switch/return)`);
           else s.read++;
         }
       });
     }
-    // A status chosen by a helper and handed to a builder: `.status(initialStatus)`, where `initialStatus` came
-    // from a method that returns constants through a switch. The literal never appears at the builder line.
+    // A status chosen by a helper and handed to a setter or builder: `.status(initialStatus)`, where `initialStatus`
+    // came from a method that chooses constants of this enum (`resolveInitialBookingStatus`). The literal never
+    // appears at the builder line, so the helper's own picks are read here: the helper writes the constant, the
+    // caller sets it, and both are sites. A helper that only reads the status picks nothing and adds nothing.
     for (const f of files) {
+      if (f.name === en || (f.text && !f.text.includes(en))) continue;
       f.lines.forEach((l, i) => {
-        const call = /\.status\(\s*(\w+)\s*\)/.exec(l);
+        const call = /\.(?:set\w*(?:Status|State)|status|state)\(\s*(\w+)\s*\)/.exec(l);
         if (!call) return;
-        const m = f.methods.find((mm) => mm.start <= i + 1 && i + 1 <= mm.end);
-        if (!m) return;
+        const m = enclosing(f, i + 1);
+        if (!m || !namesItsOwnBody(f, m)) return;
         const body = f.lines.slice(m.start - 1, m.end).join('\n');
-        const from = new RegExp('\\b' + call[1] + '\\s*=\\s*([A-Za-z0-9_]+)\\s*\\(').exec(body)?.[1];
-        if (!from) return;
-        const helper = f.methods.find((mm) => mm.name === from);
+        const from = new RegExp(`\\b${call[1]}\\s*=\\s*([A-Za-z0-9_]+)\\s*\\(`).exec(body)?.[1];
+        const helper = from && (f.methods ?? []).find((mm) => mm.name === from);
         if (!helper) return;
-        const helperText = f.lines.slice(helper.start - 1, helper.end).join('\\n');
-        for (const v of helperText.matchAll(
-          new RegExp('(?:case[^:]*->\\s*|return\\s+)' + en + '\\.([A-Z][A-Z0-9_]*)', 'g'),
-        )) {
-          const st = (sites[v[1]] ??= { set: [], conditional: [], read: 0 });
+        for (const pick of chosenByMethod(f, helper, en)) {
+          const st = (sites[pick.value] ??= { set: [], conditional: [], read: 0 });
           st.set.push(`${cite(f, m)} (chosen in ${cite(f, helper)})`);
           statusSites.push({
             entity: owner.get(en),
-            value: v[1],
+            value: pick.value,
             method: m?.id ?? null,
             line: i + 1,
             evidence: [cite(f, m)],
@@ -293,6 +381,8 @@ export function lifecycleFacts({ files, enums, entities, shortlist, cite, repoEn
         }
       });
     }
+    // A status chosen by a helper method is also a set above: the helper's own type names the enum, so its
+    // switch arms are recorded at the helper, where the constant is written.
     const hasConditional = Object.values(sites).some((s) => s.conditional.length);
     lifecycle.push(
       `${owner.get(en)}.${en}${hasConditional ? ' (has conditional updates: plain sets below skip that guard)' : ''}`,
@@ -403,6 +493,27 @@ const enclosing = (f, line) =>
   (f.methods ?? [])
     .filter((m) => m.start <= line && line <= m.end)
     .sort((a, b) => a.end - a.start - (b.end - b.start))[0] ?? null;
+
+// A member whose range carries a body (`{`). A Lombok accessor is pinned to the field's own position instead, so its
+// range is a field declaration: it names no constant, calls no setter, and would otherwise turn
+// `private Status state = Status.ON;` into a site of the generated getter.
+export function namesItsOwnBody(f, m) {
+  return f.lines.slice(m.start - 1, m.end).join('\n').includes('{');
+}
+
+{
+  // The Lombok accessor of a field keeps the field's line: not its own body.
+  const f = {
+    lines: ['  private BookingStatus status = BookingStatus.CONFIRMED;', '  public BookingStatus resolve(Type t) {'],
+  };
+  assert.equal(namesItsOwnBody(f, { name: 'getStatus', start: 1, end: 1 }), false);
+  // An annotated method's range starts at the annotation; the body is still its own.
+  assert.equal(namesItsOwnBody(f, { name: 'resolve', start: 2, end: 2 }), true);
+  const g = { lines: ['  @Transactional', '  public void cancel(Order o) {', '    o.setStatus(S.CANCELLED);', '  }'] };
+  assert.equal(namesItsOwnBody(g, { name: 'cancel', start: 1, end: 4 }), true);
+  // A one-line method still has a body.
+  assert.equal(namesItsOwnBody({ lines: ['  public Status get() { return s; }'] }, { name: 'get', start: 1, end: 1 }), true);
+}
 
 // The fact families this module owns, over the scanned files (moved out of deep.mjs in slice 6, R3). Only what the two
 // families read is prepared here: fields, lines and the syntax index.

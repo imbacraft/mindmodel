@@ -43,12 +43,31 @@ The facts replace searching. Your budget goes on reading the few places that nee
 Return exactly these sections:
 1. **Result:** the validator's last line.
 2. **The map in brief:** core sentence; concepts; regions in order; ranked rules (titles); ranked stories (titles).
-3. **For the owner only (P6):** write `<root>/mindmodel/.work/findings.md` (create it; write `none` if there was nothing). It has two parts, and neither is in the map:
+3. **For the owner only (P6):** the two parts below, returned in the two blocks of item 7. Neither part is in the map:
    - **Weaknesses and serious bugs** — security weaknesses, bugs that would cost data or money. Per finding: **severity** (critical/high/medium/low), **claim**, **evidence** (`file:line`), **why it matters**, **suggested fix**. The digest's *Security warnings, computed* is the first place to look; a warning you verify becomes a finding.
    - **Observations** — behavior that surprised you but asks nothing of a developer, one line each with a citation. These are not rules: they may grow into one once their consequence is known.
+
+   Also try to write the same content to `<root>/mindmodel/.work/findings.md` (create it; write `none` if there was nothing). That write is a convenience only: **the blocks in item 7 are the source of truth**, and the main session saves them itself. If a permission check refuses the file, say so in one line and carry on; it is not an error and must not stop the map.
 4. **Spot-check:** the seed used and how many of the ten rows held as written; the ones you corrected.
 5. **Rule gaps:** any place the rules were ambiguous or didn't fit, and what you decided.
 6. **Fact corrections:** every place the scanner's facts were wrong, missing or misleading and what the code says instead, one line each: `section: facts said X; code says Y (file:line)`. Write the same lines to `<root>/mindmodel/.work/corrections.md` (create it; write `none` if there were none). This is how the engine improves, so report even small ones; don't spend extra reading to find more.
+7. **The two blocks, last, and nothing after them.** The reply ends with two fenced blocks, in this order and with these exact info strings, so the main session can copy them without reading prose:
+
+   ````text
+   ```findings
+   <critical|high|medium|low> | <claim> | <path:line> | <why it matters> | <suggested fix>
+   ```
+   ````
+
+   That line is the template, not a row: replace it with one line per finding, fields separated by ` | `, no header row, no bullets, never a `|` inside a field (use commas). Severity is one of `critical`, `high`, `medium`, `low`. The evidence is the repo-relative path with the line, expanded from the digest's `J/` `F/` abbreviations. With no findings the block holds the single line `none`.
+
+   ````text
+   ```observations
+   - one observation, one sentence (path:line)
+   ```
+   ````
+
+   One line per observation, each ending with its citation in parentheses. With none, the single line `none`.
 
 ## Facts are where to start, not the answer
 

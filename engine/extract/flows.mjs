@@ -10,6 +10,11 @@ import { superBindings } from '../model/type-args.mjs';
 // The walk runs on the resolved call graph (`call.targets`), through an interface target to the implementation that has
 // a body. Every effect and every hop is cited, and the rank is computed from facts only — never from a name — with each
 // part of the score written into `why`, so a reader can check the order.
+//
+// Branch arms: a method's `branches` (the dump's line ranges for if/else/switch arms and catch bodies — the arm,
+// never the condition) say which calls sit behind a decision. An effect reached only through such an arm is
+// `conditional`: it does not happen on the entry's default path, so it is marked in its label and scored at half
+// weight. An effect that one unconditional trail also reaches is not conditional at all — some path always runs it.
 
 const ENTRY_VERB = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'ANY']);
 const SCHEDULE = /(?:^|\.)(Scheduled|Schedules|Schedule)$/;
@@ -52,6 +57,10 @@ export const FLOW_WEIGHTS = {
   centralityRefs: 20, // "many" = referenced by at least this many types
   entityCap: 5, // entity points stop here, however many entities a flow writes
   sharedService: 1, // passes through a type that three or more flows pass through
+  // An effect only a conditional arm reaches may not happen on the entry's default path, so it cannot weigh what
+  // always happens: it counts at half weight, rounded down (3 -> 1, 2 -> 1, 1 -> 0). The one divisor lives here so
+  // this score, the digest's `(conditional)` marker and rules §3.9 say the same thing.
+  conditionalDivisor: 2,
   // Outside effects are counted per client kind and target (`JMS|JMSProducer.send`), not per call: a notification
   // fan-out to thirteen channels of the same kind is one effect, not thirteen.
   activity: 1, // a file on the path changed in the git window; small, never decisive
@@ -127,6 +136,8 @@ function statusIndex(statusSets = []) {
         key: `${s.entity}|${s.value}`,
         entity: s.entity,
         value: s.value,
+        // The line is what says whether the set sits inside a branch arm of the method that writes it.
+        line: s.line ?? null,
         site,
         cite: s.evidence?.[0] ?? null,
       });
@@ -244,6 +255,23 @@ export function buildFlows(
   for (const t of transactions) if (BOUNDARY.has(t.kind) && t.method) boundary.set(t.method, t.kind);
   const refs = new Map((entities ?? []).map((e) => [e.name, e.refs ?? 0]));
 
+  // ---- branch arms ---------------------------------------------------------------------------------------------
+  // A method's `branches` are the line ranges of its if/else/switch arms and catch bodies (the arm's body, never the
+  // condition, so a call written in `if (repo.exists())` stays unconditional). A call whose line falls inside one is
+  // conditional, and so is everything that call reaches: the effect below it only runs when that arm runs.
+  const branchMemo = new Map();
+  const branchRanges = (m) => {
+    if (branchMemo.has(m)) return branchMemo.get(m);
+    const ranges = (m?.branches ?? []).filter((b) => Number.isFinite(b?.start) && Number.isFinite(b?.end));
+    branchMemo.set(m, ranges);
+    return ranges;
+  };
+  const insideBranch = (m, line) =>
+    Number.isFinite(line) && branchRanges(m).some((b) => b.start <= line && line <= b.end);
+  // One marker for the fact, the digest line and the rules: the label carries it, `conditional` states it.
+  const marked = (eff, cond) =>
+    cond && !eff.conditional ? { ...eff, conditional: true, label: `${eff.label} (conditional)` } : eff;
+
   // ---- the walk -----------------------------------------------------------------------------------------------
   // The class the code runs for. An inherited mapping runs for the concrete controller, and the Java engine's
   // per-class answers (`call.targetsIn[ctx]`) say what the call reaches there. Entering a concrete class switches the
@@ -315,18 +343,21 @@ export function buildFlows(
     if (nm.hasBody !== false) return { t: nt, m: nm };
     return nt.kind === 'interface' || isAbstract(nt) ? soleImpl(nt, nm) : null;
   };
-  const trailsOf = (t, m, ctx, depth, bind) => {
-    const key = `${ctx}|${m.id}|${depth}|${bindKey(bind)}`;
+  const trailsOf = (t, m, ctx, depth, bind, cond = false) => {
+    const key = `${ctx}|${m.id}|${depth}|${bindKey(bind)}|${cond ? 'c' : ''}`;
     if (memo.has(key)) return memo.get(key);
     const out = [];
     memo.set(key, out); // inserted before the walk: a cyclic call graph terminates and yields what it found
     // A status set in this method is an effect of reaching it, whether or not the method calls anything else.
-    for (const eff of statuses.get(m.id) ?? []) out.push({ ids: [], hops: [], effects: [eff] });
+    for (const eff of statuses.get(m.id) ?? [])
+      out.push({ ids: [], hops: [], effects: [marked(eff, cond || insideBranch(m, eff.line))] });
     for (const c of m.calls ?? []) {
       if (c.kind === 'new' || NOISE.test(c.name)) continue;
       const eff = concrete(effects.get(siteKey(m.id, c.line, c.name)), bind);
+      // The call site decides for itself: a call written inside an arm runs only when that arm runs.
+      const nextCond = cond || insideBranch(m, c.line);
       if (eff) {
-        out.push({ ids: [], hops: [], effects: [eff] });
+        out.push({ ids: [], hops: [], effects: [marked(eff, nextCond)] });
         continue;
       }
       for (const id of targetsOf(c, ctx)) {
@@ -341,7 +372,7 @@ export function buildFlows(
         // would split the memo for no gain.
         const nextCtx = c.targetsIn?.[ctx] ? ctxAfter(nt, ctx) : ctx;
         const nextBind = bindInto(bind, m.id.split('#')[0], nt);
-        for (const sub of trailsOf(nt, nm, nextCtx, depth - step, nextBind))
+        for (const sub of trailsOf(nt, nm, nextCtx, depth - step, nextBind, nextCond))
           out.push({ ids: [nm.id, ...sub.ids], hops: [`${nt.name}#${nm.name}`, ...sub.hops], effects: sub.effects });
       }
     }
@@ -355,8 +386,8 @@ export function buildFlows(
     const parent = new Map([[m.id, null]]);
     const hops = [],
       found = [],
-      effectsSeen = new Set(),
-      handled = new Set();
+      foundAt = new Map(),
+      seenCond = new Map();
     const record = (mm) => {
       const path = [];
       for (let id = mm.id; id && id !== m.id; id = parent.get(id)?.id) {
@@ -365,17 +396,27 @@ export function buildFlows(
       }
       for (const h of path) if (h !== `${t.name}#${m.name}` && !hops.includes(h)) hops.push(h);
     };
+    // One effect, seen once: a conditional sighting is upgraded to unconditional when a later trail always runs it.
+    const note = (e, mm, cond) => {
+      const full = marked(e, cond);
+      const at = foundAt.get(e.site);
+      if (at == null) {
+        foundAt.set(e.site, found.length);
+        found.push(full);
+        record(mm);
+      } else if (found[at].conditional && !full.conditional) found[at] = full;
+    };
     // Returns the calls to enqueue.
-    const process = (tt, mm, c) => {
-      if (handled.has(c)) return [];
-      handled.add(c);
+    const process = (tt, mm, c, cond) => {
+      const nextCond = cond || insideBranch(mm, c.line);
+      // `seenCond` keeps the least conditional sighting: a call first found behind a branch and later found
+      // unconditionally is walked again, so its effects lose the marker.
+      const seen = seenCond.get(c);
+      if (seen === false || (seen === true && nextCond)) return [];
+      seenCond.set(c, nextCond);
       const eff = effects.get(siteKey(mm.id, c.line, c.name));
       if (eff) {
-        if (!effectsSeen.has(eff.site)) {
-          effectsSeen.add(eff.site);
-          found.push(eff);
-          record(mm);
-        }
+        note(eff, mm, nextCond);
         return [];
       }
       const out = [];
@@ -396,23 +437,18 @@ export function buildFlows(
       const all = ranges.length ? ranges : (mm.lambdas ?? []).map((l) => [l.start, l.end]);
       return (mm.calls ?? []).filter((c2) => c2 !== c && all.some(([a, b]) => a <= c2.line && c2.line <= b));
     };
-    let queue = [[t, m]];
+    let queue = [[t, m, false]];
     for (let d = 0; d < WORKER_DEPTH && queue.length && parent.size < WORKER_METHODS; d++) {
       const next = [];
-      for (const [tt, mm] of queue) {
-        for (const eff of statuses.get(mm.id) ?? []) {
-          if (effectsSeen.has(eff.site)) continue;
-          effectsSeen.add(eff.site);
-          found.push(eff);
-          record(mm);
-        }
+      for (const [tt, mm, cond] of queue) {
+        for (const eff of statuses.get(mm.id) ?? []) note(eff, mm, cond || insideBranch(mm, eff.line));
         for (const c of mm.calls ?? []) {
           if (isPoll(c)) continue;
           if (isExecutor(c)) {
-            next.push(...inRunnable(mm, c).flatMap((c2) => process(tt, mm, c2)));
+            next.push(...inRunnable(mm, c).flatMap((c2) => process(tt, mm, c2, cond)));
             continue;
           }
-          next.push(...process(tt, mm, c));
+          next.push(...process(tt, mm, c, cond));
         }
       }
       queue = next;
@@ -434,7 +470,13 @@ export function buildFlows(
     if (trails) {
       for (const tr of trails) {
         for (const h of tr.hops) if (!hops.includes(h)) hops.push(h);
-        for (const e of tr.effects) if (!found.some((x) => x.site === e.site && x.kind === e.kind)) found.push(e);
+        for (const e of tr.effects) {
+          const at = found.findIndex((x) => x.site === e.site && x.kind === e.kind);
+          // An effect one unconditional trail reaches is not conditional: some path always runs it, so the
+          // unconditional sighting replaces the conditional one.
+          if (at < 0) found.push(e);
+          else if (found[at].conditional && !e.conditional) found[at] = e;
+        }
       }
     } else {
       const r = workerReach(t, m, ctx);
@@ -442,22 +484,60 @@ export function buildFlows(
       found = r.effects;
       if (!found.length) continue; // a loop that reaches no effect is not a flow
     }
-    const written = [...new Set(found.filter((e) => e.kind === 'entity').map((e) => e.key))];
+    // An effect key is conditional only when every site of it is: one unconditional site means the effect happens on
+    // the default path, so no label may still say `(conditional)` and the score must weigh it in full.
+    const alwaysRuns = new Set(found.filter((e) => !e.conditional).map((e) => `${e.kind}|${e.key}`));
+    found = found.map((e) => {
+      if (!e.conditional || !alwaysRuns.has(`${e.kind}|${e.key}`)) return e;
+      const plain = { ...e };
+      delete plain.conditional;
+      plain.label = plain.label.replace(/ \(conditional\)$/, '');
+      return plain;
+    });
+
+    // Which effects happen on the default path and which only inside an arm: per key (an entity, a client target, a
+    // status), the effect is conditional only when every site that produces it is conditional. `save()` unconditional
+    // and a `charge()` inside `if (trial)` therefore leave the write full-weight and the charge marked.
+    const byKey = (kind) => {
+      const out = new Map();
+      for (const e of found)
+        if (e.kind === kind && e.key != null)
+          out.set(e.key, out.has(e.key) ? out.get(e.key) && !!e.conditional : !!e.conditional);
+      return out;
+    };
+    const entityCond = byKey('entity');
+    const written = [...entityCond.keys()];
     // A bulk import writes one row per loop iteration; its entity count says nothing about the flow's importance.
     const importish =
       /^(?:import|bulk|batch|seed)/i.test(m.name) || hops.some((h) => /^(?:DataImport|Import|Template|Seed|Bulk)/.test(h.split('#')[0]));
     const importCap = importish ? FLOW_WEIGHTS.importEntityCap : FLOW_WEIGHTS.entityCap;
-    const entities = Math.min(written.length, importCap);
-    const outs = new Set(found.filter((e) => e.kind === 'outside').map((e) => e.key)).size;
-    const msgs = new Set(found.filter((e) => e.kind === 'message').map((e) => e.key)).size;
+    const counted = written.slice(0, importCap);
     // A lifecycle change is one fact about the flow: it moves a core object through its statuses, however many sites
     // on the path set it. Weighted once, like centrality, so a CRUD sweep cannot outrank a real transition.
     // Only a status change on an entity the flow itself writes moves a core object through its lifecycle. Every flow
     // touches a notification or email row whose status it sets; counting those adds the same points to all of them.
     const writtenSet = new Set(written);
-    const statusesSet = [...new Set(
-      found.filter((e) => e.kind === 'status' && writtenSet.has(e.entity)).map((e) => `${e.entity}.${e.value}`),
-    )];
+    const statusCond = new Map();
+    for (const e of found)
+      if (e.kind === 'status' && writtenSet.has(e.entity)) {
+        const key = `${e.entity}.${e.value}`;
+        statusCond.set(key, statusCond.has(key) ? statusCond.get(key) && !!e.conditional : !!e.conditional);
+      }
+    const statusesSet = [...statusCond.keys()];
+    const outsideCond = byKey('outside');
+    const messageCond = byKey('message');
+    // Half weight, rounded down, for an effect that only a conditional arm reaches.
+    const half = (w) => Math.floor(w / FLOW_WEIGHTS.conditionalDivisor);
+    const weigh = (weight, conditional) => (conditional ? half(weight) : weight);
+    const entityPoints = counted.reduce(
+      (n, k, i) => n + weigh(i === 0 ? FLOW_WEIGHTS.entityWrite : FLOW_WEIGHTS.entityFurther, entityCond.get(k)),
+      0,
+    );
+    // The `why` note: how many of the counted effects may not happen on the default path.
+    const condNote = (map) => {
+      const n = [...map.values()].filter(Boolean).length;
+      return n ? `${n} conditional` : '';
+    };
     // Risk: any method on the path — the entry or a hop — carries a transaction-boundary fact.
     const pathIds = new Set([m.id]);
     for (const tr of trails ?? []) for (const id of tr.ids) pathIds.add(id);
@@ -466,10 +546,10 @@ export function buildFlows(
 
     const why = [];
     let score = 0;
-    const add = (label, n) => {
+    const add = (label, n, whyNote = '') => {
       if (!n) return;
       score += n;
-      why.push(`${label} ${n > 0 ? '+' : ''}${n}`);
+      why.push(`${label} ${n > 0 ? '+' : ''}${n}${whyNote ? `, ${whyNote}` : ''}`);
     };
     add(
       `entry ${verb ?? kind}`,
@@ -487,12 +567,22 @@ export function buildFlows(
     // still count, so a consequential consumer stays visible — it just cannot outrank a flow a person starts.
     if (kind === 'listener') add('listener', FLOW_WEIGHTS.listenerEntry);
     add(
-      `entities ${written.length}${written.length > entities ? ` (cap ${entities})` : ''}${written.length ? ` (${written.join(', ')})` : ''}`,
-      entities ? FLOW_WEIGHTS.entityWrite + (entities - 1) * FLOW_WEIGHTS.entityFurther : 0,
+      `entities ${written.length}${written.length > counted.length ? ` (cap ${counted.length})` : ''}${written.length ? ` (${written.join(', ')})` : ''}`,
+      entityPoints,
+      condNote(entityCond),
     );
-    add(`status ${statusesSet.slice(0, 3).join(', ')}`, statusesSet.length ? FLOW_WEIGHTS.statusChange : 0);
-    add(`outside ${outs}`, outs * FLOW_WEIGHTS.outsideCall);
-    add(`messages ${msgs}`, msgs * FLOW_WEIGHTS.message);
+    // A lifecycle change is unconditional when any status set on the path runs on it; a transition that only one arm
+    // performs counts at half weight, like any other conditional effect.
+    const statusUnconditional = statusesSet.some((k) => !statusCond.get(k));
+    add(
+      `status ${statusesSet.slice(0, 3).join(', ')}`,
+      statusesSet.length ? weigh(FLOW_WEIGHTS.statusChange, !statusUnconditional) : 0,
+      statusUnconditional ? '' : `${statusesSet.length} conditional`,
+    );
+    const outsidePoints = [...outsideCond.values()].reduce((n, c) => n + weigh(FLOW_WEIGHTS.outsideCall, c), 0);
+    const messagePoints = [...messageCond.values()].reduce((n, c) => n + weigh(FLOW_WEIGHTS.message, c), 0);
+    add(`outside ${outsideCond.size}`, outsidePoints, condNote(outsideCond));
+    add(`messages ${messageCond.size}`, messagePoints, condNote(messageCond));
     add(`risk ${withRisk}`, withRisk ? FLOW_WEIGHTS.risk : 0);
     add(`centrality ${central.join(', ')}`, central.length ? FLOW_WEIGHTS.centralityEntity : 0);
     // Visibility, from facts: the security rule that governs the path, and whether the public frontend calls it.
@@ -721,4 +811,68 @@ const isAbstract = (t) => !!t?.abstract || (t?.modifiers ?? []).includes('abstra
   assert.deepEqual(flows.map((f) => f.id).sort(), ['flow:b.Base#publish(Order)@b.InvoiceCtl', 'flow:b.Base#publish(Order)@b.OrderCtl']);
   assert.ok(flows.every((f) => f.entry.cite.startsWith('src/b/Base.java:4')), 'the citation is the code that runs');
   assert.ok(flows.every((f) => f.steps[0] === 'writes Order'), 'the write on the inherited body is the effect');
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Branch arms: one entry method, one unconditional save and one charge inside `if (flag)`. The arm's line range is the
+// fact (`branches`, as the dump will write it); without it the charge counts full, with it the charge is conditional
+// and counts at half weight (3 -> 1, rounded down). The save is unconditional in both runs.
+{
+  const { index } = await import('../../test/fixtures/syntax-java.mjs');
+  const { buildModel } = await import('../../test/fixtures/model-from-source.mjs');
+  const { linkCalls } = await import('../model/link-for-tests.mjs');
+  const L = (...x) => x.join('\n');
+  const body = [
+    'package c;',
+    'import org.springframework.web.bind.annotation.PostMapping;',
+    'public class Ctl {',
+    '  private Repo repo;',
+    '  private Charge charge;',
+    '  @PostMapping("/orders")',
+    '  public void create(Order o, boolean flag) {',
+    '    repo.save(o);',
+    '    if (flag) {',
+    '      charge.send(o);',
+    '    }',
+    '  }',
+    '}',
+  ];
+  const src = {
+    'src/c/Order.java': L('package c;', 'public class Order { }'),
+    'src/c/Repo.java': L('package c;', 'public interface Repo {', '  void save(Order o);', '}'),
+    'src/c/RepoImpl.java': L('package c;', 'public class RepoImpl implements Repo {', '  public void save(Order o) { }', '}'),
+    'src/c/Charge.java': L('package c;', 'public class Charge {', '  public void send(Order o) { }', '}'),
+    'src/c/Ctl.java': L(...body),
+  };
+  const model = buildModel(Object.entries(src).map(([p, text]) => ({ p, text, ix: index(text) })));
+  linkCalls(model);
+  const lineOf = (needle) => body.findIndex((l) => l.includes(needle)) + 1;
+  const endpoints = [{ verb: 'POST', path: '/orders', handlerFqn: 'c.Ctl', handler: 'Ctl.create' }];
+  const stateWrites = [
+    { id: 'w1', family: 'state-write', entity: 'c.Order', repository: 'c.Repo', operation: 'save', method: 'c.Ctl#create(Order,boolean)', line: lineOf('repo.save'), evidence: ['src/c/Ctl.java:8#create'] },
+  ];
+  const outsideCalls = [
+    { id: 'o1', family: 'outside-call', kind: 'HTTP', client: 'Charge', target: 'Charge.send', method: 'c.Ctl#create(Order,boolean)', line: lineOf('charge.send'), evidence: ['src/c/Ctl.java:10#create'] },
+  ];
+  const build = () => buildFlows(model, { entries: flowEntries(model, endpoints), stateWrites, outsideCalls, activityOf: () => 0 });
+
+  // No branch facts: every effect is unconditional and the score is the full 3 + 3 + 3.
+  const plain = build()[0];
+  assert.deepEqual(plain.why, ['entry POST +3', 'entities 1 (Order) +3', 'outside 1 +3']);
+  assert.equal(plain.score, 9);
+  assert.ok(plain.effects.every((e) => !e.conditional));
+  assert.deepEqual(plain.steps, ['writes Order', 'HTTP send()']);
+
+  // The dump's arm range: the charge line sits inside it, the save line does not.
+  const create = model.types.get('c.Ctl').methods.find((x) => x.name === 'create');
+  create.branches = [{ start: lineOf('charge.send'), end: lineOf('charge.send'), kind: 'if' }];
+  const arm = build()[0];
+  assert.deepEqual(arm.why, ['entry POST +3', 'entities 1 (Order) +3', 'outside 1 +1, 1 conditional']);
+  assert.equal(arm.score, 7, 'the conditional charge weighs half of 3, rounded down');
+  const charge = arm.effects.find((e) => e.kind === 'outside');
+  const save = arm.effects.find((e) => e.kind === 'entity');
+  assert.equal(charge.conditional, true);
+  assert.equal(charge.label, 'HTTP send() (conditional)');
+  assert.ok(!save.conditional, 'the unconditional save stays full weight');
+  assert.ok(arm.steps.includes('HTTP send() (conditional)'), arm.steps.join('; '));
 }
