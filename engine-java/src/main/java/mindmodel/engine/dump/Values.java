@@ -2,6 +2,7 @@ package mindmodel.engine.dump;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.TreeMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,7 +34,9 @@ public final class Values {
     }
 
     public static Map<String, Value> annotationArgs(CtAnnotation<?> annotation) {
-        Map<String, Value> out = new LinkedHashMap<>();
+        // Sorted keys: Spoon hands the elements in hash order, so the same source would otherwise serialise to
+        // different bytes on different runs, and the dump would stop being comparable.
+        Map<String, Value> out = new TreeMap<>();
         for (Map.Entry<String, CtExpression> e : annotation.getValues().entrySet()) {
             Value v = of(e.getValue());
             out.put(e.getKey(), v == null ? new Value("unresolved", null) : v);
