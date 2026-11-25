@@ -6,7 +6,8 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { configKeys } from './config.mjs';
 import { simple } from '../core/names.mjs';
-import { hasAnnotation } from '../core/annotations.mjs';
+import { annotationOn } from '../core/annotations.mjs';
+import { listOf, patternOf, tableOf } from '../catalogs/catalog.mjs';
 import { isTestCode } from '../core/paths.mjs';
 import { placeholderOf } from '../core/placeholders.mjs';
 import { linesMatching } from '../core/strings.mjs';
@@ -14,12 +15,12 @@ import { linesMatching } from '../core/strings.mjs';
 // What makes a `main` an app's entry point: a Spring Boot annotation on its type, or a Spring Boot initialiser it
 // extends (a plain `main` that boots Spring through `SpringApplication` without an annotation). The dump names an
 // annotation as the author wrote it, so the simple name is what is compared.
-const SPRING_APP = ['SpringBootApplication', 'SpringBootConfiguration', 'EnableAutoConfiguration'];
-const SPRING_BASE = ['SpringBootServletInitializer'];
+const SPRING_APP = [...listOf('boot-main-annotations')];
+const SPRING_BASE = listOf('app-base-types');
 
 const baseOf = (s) => simple(s.fqn ?? s.text);
 const bindsSpring = (t) =>
-  SPRING_APP.some((n) => hasAnnotation(t, n)) || (t.supertypes ?? []).some((s) => SPRING_BASE.includes(baseOf(s)));
+  annotationOn(t, ...SPRING_APP) !== null || (t.supertypes ?? []).some((s) => SPRING_BASE.has(baseOf(s)));
 const linesOf = (file) =>
   (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []);
 
@@ -223,14 +224,8 @@ export function deployables({ java, files, rel, read, dump = null }) {
 // --- Boot: the one way to run the whole app locally ---------------------------------
 // Flat key paths of a YAML or .properties file: "server.port" -> { value, line }.
 
-const RUNTIMES = [
-  [/quarkus-maven-plugin/, 'quarkus:dev', 'Quarkus', 8080],
-  [/liberty-maven-plugin/, 'liberty:run', 'Open Liberty', 9080],
-  [/wildfly(-jar)?-maven-plugin/, 'wildfly:run', 'WildFly', 8080],
-  [/payara-micro-maven-plugin/, 'payara-micro:start', 'Payara Micro', 8080],
-  [/tomee-maven-plugin/, 'tomee:run', 'TomEE', 8080],
-  [/cargo-maven\d?-plugin/, 'cargo:run', null, 8080],
-];
+// The Maven plugins that run an app server locally: the vocabulary's `local-servers`, with the pattern as a RegExp.
+const RUNTIMES = tableOf('local-servers').map((r) => ({ ...r, re: new RegExp(r.pattern) }));
 function eeBoot(pom, B, mvn, prefix = '') {
   const profiles = [...pom.matchAll(/<profile>[\s\S]*?<\/profile>/g)].map((m) => ({
     text: m[0],
@@ -242,7 +237,7 @@ function eeBoot(pom, B, mvn, prefix = '') {
   const off = profiles.filter((p) => !p.on),
     inOff = (i) => off.some((p) => i >= p.from && i < p.to);
   const first = (re) => [...pom.matchAll(new RegExp(re.source, 'g'))].find((m) => !inOff(m.index));
-  const rt = RUNTIMES.map((r) => ({ r, m: first(r[0]) }))
+  const rt = RUNTIMES.map((r) => ({ r, m: first(r.re) }))
     .filter((x) => x.m)
     .sort((a, b) => a.m.index - b.m.index)[0];
   const packaging = /<packaging>\s*(war|ear)\s*</.exec(pom)?.[1];
@@ -254,7 +249,7 @@ function eeBoot(pom, B, mvn, prefix = '') {
     return [
       `run: no server plugin in ${B}: build with ${prefix}${mvn} clean package and deploy target/${name}.${packaging} to a Jakarta EE server`,
     ];
-  const [, goal, label, port] = rt.r,
+  const { goal, label, port } = rt.r,
     line = pom.slice(0, rt.m.index).split('\n').length;
   const c = /<containerId>\s*([a-z]+)/.exec(pom.slice(rt.m.index, rt.m.index + 2000))?.[1],
     server = label ?? (c ? c[0].toUpperCase() + c.slice(1) : 'the configured server');
@@ -264,9 +259,10 @@ function eeBoot(pom, B, mvn, prefix = '') {
   ];
   const alt = off
     .filter((p) => p.id)
-    .map((p) => ({ p, r: RUNTIMES.find((r) => r[0].test(p.text)) }))
+    .map((p) => ({ p, r: RUNTIMES.find((r) => r.re.test(p.text)) }))
     .filter((x) => x.r);
-  if (alt.length) out.push(`other servers (Maven profiles): ${alt.map(({ p, r }) => `-P${p.id} ${r[1]}`).join(', ')}`);
+  if (alt.length)
+    out.push(`other servers (Maven profiles): ${alt.map(({ p, r }) => `-P${p.id} ${r.goal}`).join(', ')}`);
   return out;
 }
 {
@@ -289,9 +285,8 @@ function mainsOf(model) {
       t.methods.some(
         (m) =>
           m.isMain &&
-          (hasAnnotation(t, 'SpringBootApplication') ||
-            hasAnnotation(t, 'SpringBootConfiguration') ||
-            (m.calls ?? []).some((c) => /(^|\.)SpringApplication(Builder)?$/.test(c.recvFqn ?? ''))),
+          (annotationOn(t, ...listOf('boot-start-annotations')) !== null ||
+            (m.calls ?? []).some((c) => patternOf('spring-application-receivers').test(c.recvFqn ?? ''))),
       ),
     )
     .flatMap((t) => t.methods.filter((m) => m.isMain).map((m) => ({ file: t.file, line: m.nameLine })));
@@ -450,8 +445,8 @@ export function bootFacts({ root, files, rel, git, app, read = (p) => fs.readFil
   } else out.push('port: 8080 (Spring default; no server.port)');
 
   // Does the backend build also build and serve the frontend?
-  const fe = /NpmTask|node-gradle|com\.github\.node|frontend-maven-plugin|npm\s+run|yarnBuild/.exec(b),
-    hook = /(processResources|bootJar|generate-resources|prepare-package)[^\n]*/.exec(b);
+  const fe = patternOf('frontend-build').exec(b),
+    hook = patternOf('frontend-served-hook').exec(b);
   if (fe && hook)
     out.push(
       `frontend: built and served by the backend, so the run command starts the whole app (${B}:${lineOf(b, new RegExp(fe[0]))}, ${B}:${lineOf(b, new RegExp(hook[1]))})`,

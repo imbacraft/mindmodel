@@ -166,5 +166,8 @@
       "means": "outside-call",
       "kind": "HTTP"
     }
-  ]
+  ],
+  "patterns": {
+    "request-method-enum": "RequestMethod\\.(\\w+)"
+  }
 }

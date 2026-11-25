@@ -476,5 +476,11 @@
       ],
       "means": "recurring"
     }
-  ]
+  ],
+  "lists": {
+    "thread-local-types": [
+      "java.lang.ThreadLocal",
+      "java.lang.InheritableThreadLocal"
+    ]
+  }
 }

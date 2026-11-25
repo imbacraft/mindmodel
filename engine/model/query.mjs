@@ -19,24 +19,18 @@ import { raw, table } from '../tools/library-table.mjs';
 import { targetIds } from './targets.mjs';
 import { typeArgsOf } from './type-args.mjs';
 import { simple } from '../core/names.mjs';
+import { listOf, mapOf } from '../catalogs/catalog.mjs';
 
-// ThreadLocal, its JDK subclass, and any project type extending either one.
-const HOLDER_BASES = ['java.lang.ThreadLocal', 'java.lang.InheritableThreadLocal'];
+// ThreadLocal, its JDK subclass, and any project type extending either one (the vocabulary's `thread-local-types`).
+const HOLDER_BASES = listOf('thread-local-types');
 // The framework's own context: `SecurityContextHolder.setContext(x)` or `context.setAuthentication(x)`.
-const SECURITY_CONTEXT_HOLDER = 'org.springframework.security.core.context.SecurityContextHolder';
-// Receivers whose `setAttribute` writes an attribute a later read of the same request can see. Data, both spellings.
-const ATTRIBUTE_HOLDERS = new Set([
-  'jakarta.servlet.ServletRequest',
-  'jakarta.servlet.http.HttpServletRequest',
-  'jakarta.servlet.http.HttpSession',
-  'javax.servlet.ServletRequest',
-  'javax.servlet.http.HttpServletRequest',
-  'javax.servlet.http.HttpSession',
-]);
+const SECURITY_CONTEXT_HOLDER = mapOf('security-types')['context-holder'];
+// Receivers whose `setAttribute` writes an attribute a later read of the same request can see (the vocabulary).
+const ATTRIBUTE_HOLDERS = listOf('servlet-attribute-holders');
 // The calls that compare a value: the method names a comparison takes in Java source.
 const COMPARISONS = new Set(['equals', 'equalsIgnoreCase', 'contentEquals', 'contains', 'containsKey', 'containsValue']);
 // Framework calls that store a value, whose receiver may be untyped: a gap, never a `no`.
-const UNTYPED_STORES = new Set(['setAttribute', 'setAuthentication', 'setContext']);
+const UNTYPED_STORES = listOf('untyped-store-calls');
 
 const site = (row) => ({
   method: row.method ?? null, call: row.id ?? null, file: row.file ?? null, line: row.line ?? null, col: row.col ?? null,
@@ -63,7 +57,7 @@ export function queries(db) {
   /** The ThreadLocal base a field type reaches through supertypes — the project's, or a library stub's — or null. */
   const holderBase = (fqn, seen = new Set()) => {
     if (!fqn || seen.has(fqn)) return null;
-    if (HOLDER_BASES.includes(fqn)) return fqn;
+    if (HOLDER_BASES.has(fqn)) return fqn;
     seen.add(fqn);
     const supers = db.type(fqn)?.supertypes ?? (db.library?.get(fqn)?.supers ?? []).map((f) => ({ fqn: f }));
     for (const s of supers) {

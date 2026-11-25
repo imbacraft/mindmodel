@@ -197,5 +197,24 @@
       "fqn": "org.springframework.data.r2dbc.repository.R2dbcRepository",
       "means": "repository"
     }
-  ]
+  ],
+  "patterns": {
+    "repository-write-prefixes": "^(save|saveAll|saveAndFlush|delete|deleteAll|deleteById|deleteBy|remove|removeIf|update|insert|persist|merge|flush)"
+  },
+  "lists": {
+    "repository-write-names": [
+      "save",
+      "saveAll",
+      "delete",
+      "deleteAll",
+      "deleteById",
+      "deleteAllById",
+      "flush",
+      "persist",
+      "merge",
+      "remove",
+      "insert",
+      "update"
+    ]
+  }
 }

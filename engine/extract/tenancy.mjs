@@ -3,6 +3,7 @@
 // comes from (the tenant sources), and code without a request (jobs, listeners, async, webhooks) that touches
 // keyed entities and whether it sets the tenant context first.
 import assert from 'node:assert/strict';
+import { listOf, patternOf } from '../catalogs/catalog.mjs';
 import { queries } from '../model/query.mjs';
 import { isTestCode } from '../core/paths.mjs';
 import { targetIds } from '../model/targets.mjs';
@@ -15,10 +16,10 @@ export const MIN_FILTER_SHARE = 0.5;
 const IDENTIFIER = /(Id|ID|Uuid)$/;
 
 // A field name on the key candidates: ids, versions and timestamps are not tenancy.
-export const NOT_A_KEY =
-  /^(id|version|isNew|new\w*|(gmt|created|updated|modified|deleted|occurred|expires)_?\w*|created_?at|updated_?at|created_?by|updated_?by|creator|modifier|lastModified\w*|tenant\w*Id)$/i;
+export const NOT_A_KEY = patternOf('tenancy-not-a-key');
 
-const writeMethods = /^(save|saveAll|delete|deleteAll|deleteById|deleteAllById|flush|persist|merge|remove|insert|update)$/;
+// The write methods, by exact name: a call to one of these is not a read of the tenant's rows.
+const WRITE_METHODS = listOf('repository-write-names');
 
 // A written identifier — `workspaceId`, `workspace_id` — and nothing else: the dump's argument `text` is display
 // text (cut at 80 characters), so an expression in it is never matched against a key, only a bare name is.
@@ -46,7 +47,7 @@ export function tenancyFacts(
   }
 
   const filterShare = (field, entitiesWithField) => {
-    const all = [...entitiesWithField].flatMap((e) => methodsOf.get(e) ?? []).filter((m) => !writeMethods.test(m.name));
+    const all = [...entitiesWithField].flatMap((e) => methodsOf.get(e) ?? []).filter((m) => !WRITE_METHODS.has(m.name));
     if (!all.length) return { filtered: 0, total: 0, share: 0 };
     const key = field[0].toUpperCase() + field.slice(1);
     const byKey = (m) => new RegExp(`By${key}\\b|\\b${field}\\b|\\b${field.replace(/[A-Z]/g, (c) => `_${c}`).toLowerCase()}\\b`).test(m.query);
@@ -155,7 +156,7 @@ export function tenancyFacts(
 
   // How much the repository queries actually filter by a field: every repository read in the app, not just those of the
   // entities carrying it. This is the number the owner can check against the code.
-  const allReads = [...repoMethods.values()].flat().filter((m) => !writeMethods.test(m.name));
+  const allReads = [...repoMethods.values()].flat().filter((m) => !WRITE_METHODS.has(m.name));
   const repoFilters = (field) => {
     const re = new RegExp('(' + field.replace(/([A-Z])/g, '_?$1') + ')', 'i');
     return allReads.filter((m) => re.test(m.query)).length;
@@ -263,7 +264,7 @@ export function tenancyFacts(
     for (const [repo, entity] of repos) {
       if (!keyed.has(entity)) continue;
       for (const m of repoMethods.get(repo) ?? []) {
-        if (writeMethods.test(m.name)) continue;
+        if (WRITE_METHODS.has(m.name)) continue;
         // A parameter that is the key scopes the read, and so does a native query naming the key's column.
         const keyColumn = metaOf.get(entity)?.keyColumn ?? key.replace(/([A-Z])/g, '_$1').toLowerCase();
         const paramIsKey = (m.params ?? []).some((p) => keyText.test(p) || new RegExp(keyColumn.replace(/_/g, '_?'), 'i').test(p));

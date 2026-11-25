@@ -1107,5 +1107,16 @@
         "parameter"
       ]
     }
-  ]
+  ],
+  "lists": {
+    "harmless-annotations": [
+      "Override",
+      "SuppressWarnings",
+      "Deprecated",
+      "FunctionalInterface",
+      "SafeVarargs",
+      "Generated",
+      "Serial"
+    ]
+  }
 }

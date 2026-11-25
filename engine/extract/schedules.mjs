@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { simple } from '../core/names.mjs';
+import { listOf, patternOf } from '../catalogs/catalog.mjs';
 
 // Recurring work that is not `@Scheduled`: a fixed-rate/fixed-delay submission to an executor, a hashed-wheel timer,
 // or a project's own scheduler. These run forever after a lifecycle hook, and a reader who only greps for annotations
 // believes the app has one job when it has a dozen. The catalog says what a submission looks like (`means: 'recurring'`);
 // for a project's own scheduler the method name and a scheduler-ish receiver type are the fallback.
 
-const RECURRING = /^(?:scheduleAtFixedRate|scheduleWithFixedDelay|scheduleAtFixedRateAsync|newTimeout|schedulePage|schedulePeriodic)$/;
-const SCHEDULER = /(?:Scheduler|Timer|WheelTimer|Executor)$/;
+const RECURRING = listOf('recurring-calls');
+const SCHEDULER = patternOf('scheduler-type');
 
 const cite = (type, m) => `${type.file}:${m.nameLine}#${m.name}`;
 
@@ -22,7 +23,7 @@ export function extractSchedules(model, selected = []) {
     for (const m of t.methods)
       for (const c of m.calls ?? []) {
         const inCatalog = recurringMeans.some((x) => x.types.has(c.recvFqn) && (x.methods.size ? x.methods.has(c.name) : true));
-        const byShape = RECURRING.test(c.name) && SCHEDULER.test(simple(c.recvFqn ?? ''));
+        const byShape = RECURRING.has(c.name) && SCHEDULER.test(simple(c.recvFqn ?? ''));
         if (!inCatalog && !byShape) continue;
         facts.push({
           id: `schedule:recurring@${t.fqn}#${m.name}(${c.name}@${c.line})`,
@@ -96,7 +97,7 @@ export function extractSchedules(model, selected = []) {
 // annotations (the dump's rows, with the argument list as the dump wrote it) and its own calls (for the time windows).
 import { humanMs, humanSchedule, windowsIn } from './text/time.mjs';
 
-const JOB = new Set(['Scheduled', 'Schedule']);
+const JOB = listOf('timed-job-annotations');
 
 export function scheduleFacts({ files, cite }) {
   const schedules = [];

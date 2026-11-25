@@ -3,6 +3,7 @@ import { queries } from '../model/query.mjs';
 import { targetIds } from '../model/targets.mjs';
 import { simple } from '../core/names.mjs';
 import { annotationOn } from '../core/annotations.mjs';
+import { listOf, mapOf, patternOf } from '../catalogs/catalog.mjs';
 
 // Security, in plain terms. One fact per path prefix the application protects, with what the prefix allows:
 // anonymous, authenticated, or a role. Sources: Spring Security filter chains (each chain's `securityMatcher` is its
@@ -18,16 +19,9 @@ const HEADERS = /getHeader\(\s*"([^"]+)"\s*\)|header\(\s*"([^"]+)"\s*\)/g;
 const CLAIMS = /getClaim(?:AsString)?\(\s*"([^"]+)"\s*\)/g;
 const TENANT_WORDS = /tenant|organisation|organization|workspace|domain|host/i;
 
-
-const ACCESS = [
-  [/^permitAll$/, () => 'anonymous'],
-  [/^authenticated$/, () => 'authenticated'],
-  [/^hasRole$/, (args) => `role:${firstLiteral(args)}`],
-  [/^hasAnyRole$/, (args) => `role:${String(args).match(/"([^"]+)"/)?.[1] ?? '?'}`],
-  [/^hasAuthority$/, (args) => `authority:${firstLiteral(args)}`],
-  [/^hasAnyAuthority$/, (args) => `authority:${String(args).match(/"([^"]+)"/)?.[1] ?? '?'}`],
-  [/^denyAll$/, () => 'blocked'],
-];
+// What a rule's call grants, from the vocabulary: `{literal}` is the call's first string argument.
+const ACCESS = mapOf('access-calls');
+const HTTP_METHOD = patternOf('http-method-enum');
 const firstLiteral = (s) => String(s).match(/"([^"]+)"/)?.[1] ?? '?';
 // One call chained to another is written with the chain's own position, so the rows of one chain share `line:col` and
 // Spoon lists them from the outside in: reversing a group gives the chain's source order.
@@ -46,10 +40,7 @@ const chainOrder = (calls) => {
     })
     .flatMap(([, list]) => list.slice().reverse());
 };
-const ACCESS_CALLS = new Set([
-  'permitAll', 'authenticated', 'hasRole', 'hasAnyRole', 'hasAuthority', 'hasAnyAuthority', 'denyAll',
-]);
-const HTTP_METHOD = /HttpMethod\.(\w+)/;
+const ACCESS_CALLS = new Set(Object.keys(ACCESS));
 const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
 // The string values an argument list folds to: a literal's or a constant's value, never a variable's name.
 const stringValues = (rows) => rows.map((a) => (typeof a?.value === 'string' ? a.value : null)).filter((v) => v !== null);
@@ -57,8 +48,8 @@ const stringValues = (rows) => rows.map((a) => (typeof a?.value === 'string' ? a
 const shownArg = (a) => (typeof a?.value === 'string' ? `"${a.value}"` : String(a?.text ?? ''));
 
 function accessOf(rule, args) {
-  for (const [re, make] of ACCESS) if (re.test(rule)) return make(args);
-  return 'unknown';
+  if (!Object.hasOwn(ACCESS, rule)) return 'unknown';
+  return ACCESS[rule].replace('{literal}', () => firstLiteral(args));
 }
 
 // Spring Security chains, from the dump's call rows: `securityMatcher(...)` states a chain's scope, and each
@@ -78,10 +69,11 @@ export function springChains(model, db = model?.dump ?? null) {
         const next = matchers[n + 1];
         const span = calls.slice(at + 1, next ? calls.indexOf(next) : undefined);
         const scope = stringValues(dumpArgs(db, sm));
-        const order = Number(/^\s*(-?\d+)/.exec(annotationOn(m, 'Order')?.args ?? '')?.[1] ?? NaN);
+        const orderArgs = annotationOn(m, ...listOf('order-annotations'))?.args ?? '';
+        const order = Number(/^\s*(-?\d+)/.exec(orderArgs)?.[1] ?? NaN);
         // The chain's own condition: a chain behind a profile or a property is not in force everywhere.
-        const cond =
-          annotationOn(m, 'ConditionalOnProperty', 'Profile') ?? annotationOn(t, 'ConditionalOnProperty', 'Profile');
+        const conditional = listOf('conditional-annotations');
+        const cond = annotationOn(m, ...conditional) ?? annotationOn(t, ...conditional);
         // A configurer applied to this chain whose class the repo does not declare: its requestMatchers rules exist only
         // in that library, so this chain's paths are unknown — say so instead of reporting them as "unknown" with no
         // reason. Only `new X(...)` is claimed: a value passed to `apply` has no class the dump can name.
@@ -769,22 +761,12 @@ export function webXmlRules(text, file) {
 // A verification call is a property of its receiver's *type*, never of a method or class name: `validate` on a
 // WorkspaceValidator checks a workspace, `decode` on a cache parses a cache key, and a filter whose name says
 // *AuthenticationFilter may still trust whatever arrives. The type is the dump's receiver answer.
-const VERIFIER_TYPES = new Set([
-  'org.springframework.security.authentication.AuthenticationManager',
-  'org.springframework.security.authentication.ProviderManager',
-  'org.springframework.security.oauth2.jwt.JwtDecoder',
-  'io.jsonwebtoken.JwtParser',
-  'java.security.MessageDigest',
-  'javax.crypto.Mac',
-  'java.security.Signature',
-  'org.springframework.security.crypto.password.PasswordEncoder',
-  'org.springframework.security.oauth2.server.resource.web.BearerTokenResolver',
-]);
+const VERIFIER_TYPES = listOf('verifier-types');
 const VERIFIER_SIMPLE = new Set([...VERIFIER_TYPES].map((fqn) => fqn.split('.').pop()));
 // The app's own token service, also by type: a receiver the app declares whose type name ends in TokenService.
 const TOKEN_SERVICE = /TokenService$/;
 // The caller slots: a field, or a project method's parameter, that carries the authenticated caller itself.
-const CALLER_SIMPLE = new Set(['Authentication', 'Principal']);
+const CALLER_SIMPLE = listOf('caller-types');
 
 const isVerifierType = (type, model) => {
   if (!type) return false;

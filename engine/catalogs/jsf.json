@@ -205,5 +205,13 @@
         "type"
       ]
     }
-  ]
+  ],
+  "lists": {
+    "ui-scopes": [
+      "ViewScoped",
+      "RequestScoped",
+      "SessionScoped",
+      "ConversationScoped"
+    ]
+  }
 }

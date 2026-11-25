@@ -28,6 +28,7 @@ test('messaging: a listener annotation, a template send, a stream and a saga cha
   assert.deepStrictEqual(rows, [
     'jms:in:"${audit.queue:audit}"', // @JmsListener's destination: a JMS listener, its placeholder kept
     'jms:out:"invoices"', // jmsTemplate.convertAndSend
+    'jms:out:invoices', // context.createProducer().send(invoices, …): a JMSProducer, the channel-rules' client
     'kafka:in:"orders"', // @KafkaListener(topics = "orders")
     'kafka:in:"shop.Order"', // andForAggregateType("shop.Order")
     'kafka:in:Channels.COMMAND_CHANNEL', // fromChannel(constant)
@@ -90,6 +91,6 @@ test('gatewayRoutes: lb:// host with its path predicates', () => {
 });
 
 test('the built-in rules are data: a type suffix, a method name, an annotation', () => {
-  assert.ok(BUILTIN.every((r) => r.annotation || r.name));
+  assert.ok(BUILTIN.every((r) => r.annotation || r.recv || r.name));
   assert.ok(BUILTIN.some((r) => r.annotation === 'KafkaListener' && r.arg === 'topics'));
 });

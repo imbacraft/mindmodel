@@ -1,38 +1,23 @@
 // L6: what the engine understood, and what it did not. Coverage is computed from the model (not from the facts), so
 // it reports the engine's own blind spots and not just the claims it managed to make.
-import { annotationIndex, simpleMeans, typeIndex } from '../catalogs/catalog.mjs';
+import { annotationIndex, listOf, patternOf, simpleMeans, typeIndex } from '../catalogs/catalog.mjs';
 import { simple } from '../core/names.mjs';
 
 const rate = (id, num, den) => ({ id, numerator: num, denominator: den, percent: den ? Math.round((num / den) * 100) : 0 });
 
 // Annotations that carry no fact and are not worth reporting as unknowns even when nothing resolved their name.
-const HARMLESS = new Set([
-  'Override',
-  'SuppressWarnings',
-  'Deprecated',
-  'FunctionalInterface',
-  'SafeVarargs',
-  'Generated',
-  'Serial',
-]);
+const HARMLESS = listOf('harmless-annotations');
 
 // Supertypes the engine treats as known without a catalog: JDK and Jakarta/Java EE types are generic API, and
-// extending them hides nothing project-specific.
-const KNOWN_PLATFORM = /^(java|jakarta|javax)\./;
+// extending them hides nothing project-specific (the vocabulary's `platform-types`).
+const KNOWN_PLATFORM = patternOf('platform-types');
 
 // Top-level package segments that name a vendor domain, never a library.
-const PACKAGE_TLDS = new Set(['org', 'com', 'net', 'io', 'cn', 'edu', 'dev', 'app', 'co', 'me', 'us', 'uk', 'info']);
+const PACKAGE_TLDS = listOf('package-tlds');
 
 // Words in an artifact id that name the build system, the framework or a packaging convention, never a package a
-// project imports. Filtering them leaves the words that identify the library (`commons-lang3` -> `lang3`).
-const GENERIC_ARTIFACT_WORDS = new Set(
-  (
-    'starter starters spring boot boot2 boot3 core common commons api apis plugin plugins processor annotation ' +
-    'annotations test tests testing runtime client clients java jdk impl implementation module modules parent bom ' +
-    'autoconfigure autoconfiguration integration platform dependencies base support util utils lib library sdk ' +
-    'server servers agent jakarta javax'
-  ).split(' '),
-);
+// project imports (the vocabulary's `generic-artifact-words`). Filtering them leaves the library's own words.
+const GENERIC_ARTIFACT_WORDS = listOf('generic-artifact-words');
 
 // Every annotation in the model, with the placement that gives it meaning and the type that carries it.
 function annotationsOf(model) {

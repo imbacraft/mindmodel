@@ -19,7 +19,8 @@
       "on": [
         "method",
         "type"
-      ]
+      ],
+      "action": "read"
     },
     {
       "fqns": [
@@ -29,7 +30,8 @@
       "on": [
         "method",
         "type"
-      ]
+      ],
+      "action": "evict"
     },
     {
       "fqns": [
@@ -39,7 +41,8 @@
       "on": [
         "method",
         "type"
-      ]
+      ],
+      "action": "write"
     },
     {
       "fqns": [

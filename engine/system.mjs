@@ -15,6 +15,7 @@ import { annotationOn, hasAnnotation } from './core/annotations.mjs';
 import { NON_SERVICE_DIRS, relPosix } from './core/paths.mjs';
 import { placeholderOf } from './core/placeholders.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
+import { listOf, patternOf, tableOf } from './catalogs/catalog.mjs';
 
 // --- per-service extraction --------------------------------------------------------
 // Placeholders like "${app.topics.orders:orders}" resolve from the service's own config, else their default.
@@ -43,27 +44,12 @@ const flatStrings = (value) => {
 
 
 // Messaging is one row per channel use: a listener annotation's topic, or a call on a messaging library type whose
-// channel argument the dump folded. `recv` is the receiver type's simple name (a suffix: a project's own publisher
-// extends the library's), `name` the method the call names.
+// channel argument the dump folded. The rules are the vocabulary's channel-rules, less the consume calls (a consumer
+// is a channel of its own, read by extract/channels.mjs and not part of the proven connections). `recv` is the receiver
+// type's simple name (a suffix: a project's own publisher extends the library's), `names` or `name` the methods.
 // `<folder>/mindmodel-system.json` may add a company's own wrappers: an entry's `re` is then tested against
 // `Type.method` — names the dump wrote, never source text.
-export const BUILTIN = [
-  { kind: 'kafka', dir: 'in', annotation: 'KafkaListener', arg: 'topics' },
-  { kind: 'jms', dir: 'in', annotation: 'JmsListener', arg: 'destination' },
-  { kind: 'kafka', dir: 'out', recv: 'KafkaTemplate', name: 'send' },
-  { kind: 'kafka', dir: 'out', recv: 'StreamBridge', name: 'send' },
-  { kind: 'jms', dir: 'out', recv: 'JmsTemplate', name: 'convertAndSend' },
-  { kind: 'jms', dir: 'out', recv: 'JmsTemplate', name: 'send' },
-  // Eventuate Tram (domain events and saga commands, carried by Kafka)
-  { kind: 'kafka', dir: 'out', recv: 'DomainEventPublisher', name: 'publish', publisher: true },
-  { kind: 'kafka', dir: 'out', name: 'withChannel' },
-  { kind: 'kafka', dir: 'in', name: 'fromChannel' },
-  { kind: 'kafka', dir: 'in', name: 'forAggregateType' },
-  { kind: 'kafka', dir: 'in', name: 'andForAggregateType' },
-  // Kafka Streams only with a named topic: a variable here is almost always Java's own Stream API.
-  { kind: 'kafka', dir: 'in', recv: 'StreamsBuilder', name: 'stream', named: true },
-  { kind: 'kafka', dir: 'out', name: 'to', named: true },
-];
+export const BUILTIN = tableOf('channel-rules').filter((r) => !r.consumer);
 
 /**
  * Messaging rows for one module: `{kind, dir, line, expr, raw, arg, recv, file}`. `expr` is the argument as the dump
@@ -97,6 +83,7 @@ export function messaging(module, patterns = BUILTIN) {
           if (rule.annotation) continue;
           if (rule.recv && !recvName.endsWith(rule.recv)) continue;
           if (rule.name && c.name !== rule.name) continue;
+          if (rule.names && !rule.names.includes(c.name)) continue;
           if (rule.re && !new RegExp(rule.re).test(`${recvName}.${c.name}`)) continue;
           const arg = dumpArgs(db, c)[0];
           if (!arg) continue;
@@ -132,7 +119,7 @@ export function jakartaJms(module) {
   if (!db) return out;
   for (const t of types ?? []) {
     const row = typeRow(module, t);
-    const mdb = annotationOn(row, 'MessageDriven');
+    const mdb = annotationOn(row, ...listOf('message-driven-annotations'));
     if (mdb) {
       const dest = messageDestination(mdb);
       if (dest) out.push({ kind: 'jms', dir: 'in', name: dest, line: mdb.line || t.start, file: module.prefix + t.file });
@@ -343,16 +330,19 @@ const eeApp = (dir) => {
     )
   );
 };
-const BOOT_START = new Set(['SpringBootApplication', 'SpringBootConfiguration']);
+const BOOT_START = listOf('boot-start-annotations');
 // A Spring Boot app declares one of the boot annotations, extends the servlet initializer (a WAR), or runs
 // `SpringApplication.run` from a main method — the dump's `isMain` and the call's receiver type say so.
-const bootsFromMain = (t) => (t.methods ?? []).some((m) => m.isMain && (m.calls ?? []).some((c) => /(^|\.)SpringApplication(?:Builder)?$/.test(c.recvFqn ?? '')));
+const bootsFromMain = (t) =>
+  (t.methods ?? []).some(
+    (m) => m.isMain && (m.calls ?? []).some((c) => patternOf('spring-application-receivers').test(c.recvFqn ?? '')),
+  );
 const isApp = (dir, types) =>
   eeApp(dir) ||
   (types ?? []).some(
     (t) =>
       (t.ann ?? []).some((a) => BOOT_START.has(a.name)) ||
-      (t.supers ?? []).some((s) => /SpringBootServletInitializer$/.test(s.fqn ?? simple(s.text))) ||
+      (t.supers ?? []).some((s) => listOf('app-base-types').has(simple(s.fqn ?? s.text))) ||
       bootsFromMain(t),
   );
 

@@ -2,12 +2,12 @@
 // an outside call inside a transaction, an outside call before a save with no transaction, work deferred to after
 // commit, and an observer that runs after success. Everything here is a model link, not a regex over the text.
 import assert from 'node:assert';
-import { annotationIndex, meanHit, simpleMeans } from '../catalogs/catalog.mjs';
+import { annotationIndex, listOf, meanHit, patternOf, simpleMeans } from '../catalogs/catalog.mjs';
 import { citeOf, factOf, methodIdOf, withUniqueIds } from './facts.mjs';
 import { parseCite } from '../core/cite.mjs';
 
-const NO_TX = /\b(NOT_SUPPORTED|NEVER|SUPPORTS)\b/;
-const EJB_BEAN = /\.ejb\.(Stateless|Stateful|Singleton)$/;
+const NO_TX = patternOf('no-transaction-args');
+const EJB_BEAN = listOf('ejb-bean-annotations');
 
 // The catalog meaning of one annotation, at a placement; `inferred` when only a simple name matched.
 function meaning(model, type, ann, on, index) {
@@ -71,7 +71,7 @@ export function extractTransactions(model, selected, { outside = [], writes = []
     const typeTx = (t.ann ?? [])
       .map((a) => meaning(model, t, a, 'type', index))
       .find((h) => h?.entry?.means === 'transactional');
-    const ejb = (t.ann ?? []).some((a) => EJB_BEAN.test(a.fqn ?? '') || EJB_BEAN.test(`.ejb.${(a.name ?? '').split('.').pop()}`));
+    const ejb = (t.ann ?? []).some((a) => EJB_BEAN.has((a.name ?? '').split('.').pop()));
     const beanManaged = (t.ann ?? []).some((a) => /TransactionManagement/.test(a.name ?? '') && /BEAN/.test(a.args ?? ''));
     for (const m of t.methods) {
       if (!m.id) continue;

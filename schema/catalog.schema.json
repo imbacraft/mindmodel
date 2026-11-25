@@ -1,7 +1,7 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "title": "mindmodel framework catalog",
- "description": "Framework meaning as data: what an annotation, type, call, config key or file means. One file per framework family.",
+ "description": "Framework meaning as data: what an annotation, type, call, config key or file means. One file per framework family. Lists, patterns, maps and tables are the shared vocabulary every scan reads by name, whatever `when` selects; a name is defined in one file only.",
  "type": "object",
  "additionalProperties": false,
  "required": [
@@ -114,6 +114,43 @@
      "items": {
       "type": "string"
      }
+    }
+   }
+  },
+  "lists": {
+   "type": "object",
+   "description": "Named sets of names (simple annotation names, method names, FQNs, words), matched exactly by the reader.",
+   "additionalProperties": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    }
+   }
+  },
+  "patterns": {
+   "type": "object",
+   "description": "Named regular expressions (JS source, `(?i)` prefix for case-insensitive) that the reader tests against a name or text.",
+   "additionalProperties": {
+    "type": "string"
+   }
+  },
+  "maps": {
+   "type": "object",
+   "description": "Named tables from one string to one string (a name to its meaning, a package prefix to its vendor).",
+   "additionalProperties": {
+    "type": "object",
+    "additionalProperties": {
+     "type": "string"
+    }
+   }
+  },
+  "tables": {
+   "type": "object",
+   "description": "Named tables of rows, each row an object whose fields its reader documents (messaging channel rules, local servers).",
+   "additionalProperties": {
+    "type": "array",
+    "items": {
+     "type": "object"
     }
    }
   }
@@ -248,6 +285,21 @@
     },
     "kind": {
      "type": "string"
+    },
+    "args": {
+     "type": "array",
+     "description": "The argument names that hold a destination (a messaging listener's topic or queue).",
+     "items": {
+      "type": "string"
+     }
+    },
+    "action": {
+     "enum": [
+      "read",
+      "write",
+      "evict"
+     ],
+     "description": "What a cache annotation does to the cache."
     }
    }
   },

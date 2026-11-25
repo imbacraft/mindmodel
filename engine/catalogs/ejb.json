@@ -321,5 +321,12 @@
         "parameter"
       ]
     }
-  ]
+  ],
+  "lists": {
+    "ejb-bean-annotations": [
+      "Stateless",
+      "Stateful",
+      "Singleton"
+    ]
+  }
 }

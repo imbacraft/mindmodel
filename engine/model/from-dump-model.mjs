@@ -2,20 +2,10 @@
 // its annotations point, what its fields are typed as, which methods it has, and what each call reaches — so nothing
 // here resolves anything: it arranges the answers in the shape the extractors read.
 import assert from 'node:assert';
-import { simple } from '../core/names.mjs';
+import { JAVA_LANG, simple } from '../core/names.mjs';
 import { push } from '../core/collections.mjs';
 
 const typeNameOf = (text) => (text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
-
-const JAVA_LANG = new Set([
-  'String', 'Object', 'Class', 'Enum', 'Record', 'Throwable', 'Exception', 'RuntimeException', 'Error',
-  'IllegalArgumentException', 'IllegalStateException', 'UnsupportedOperationException', 'NullPointerException',
-  'ArithmeticException', 'InterruptedException', 'IndexOutOfBoundsException', 'ClassCastException',
-  'Runnable', 'Thread', 'ThreadLocal', 'Iterable', 'Comparable', 'Cloneable', 'AutoCloseable',
-  'Integer', 'Long', 'Short', 'Byte', 'Double', 'Float', 'Boolean', 'Character', 'Number', 'Math', 'StrictMath',
-  'System', 'StringBuilder', 'StringBuffer', 'CharSequence', 'Void', 'Package', 'Process', 'Runtime',
-  'Deprecated', 'Override', 'SuppressWarnings', 'FunctionalInterface', 'SafeVarargs',
-]);
 
 /** `a.b.C<D>` -> `a.b.C`; a written list `A, B<C, D>` -> both names. */
 function splitTypes(text) {

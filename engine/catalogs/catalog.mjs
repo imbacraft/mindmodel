@@ -112,6 +112,45 @@ export function typeIndex(selected) {
 export const simpleMeans = (index, name, on) =>
   (index.bySimple.get(name) ?? []).filter((h) => !h.entry.on || h.entry.on.includes(on));
 
+// The shared vocabulary: named lists, patterns, maps and tables that the readers ask for by name. Every shipped catalog
+// contributes, whatever its `when` selects, because the JS tables these replace were never gated; a name is defined in
+// one file only, so two readers cannot disagree about it.
+const VOCAB_KINDS = ['lists', 'patterns', 'maps', 'tables'];
+
+export function vocabularyOf(catalogs) {
+  const out = Object.fromEntries(VOCAB_KINDS.map((k) => [k, new Map()]));
+  for (const cat of catalogs)
+    for (const kind of VOCAB_KINDS)
+      for (const [name, value] of Object.entries(cat[kind] ?? {})) {
+        if (out[kind].has(name)) throw new Error(`${cat.id}: ${kind} "${name}" is already defined in another catalog`);
+        out[kind].set(name, value);
+      }
+  return out;
+}
+
+let shippedVocab = null;
+const memo = new Map();
+const cached = (key, make) => {
+  if (!memo.has(key)) memo.set(key, make());
+  return memo.get(key);
+};
+const need = (kind, name) => {
+  shippedVocab ??= vocabularyOf(loadCatalogs());
+  const value = shippedVocab[kind].get(name);
+  if (value === undefined) throw new Error(`no ${kind.slice(0, -1)} named "${name}" in the catalogs`);
+  return value;
+};
+const regexOf = (src) => (src.startsWith('(?i)') ? new RegExp(src.slice(4), 'i') : new RegExp(src));
+
+/** The names in a named list, as a Set. */
+export const listOf = (name) => cached(`list:${name}`, () => new Set(need('lists', name)));
+/** A named regular expression. */
+export const patternOf = (name) => cached(`pattern:${name}`, () => regexOf(need('patterns', name)));
+/** A named map from one string to another. Read only. */
+export const mapOf = (name) => need('maps', name);
+/** A named table of rows. Read only. */
+export const tableOf = (name) => need('tables', name);
+
 {
   const catalogs = loadCatalogs();
   assert.ok(catalogs.length >= 2, 'the shipped catalogs load');
@@ -129,12 +168,23 @@ export const simpleMeans = (index, name, on) =>
   assert.equal(meanOf(jaxrs, 'javax.ws.rs.Path', 'type')?.means, 'endpoint-base');
   assert.equal(meanOf(jaxrs, 'javax.ws.rs.Path', 'method')?.means, 'endpoint-path');
 
-  // A catalog that no import selects contributes nothing; the always-on catalogs are the only ones selected.
+  // A catalog that no import selects contributes nothing; the always-on catalogs (no `when`) apply.
   const none = selectCatalogs(catalogs, { imports: ['com.example.internal'] });
-  assert.deepStrictEqual(none.map((s) => s.catalog.id), ['ignore', 'jdk'], 'only the always-on catalogs apply');
+  const always = ['ignore', 'jdk', 'vocabulary'];
+  assert.deepStrictEqual(none.map((s) => s.catalog.id), always, 'only the always-on catalogs apply');
   assert.ok(none.every((s) => s.why === 'selected always'));
 
   // Base classes a catalog explains are not blind spots; the index answers by resolved FQN.
   const types = typeIndex(selectCatalogs(catalogs, { deps: ['org.springframework.boot:spring-boot-starter-data-jpa'] }));
   assert.equal(types.get('org.springframework.data.repository.CrudRepository')?.entry.means, 'repository');
+
+  // The vocabulary: a name is read by its one definition, a case-insensitive pattern takes its `(?i)` prefix, and a
+  // second definition of a name is an error at load time.
+  assert.ok(listOf('job-annotations').has('KafkaListener'));
+  assert.ok(patternOf('status-field-name').test('STATUS'));
+  assert.throws(() => listOf('no-such-list'), /no list named/);
+  assert.throws(
+    () => vocabularyOf([{ id: 'a', lists: { x: [] } }, { id: 'b', lists: { x: [] } }]),
+    /lists "x" is already defined/,
+  );
 }

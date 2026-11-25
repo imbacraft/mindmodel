@@ -22,7 +22,9 @@ import { linesMatching } from './core/strings.mjs';
 import {
   annotationFqns,
   annotationIndex,
+  listOf,
   loadCatalogs,
+  mapOf,
   meanOf,
   selectCatalogs,
   typeIndex,
@@ -83,59 +85,6 @@ function walk(dir, out = []) {
 }
 
 // --- Java -------------------------------------------------------------------
-// The type-level annotations the scanner reports, in the order the facts list them.
-const TYPE_ANNOTATIONS = [
-  'Entity',
-  'Table',
-  'RestController',
-  'Controller',
-  'Service',
-  'Component',
-  'Configuration',
-  'Repository',
-  'ControllerAdvice',
-  'EnableWebSecurity',
-  'EnableMethodSecurity',
-  'Embeddable',
-  'MappedSuperclass',
-  // Jakarta EE: REST resources, EJBs, message-driven beans and CDI beans
-  'Path',
-  'ApplicationPath',
-  'Stateless',
-  'Stateful',
-  'Singleton',
-  'MessageDriven',
-  'Named',
-  'ViewScoped',
-  'RequestScoped',
-  'SessionScoped',
-  'ConversationScoped',
-  'Startup',
-];
-// Work that runs without a request: schedules, async, listeners and CDI observers.
-const JOB = new RegExp(
-  `^(${[
-    'Scheduled',
-    'Async',
-    'EventListener',
-    'TransactionalEventListener',
-    'KafkaListener',
-    'RabbitListener',
-    'JmsListener',
-    'SqsListener',
-    'Schedule',
-    'Asynchronous',
-    'Timeout',
-    'ObservesAsync',
-    'Observes',
-  ].join('|')})$`,
-);
-
-// The event a CDI observer takes; @Initialized(ApplicationScoped.class) means it runs at startup.
-const observerType = (param) =>
-  param.ann.some((a) => a.name === 'Initialized' && /ApplicationScoped/.test(a.args))
-    ? 'application start'
-    : param.type;
 
 // --- frontend routes ----------------------------------------------------------
 // Angular route arrays use paths without a leading slash, so they're only trusted in files that declare routes.
@@ -276,12 +225,17 @@ function retirePreviousMap(root) {
   return kept;
 }
 
+// Work that runs without a request: a job annotation on the method, an observer on its parameter.
+const JOB = listOf('job-annotations');
+const OBSERVER = listOf('observer-annotations');
+const MESSAGE_DRIVEN = [...listOf('message-driven-annotations')];
+
 /** A job, an observer or a message listener: the annotation is on the method (or its parameter), the model has both. */
 function scheduledOf(t) {
   const jobs = [];
   for (const m of t.methods ?? []) {
     for (const a of m.ann ?? [])
-      if (JOB.test(a.name) && a.name !== 'MessageDriven')
+      if (JOB.has(a.name))
         jobs.push({
           kind: a.name,
           args: (a.args ? `(${a.args})` : '').trim().slice(0, 120),
@@ -291,10 +245,10 @@ function scheduledOf(t) {
     // A CDI observer names its event on the parameter, and an MDB names its destination on the class.
     for (const p of m.params ?? [])
       for (const a of p.ann ?? [])
-        if (/^Observes(Async)?$/.test(a.name))
+        if (OBSERVER.has(a.name))
           jobs.push({ kind: a.name, args: String(p.type ?? '').slice(0, 120), line: a.line ?? m.nameLine });
   }
-  const mdb = annotationOn(t, 'MessageDriven');
+  const mdb = annotationOn(t, ...MESSAGE_DRIVEN);
   if (mdb) {
     const dest =
       /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(mdb.args ?? '') ??
@@ -307,38 +261,6 @@ function scheduledOf(t) {
 
 const tableOf = (t) =>
   /name\s*=\s*"([^"]+)"/.exec(annotationOn(t, 'Table')?.args ?? '')?.[1];
-
-// The SDK packages that mark an integration, and the name each one is reported under.
-const EXT = {
-  'com.stripe': 'Stripe',
-  'com.google.api': 'Google APIs',
-  'com.google.cloud': 'Google Cloud',
-  'software.amazon': 'AWS',
-  'com.amazonaws': 'AWS',
-  'com.sendgrid': 'SendGrid',
-  brevo: 'Brevo',
-  sendinblue: 'Brevo',
-  'jakarta.mail': 'SMTP mail',
-  'javax.mail': 'SMTP mail',
-  'org.springframework.mail': 'SMTP mail',
-  'org.springframework.kafka': 'Kafka',
-  'org.springframework.amqp': 'RabbitMQ',
-  redis: 'Redis',
-  'com.twilio': 'Twilio',
-  'io.minio': 'S3-compatible storage',
-  'com.openai': 'OpenAI',
-  okhttp3: '(HTTP client)',
-  'org.springframework.web.reactive.function.client': '(HTTP client: WebClient)',
-  'org.springframework.web.client.RestTemplate': '(HTTP client: RestTemplate)',
-  feign: '(HTTP client: Feign)',
-  'org.springframework.web.client.RestClient': '(HTTP client: RestClient)',
-  'java.net.http': '(HTTP client: java.net.http)',
-  'jakarta.jms': 'JMS',
-  'javax.jms': 'JMS',
-  'jakarta.ws.rs.client': '(HTTP client: JAX-RS)',
-  'javax.ws.rs.client': '(HTTP client: JAX-RS)',
-  'org.eclipse.microprofile.rest.client': '(HTTP client: MicroProfile)',
-};
 
 /**
  * A model type in the shape the families read: identity (name, kind, annotations, supertypes, enum values), and its
@@ -488,12 +410,9 @@ function typeFacts({ model, dump, app }) {
   const appEntries = appTypes.map(typeEntry);
   const entities = appEntries.filter((e) => hasAnnotation(e.type, 'Entity'));
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
-  const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
   const isController = (t) =>
-    hasAnnotation(t, 'RestController') ||
-    hasAnnotation(t, 'Controller') ||
-    hasAnnotation(t, 'Path') ||
-    (hasAnnotation(t, 'Named') && UI_SCOPES.some((s) => hasAnnotation(t, s)));
+    annotationOn(t, ...listOf('controller-annotations')) !== null ||
+    (annotationOn(t, ...listOf('named-annotations')) !== null && annotationOn(t, ...listOf('ui-scopes')) !== null);
   const controllers = appEntries
     .filter((e) => isController(e.type))
     // A REST or JAX-RS method's string is a response body, not a view name.
@@ -902,9 +821,10 @@ function backgroundOf({ files, R, read }, { appTypes, appEntries }, endpoints) {
 
 /** Profile and conditional switches: the annotations that choose a bean or profile, and the profile lines in config. */
 function switchesOf(appTypes, configFiles, R, read) {
+  const switches = new RegExp(`^(${[...listOf('switch-annotations')].join('|')})$`);
   return modelEntries(appTypes, {
-    types: { ann: [/^(Profile|ConditionalOnProperty|ConditionalOnMissingBean)$/] },
-    methods: { ann: [/^(Profile|ConditionalOnProperty|ConditionalOnMissingBean)$/] },
+    types: { ann: [switches] },
+    methods: { ann: [switches] },
   }).concat(
     configFiles.flatMap((f) =>
       linesMatching(read(f), /profiles?\.active|on-profile/).map((m) => ({ file: R(f), ...m })),
@@ -917,7 +837,7 @@ function externalsOf(java, sources) {
   const importsOf = (relPath) => (sources.get(relPath)?.imports ?? []).map((i) => i.name);
   const externals = {};
   for (const j of java)
-    for (const [k, v] of Object.entries(EXT))
+    for (const [k, v] of Object.entries(mapOf('sdk-vendors')))
       if (importsOf(j.p).some((name) => name.includes(k))) (externals[v] ??= []).push(j.p);
   return Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)]));
 }
@@ -1012,7 +932,6 @@ function javaFactsOf(ctx, types, entFacts, endpoints) {
     model: ctx.model,
     java: types.appEntries,
     repoEntity,
-    EXT,
     enums: types.enums,
     entities: types.entities,
     shortlist: new Set(

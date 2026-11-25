@@ -1,0 +1,229 @@
+{
+  "id": "vocabulary",
+  "version": 1,
+  "when": {},
+  "annotations": [],
+  "lists": {
+    "job-annotations": [
+      "Scheduled",
+      "Async",
+      "EventListener",
+      "TransactionalEventListener",
+      "KafkaListener",
+      "RabbitListener",
+      "JmsListener",
+      "SqsListener",
+      "Schedule",
+      "Asynchronous",
+      "Timeout",
+      "ObservesAsync",
+      "Observes"
+    ],
+    "scheduled-annotations": [
+      "Scheduled",
+      "Schedules",
+      "Schedule"
+    ],
+    "timed-job-annotations": [
+      "Scheduled",
+      "Schedule"
+    ],
+    "listener-annotations": [
+      "JmsListener",
+      "RabbitListener",
+      "KafkaListener",
+      "MessageDriven",
+      "EventListener"
+    ],
+    "controller-annotations": [
+      "RestController",
+      "Controller",
+      "Path"
+    ],
+    "recurring-calls": [
+      "scheduleAtFixedRate",
+      "scheduleWithFixedDelay",
+      "scheduleAtFixedRateAsync",
+      "newTimeout",
+      "schedulePage",
+      "schedulePeriodic"
+    ],
+    "package-tlds": [
+      "org",
+      "com",
+      "net",
+      "io",
+      "cn",
+      "edu",
+      "dev",
+      "app",
+      "co",
+      "me",
+      "us",
+      "uk",
+      "info"
+    ],
+    "generic-artifact-words": [
+      "starter",
+      "starters",
+      "spring",
+      "boot",
+      "boot2",
+      "boot3",
+      "core",
+      "common",
+      "commons",
+      "api",
+      "apis",
+      "plugin",
+      "plugins",
+      "processor",
+      "annotation",
+      "annotations",
+      "test",
+      "tests",
+      "testing",
+      "runtime",
+      "client",
+      "clients",
+      "java",
+      "jdk",
+      "impl",
+      "implementation",
+      "module",
+      "modules",
+      "parent",
+      "bom",
+      "autoconfigure",
+      "autoconfiguration",
+      "integration",
+      "platform",
+      "dependencies",
+      "base",
+      "support",
+      "util",
+      "utils",
+      "lib",
+      "library",
+      "sdk",
+      "server",
+      "servers",
+      "agent",
+      "jakarta",
+      "javax"
+    ],
+    "gradle-configurations": [
+      "implementation",
+      "api",
+      "compileOnly",
+      "compileOnlyApi",
+      "runtimeOnly",
+      "testImplementation",
+      "testCompileOnly",
+      "testRuntimeOnly",
+      "annotationProcessor",
+      "kapt",
+      "ksp",
+      "providedCompile",
+      "providedRuntime",
+      "developmentOnly",
+      "testFixturesImplementation"
+    ],
+    "servlet-attribute-holders": [
+      "jakarta.servlet.ServletRequest",
+      "jakarta.servlet.http.HttpServletRequest",
+      "jakarta.servlet.http.HttpSession",
+      "javax.servlet.ServletRequest",
+      "javax.servlet.http.HttpServletRequest",
+      "javax.servlet.http.HttpSession"
+    ],
+    "untyped-store-calls": [
+      "setAttribute",
+      "setAuthentication",
+      "setContext"
+    ]
+  },
+  "patterns": {
+    "plumbing-calls": "^(?:(?:get|set|is|has|to|of|with|from)[A-Z_$]|name$|size$|isEmpty$|isBlank$|orElse$|ifPresent$|toString$|equals$|hashCode$|valueOf$|stream$|collect$|map$|filter$|forEach$|add$|put$|remove$|iterator$|next$|parse$|now$|split$|trim$|length$|charAt$|contains$|matches$|matcher$|test$|apply$|accept$|run$|execute$|warn$|info$|error$|debug$|trace$|lock$|unlock$|requireNonNull$|printStackTrace$|format$|append$|build$|call$)",
+    "platform-types": "^(java|jakarta|javax)\\.",
+    "scheduler-type": "(?:Scheduler|Timer|WheelTimer|Executor)$",
+    "message-kind": "(?i)^(Kafka|Rabbit|RabbitMQ|JMS|SQS|PubSub|Messaging|MQ|AMQP)$",
+    "tenancy-not-a-key": "(?i)^(id|version|isNew|new\\w*|(gmt|created|updated|modified|deleted|occurred|expires)_?\\w*|created_?at|updated_?at|created_?by|updated_?by|creator|modifier|lastModified\\w*|tenant\\w*Id)$",
+    "status-type-name": "(?:Status|State)$",
+    "status-field-name": "(?i)^(?:status|state)$",
+    "frontend-build": "NpmTask|node-gradle|com\\.github\\.node|frontend-maven-plugin|npm\\s+run|yarnBuild",
+    "frontend-served-hook": "(processResources|bootJar|generate-resources|prepare-package)[^\\n]*"
+  },
+  "maps": {
+    "sdk-vendors": {
+      "com.stripe": "Stripe",
+      "com.google.api": "Google APIs",
+      "com.google.cloud": "Google Cloud",
+      "software.amazon": "AWS",
+      "com.amazonaws": "AWS",
+      "com.sendgrid": "SendGrid",
+      "brevo": "Brevo",
+      "sendinblue": "Brevo",
+      "jakarta.mail": "SMTP mail",
+      "javax.mail": "SMTP mail",
+      "org.springframework.mail": "SMTP mail",
+      "org.springframework.kafka": "Kafka",
+      "org.springframework.amqp": "RabbitMQ",
+      "redis": "Redis",
+      "com.twilio": "Twilio",
+      "io.minio": "S3-compatible storage",
+      "com.openai": "OpenAI",
+      "okhttp3": "(HTTP client)",
+      "org.springframework.web.reactive.function.client": "(HTTP client: WebClient)",
+      "org.springframework.web.client.RestTemplate": "(HTTP client: RestTemplate)",
+      "feign": "(HTTP client: Feign)",
+      "org.springframework.web.client.RestClient": "(HTTP client: RestClient)",
+      "java.net.http": "(HTTP client: java.net.http)",
+      "jakarta.jms": "JMS",
+      "javax.jms": "JMS",
+      "jakarta.ws.rs.client": "(HTTP client: JAX-RS)",
+      "javax.ws.rs.client": "(HTTP client: JAX-RS)",
+      "org.eclipse.microprofile.rest.client": "(HTTP client: MicroProfile)"
+    }
+  },
+  "tables": {
+    "local-servers": [
+      {
+        "pattern": "quarkus-maven-plugin",
+        "goal": "quarkus:dev",
+        "label": "Quarkus",
+        "port": 8080
+      },
+      {
+        "pattern": "liberty-maven-plugin",
+        "goal": "liberty:run",
+        "label": "Open Liberty",
+        "port": 9080
+      },
+      {
+        "pattern": "wildfly(-jar)?-maven-plugin",
+        "goal": "wildfly:run",
+        "label": "WildFly",
+        "port": 8080
+      },
+      {
+        "pattern": "payara-micro-maven-plugin",
+        "goal": "payara-micro:start",
+        "label": "Payara Micro",
+        "port": 8080
+      },
+      {
+        "pattern": "tomee-maven-plugin",
+        "goal": "tomee:run",
+        "label": "TomEE",
+        "port": 8080
+      },
+      {
+        "pattern": "cargo-maven\\d?-plugin",
+        "goal": "cargo:run",
+        "label": null,
+        "port": 8080
+      }
+    ]
+  }
+}

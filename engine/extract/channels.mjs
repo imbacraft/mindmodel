@@ -4,10 +4,19 @@
 
 import { placeholderOf } from '../core/placeholders.mjs';
 import { annotationOn } from '../core/annotations.mjs';
+import { listOf, patternOf, tableOf } from '../catalogs/catalog.mjs';
 
-const LISTENERS = new Set(['KafkaListener', 'JmsListener', 'RabbitListener', 'StreamListener', 'MessageDriven', 'SqsListener']);
-const CLIENTS = /(KafkaTemplate|JmsTemplate|RabbitTemplate|StreamBridge|JMSProducer|JMSContext|KafkaProducer|MessageProducer|SqsClient)$/;
-const SENDS = new Set(['send', 'convertAndSend', 'publish', 'sendAndReceive', 'convertSendAndReceive', 'syncSend']);
+// The messaging rules (messaging.json's channel-rules), one table for this module and the system map: a listener
+// annotation, a client's send or consume call, a publisher, and the fluent and stream calls.
+const RULES = tableOf('channel-rules');
+const LISTENER_RULES = RULES.filter((r) => r.annotation);
+const CONSUMER_RULES = RULES.filter((r) => r.consumer);
+const SEND_RULES = RULES.filter((r) => r.dir === 'out' && r.recv && r.names && !r.publisher && !r.consumer);
+const PUBLISHER_RULES = RULES.filter((r) => r.publisher);
+const FLUENT_RULES = RULES.filter((r) => r.via === 'eventuate');
+const AGGREGATE_RULES = RULES.filter((r) => r.via === 'aggregate');
+const NAMED_RULES = RULES.filter((r) => r.named);
+const recvOf = (c) => (c.recvFqn ?? '').split('.').pop() ?? '';
 
 export const firstString = (args = []) => args.map((a) => String(a).trim()).find((a) => /^".*"$/.test(a));
 
@@ -58,86 +67,181 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
     return typeof hit === 'string' ? hit : null;
   };
   for (const t of model.types.values()) {
-    const mdb = annotationOn(t, 'MessageDriven');
+    const mdb = annotationOn(t, ...listOf('message-driven-annotations'));
     if (mdb) {
       const dest = /propertyName\s*=\s*"(?:destinationLookup|destination)"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(mdb.args ?? '')?.[1]
         ?? /propertyValue\s*=\s*"([^"]+)"\s*,\s*propertyName\s*=\s*"(?:destinationLookup|destination)"/.exec(mdb.args ?? '')?.[1]
         ?? /mappedName\s*=\s*"([^"]+)"/.exec(mdb.args ?? '')?.[1];
       if (dest) {
         const on = (t.methods ?? []).find((m) => m.name === 'onMessage');
-        facts.push({ id: `channel:in:jms:${dest}@${t.name}`, family: 'channel', confidence: 'resolved', direction: 'in', kind: 'jms', channel: dest, method: `${t.name}#onMessage`, evidence: [`${t.file}:${mdb.line ?? t.nameLine}#${t.name}`], why: [`@MessageDriven destinationLookup ${dest}`] });
+        facts.push({
+          id: `channel:in:jms:${dest}@${t.name}`,
+          family: 'channel',
+          confidence: 'resolved',
+          direction: 'in',
+          kind: 'jms',
+          channel: dest,
+          method: `${t.name}#onMessage`,
+          evidence: [`${t.file}:${mdb.line ?? t.nameLine}#${t.name}`],
+          why: [`@MessageDriven destinationLookup ${dest}`],
+        });
       }
     }
-    const cond = (t.ann ?? []).find((a) => /^(ConditionalOnProperty|Profile)$/.test(a.name));
+    const cond = (t.ann ?? []).find((a) => listOf('conditional-annotations').has(a.name));
     const condition = cond ? `${cond.name}${cond.args || ''}`.replace(/\s+/g, ' ').slice(0, 160) : null;
     for (const m of t.methods ?? []) {
-      // Plain clients: `consumer.subscribe(topics)`, `channel.basicConsume(queue, …)`, `session.createConsumer(queue)`.
+      // Plain clients that consume: `consumer.subscribe(topics)`, `channel.basicConsume(queue, …)`, and the like.
       for (const c of m.calls ?? []) {
-        const recv = (c.recvFqn ?? '').split('.').pop() ?? '';
-        const inbound = /^(subscribe|basicConsume|createConsumer)$/.test(c.name ?? '') && /(KafkaConsumer|Channel|Session|JMSContext|MessageConsumer)$/.test(recv);
-        if (!inbound) continue;
+        const recv = recvOf(c);
+        const rule = CONSUMER_RULES.find((r) => r.names.includes(c.name ?? '') && recv.endsWith(r.recv));
+        if (!rule) continue;
         const argText = (c.args ?? [])[0] ?? '';
         const channel = nameOf(t.file, t.fqn, argText) ?? 'unknown';
         // Its handler is the method that polls the same consumer.
-        const poller = (t.methods ?? []).find((x) => (x.calls ?? []).some((y) => /^(poll|nextDelivery|receive|receiveNoWait)$/.test(y.name ?? '') && (y.recv?.text ?? '') === (c.recv?.text ?? '')));
-        facts.push({ id: `channel:in:kafka:${channel}@${t.name}`, family: 'channel', confidence: channel === 'unknown' ? 'inferred' : 'resolved', direction: 'in', kind: /Channel|Session|JMS/.test(recv) ? 'jms' : 'kafka', channel, method: `${t.name}#${m.name}`, handler: poller ? `${t.name}#${poller.name}` : null, condition, evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${recv}.${c.name}(${argText.slice(0, 80)})${condition ? ` under ${condition}` : ''}`] });
+        const polls = listOf('consumer-poll-methods');
+        const poller = (t.methods ?? []).find((x) =>
+          (x.calls ?? []).some((y) => polls.has(y.name ?? '') && (y.recv?.text ?? '') === (c.recv?.text ?? '')),
+        );
+        facts.push({
+          id: `channel:in:${rule.kind}:${channel}@${t.name}`,
+          family: 'channel',
+          confidence: channel === 'unknown' ? 'inferred' : 'resolved',
+          direction: 'in',
+          kind: rule.kind,
+          channel,
+          method: `${t.name}#${m.name}`,
+          handler: poller ? `${t.name}#${poller.name}` : null,
+          condition,
+          evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`],
+          why: [`${recv}.${c.name}(${argText.slice(0, 80)})${condition ? ` under ${condition}` : ''}`],
+        });
       }
-      const ann = (m.ann ?? []).find((a) => LISTENERS.has(a.name));
-      if (ann) {
-        const kind = /Kafka/.test(ann.name) ? 'kafka' : /Rabbit/.test(ann.name) ? 'rabbit' : /Sqs/.test(ann.name) ? 'sqs' : 'jms';
+      const listen = (m.ann ?? [])
+        .map((a) => ({ a, rule: LISTENER_RULES.find((r) => r.annotation === a.name) }))
+        .find((x) => x.rule);
+      if (listen) {
+        const { a: ann, rule } = listen;
         // The destination may be a named argument, a list, or a placeholder: `destination = "${q.name}"`.
         const args = ann.args ?? '';
-        const named = /\b(?:destination|topics|queues|value)\s*=\s*(\{[^}]*\}|"[^"]*"|[\w.$:{}]+)/.exec(args)?.[1] ?? args;
+        const destination = new RegExp(`\\b(?:${rule.arg}|value)\\s*=\\s*(\\{[^}]*\\}|"[^"]*"|[\\w.$:{}]+)`);
+        const named = destination.exec(args)?.[1] ?? args;
         const names = [...named.matchAll(/"([^"]+)"/g)].map((x) => x[1]);
         const bare = names.length ? names : [named.trim()];
         for (const raw of bare) {
           const channel = nameOf(t.file, t.fqn, /^\$\{/.test(raw) ? `"${raw}"` : raw) ?? (raw || 'unknown');
-          facts.push({ id: `channel:in:${kind}:${channel}@${m.name}`, family: 'channel', confidence: channel === 'unknown' ? 'inferred' : 'resolved', direction: 'in', kind, channel, method: `${t.name}#${m.name}`, evidence: [`${t.file}:${ann.line ?? m.nameLine}#${m.name}`], why: [`@${ann.name}(${args.slice(0, 80)})`] });
+          facts.push({
+            id: `channel:in:${rule.kind}:${channel}@${m.name}`,
+            family: 'channel',
+            confidence: channel === 'unknown' ? 'inferred' : 'resolved',
+            direction: 'in',
+            kind: rule.kind,
+            channel,
+            method: `${t.name}#${m.name}`,
+            evidence: [`${t.file}:${ann.line ?? m.nameLine}#${m.name}`],
+            why: [`@${ann.name}(${args.slice(0, 80)})`],
+          });
         }
       }
       // Eventuate Tram and Spring Cloud Stream: the channel rides a fluent chain or a binding call.
       for (const c of m.calls ?? []) {
         const nm = c.name ?? '';
-        const evt = nm === 'withChannel' ? 'out' : nm === 'fromChannel' ? 'in' : null;
-        if (evt) {
+        const fluent = FLUENT_RULES.find((r) => r.name === nm);
+        if (fluent) {
           const channel = nameOf(t.file, t.fqn, (c.args ?? [])[0] ?? '') ?? 'unknown';
-          facts.push({ id: `channel:${evt}:kafka:${channel}@${m.name}`, family: 'channel', confidence: channel === 'unknown' ? 'inferred' : 'resolved', direction: evt, kind: 'kafka', channel, method: `${t.name}#${m.name}`, via: 'eventuate', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${t.name}#${m.name} ${nm}(${(c.args ?? [])[0] ?? ''})`] });
+          facts.push({
+            id: `channel:${fluent.dir}:${fluent.kind}:${channel}@${m.name}`,
+            family: 'channel',
+            confidence: channel === 'unknown' ? 'inferred' : 'resolved',
+            direction: fluent.dir,
+            kind: fluent.kind,
+            channel,
+            method: `${t.name}#${m.name}`,
+            via: 'eventuate',
+            evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`],
+            why: [`${t.name}#${m.name} ${nm}(${(c.args ?? [])[0] ?? ''})`],
+          });
           continue;
         }
-        if (nm === 'andForAggregateType') {
+        const aggregate = AGGREGATE_RULES.find((r) => r.name === nm);
+        if (aggregate) {
           const agg = String((c.args ?? [])[0] ?? '').replace(/\.class$/, '').split('.').pop();
-          facts.push({ id: `channel:in:kafka:${agg}@${m.name}`, family: 'channel', confidence: 'inferred', direction: 'in', kind: 'kafka', channel: agg, method: `${t.name}#${m.name}`, via: 'aggregate', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`subscribes to aggregate ${agg}`] });
+          facts.push({
+            id: `channel:${aggregate.dir}:${aggregate.kind}:${agg}@${m.name}`,
+            family: 'channel',
+            confidence: 'inferred',
+            direction: aggregate.dir,
+            kind: aggregate.kind,
+            channel: agg,
+            method: `${t.name}#${m.name}`,
+            via: 'aggregate',
+            evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`],
+            why: [`subscribes to aggregate ${agg}`],
+          });
           continue;
         }
-        if (/^(stream|to)$/.test(nm)) {
+        const named = NAMED_RULES.find((r) => r.name === nm);
+        if (named) {
           // `.stream(...)` is a channel only when the receiver is one, or when the name is written at the call:
           // an AI client's `stream(config.getMaxTokens())` is not a topic, and a getter inside an expression is
           // not a name. Both conditions are facts from the model, not a name list of frameworks.
-          const recv = (c.recvFqn ?? '').split('.').pop() ?? '';
-          const messaging = /(MessageChannel|StreamBridge|MessageProducer|SubscribableChannel|DirectChannel|Source|Sink)$/.test(recv);
+          const messaging = patternOf('messaging-receivers').test(recvOf(c));
           const argText = String((c.args ?? [])[0] ?? '').trim();
           const written = /^"[^"]*"$/.test(argText) || /^[A-Za-z_$][\w$.]*$/.test(argText);
           if (!messaging && !written) continue;
           const channel = nameOf(t.file, t.fqn, (c.args ?? [])[0] ?? '') ?? 'unknown';
           if (channel === 'unknown') continue;
-          facts.push({ id: `channel:${nm === 'to' ? 'out' : 'in'}:kafka:${channel}@${m.name}`, family: 'channel', confidence: 'resolved', direction: nm === 'to' ? 'out' : 'in', kind: 'kafka', channel, method: `${t.name}#${m.name}`, via: 'stream', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${t.name}#${m.name}.${nm}(${channel})`] });
+          facts.push({
+            id: `channel:${named.dir}:${named.kind}:${channel}@${m.name}`,
+            family: 'channel',
+            confidence: 'resolved',
+            direction: named.dir,
+            kind: named.kind,
+            channel,
+            method: `${t.name}#${m.name}`,
+            via: 'stream',
+            evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`],
+            why: [`${t.name}#${m.name}.${nm}(${channel})`],
+          });
           continue;
         }
-        if (nm === 'publish' && /Publisher$/.test((c.recvFqn ?? '').split('.').pop() ?? '')) {
+        const publisher = PUBLISHER_RULES.find((r) => r.names.includes(nm) && recvOf(c).endsWith(r.recv));
+        if (publisher) {
           // Eventuate publishes carry the channel in the fluent `withChannel`, recorded above; the aggregate is the type.
           const aggSimple = /<\s*(\w+)/.exec((t.supers ?? []).find((x) => /Publisher/.test(x.text ?? ''))?.text ?? '')?.[1];
           const aggFqn = aggSimple ? model.resolveIn(t.file, aggSimple) ?? aggSimple : null;
           const withCh = (m.calls ?? []).find((x) => x.name === 'withChannel');
           const channel = withCh ? nameOf(t.file, t.fqn, (withCh.args ?? [])[0] ?? '') ?? 'unknown' : (aggFqn ?? 'unknown');
-          facts.push({ id: `channel:out:kafka:${channel}@${m.name}`, family: 'channel', confidence: 'inferred', direction: 'out', kind: 'kafka', channel, method: `${t.name}#${m.name}`, via: 'eventuate', evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${t.name}#${m.name} publishes (aggregate ${aggFqn ?? 'unknown'})`] });
+          facts.push({
+            id: `channel:out:${publisher.kind}:${channel}@${m.name}`,
+            family: 'channel',
+            confidence: 'inferred',
+            direction: 'out',
+            kind: publisher.kind,
+            channel,
+            method: `${t.name}#${m.name}`,
+            via: 'eventuate',
+            evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`],
+            why: [`${t.name}#${m.name} publishes (aggregate ${aggFqn ?? 'unknown'})`],
+          });
           continue;
         }
-        if (!SENDS.has(c.name ?? '')) continue;
-        const client = (c.recvFqn ?? '').split('.').pop();
-        if (!CLIENTS.test(client ?? '')) continue;
-        const kind = /Kafka|Stream/.test(client) ? 'kafka' : /Rabbit/.test(client) ? 'rabbit' : 'jms';
+        const send = SEND_RULES.find((r) => r.names.includes(nm) && recvOf(c).endsWith(r.recv));
+        if (!send) continue;
+        const client = recvOf(c);
         const channel = nameOf(t.file, t.fqn, (c.args ?? [])[0] ?? '') ?? 'unknown';
-        facts.push({ id: `channel:out:${kind}:${channel}@${m.name}`, family: 'channel', confidence: channel === 'unknown' ? 'inferred' : 'resolved', direction: 'out', kind, channel, client, method: `${t.name}#${m.name}`, evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`], why: [`${client}.${c.name}(${(c.args ?? [])[0] ?? ''})${condition ? ` under ${condition}` : ''}`], condition });
+        facts.push({
+          id: `channel:out:${send.kind}:${channel}@${m.name}`,
+          family: 'channel',
+          confidence: channel === 'unknown' ? 'inferred' : 'resolved',
+          direction: 'out',
+          kind: send.kind,
+          channel,
+          client,
+          method: `${t.name}#${m.name}`,
+          evidence: [`${t.file}:${c.line ?? m.nameLine}#${m.name}`],
+          why: [`${client}.${c.name}(${(c.args ?? [])[0] ?? ''})${condition ? ` under ${condition}` : ''}`],
+          condition,
+        });
       }
     }
   }

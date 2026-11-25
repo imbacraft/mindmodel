@@ -90,5 +90,8 @@
       ],
       "means": "after-commit"
     }
-  ]
+  ],
+  "patterns": {
+    "no-transaction-args": "\\b(NOT_SUPPORTED|NEVER|SUPPORTS)\\b"
+  }
 }

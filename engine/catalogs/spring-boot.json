@@ -156,5 +156,31 @@
         "parameter"
       ]
     }
-  ]
+  ],
+  "lists": {
+    "boot-start-annotations": [
+      "SpringBootApplication",
+      "SpringBootConfiguration"
+    ],
+    "boot-main-annotations": [
+      "SpringBootApplication",
+      "SpringBootConfiguration",
+      "EnableAutoConfiguration"
+    ],
+    "app-base-types": [
+      "SpringBootServletInitializer"
+    ],
+    "conditional-annotations": [
+      "ConditionalOnProperty",
+      "Profile"
+    ],
+    "switch-annotations": [
+      "Profile",
+      "ConditionalOnProperty",
+      "ConditionalOnMissingBean"
+    ]
+  },
+  "patterns": {
+    "spring-application-receivers": "(^|\\.)SpringApplication(?:Builder)?$"
+  }
 }

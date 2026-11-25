@@ -9,10 +9,11 @@ import { scheduleFacts } from './schedules.mjs';
 import { queries } from '../model/query.mjs';
 import { declaredId, targetIds } from '../model/targets.mjs';
 import { simple } from '../core/names.mjs';
+import { patternOf } from '../catalogs/catalog.mjs';
 
 const normFqn = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
-const STATUS_NAME = /(?:Status|State)$/;
-const STATUS_FIELD = /^(?:status|state)$/i;
+const STATUS_NAME = patternOf('status-type-name');
+const STATUS_FIELD = patternOf('status-field-name');
 const NO_SETTER = 'no setter found by the engine (check the code before saying it is never set)';
 const HOW = {
   chooser: 'chosen by a switch/return',

@@ -3,7 +3,7 @@
 // Paths built from constants are evaluated through the model; a part that cannot be resolved becomes `{?}` and the
 // fact says so, because a half-printed path is worse than an honest hole.
 import assert from 'node:assert';
-import { annotationIndex, meanHit, simpleMeans } from '../catalogs/catalog.mjs';
+import { annotationIndex, meanHit, patternOf, simpleMeans } from '../catalogs/catalog.mjs';
 import { evalString, splitTop } from '../core/strings.mjs';
 import { normalizePath } from '../core/paths.mjs';
 import { weakest } from '../core/rank.mjs';
@@ -24,7 +24,7 @@ function pathExpr(entry, args = '') {
 // The verb an annotation declares, or the one named in `method = RequestMethod.X`.
 function verbOf(entry, args = '') {
   if (entry.verb) return entry.verb;
-  const m = /RequestMethod\.(\w+)/.exec(args);
+  const m = patternOf('request-method-enum').exec(args);
   return m ? m[1] : (entry.verbFromArg?.default ?? 'ANY');
 }
 

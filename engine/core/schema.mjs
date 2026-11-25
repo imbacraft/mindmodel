@@ -39,6 +39,10 @@ export function checkSchema(v, s, defs, at, err) {
       if (s.properties[k]) checkSchema(x, s.properties[k], defs, `${at}.${k}`, err);
       else if (s.additionalProperties === false) err(`${at}: unknown field "${k}"`);
   }
+  // A schema for every key of a map (`additionalProperties: {…}`): each value is checked against it.
+  if (type === 'object' && s.additionalProperties && typeof s.additionalProperties === 'object')
+    for (const [k, x] of Object.entries(v))
+      if (!s.properties?.[k]) checkSchema(x, s.additionalProperties, defs, `${at}.${k}`, err);
 }
 
 {
@@ -56,6 +60,11 @@ export function checkSchema(v, s, defs, at, err) {
     '$.b[1]: expected string, got integer',
     '$: unknown field "c"',
   ]);
+  // A map's keys each take the schema of its values.
+  const m = [],
+    n = { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } };
+  checkSchema({ ok: ['a'], bad: ['a', 2] }, n, {}, '$', (x) => m.push(x));
+  assert.deepStrictEqual(m, ['$.bad[1]: expected string, got integer']);
   // A list of types: either is accepted, anything else names both.
   const t = [],
     u = { type: ['object', 'null'] };

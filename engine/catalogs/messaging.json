@@ -96,5 +96,275 @@
         "createContext": "jakarta.jms.JMSContext"
       }
     }
-  ]
+  ],
+  "lists": {
+    "message-driven-annotations": [
+      "MessageDriven"
+    ],
+    "listener-types": [
+      "MessageListener",
+      "MessageDrivenBean"
+    ],
+    "consumer-poll-methods": [
+      "poll",
+      "nextDelivery",
+      "receive",
+      "receiveNoWait"
+    ]
+  },
+  "patterns": {
+    "messaging-receivers": "(MessageChannel|StreamBridge|MessageProducer|SubscribableChannel|DirectChannel|Source|Sink)$"
+  },
+  "tables": {
+    "channel-rules": [
+      {
+        "kind": "kafka",
+        "dir": "in",
+        "annotation": "KafkaListener",
+        "arg": "topics"
+      },
+      {
+        "kind": "jms",
+        "dir": "in",
+        "annotation": "JmsListener",
+        "arg": "destination"
+      },
+      {
+        "kind": "rabbit",
+        "dir": "in",
+        "annotation": "RabbitListener",
+        "arg": "queues"
+      },
+      {
+        "kind": "sqs",
+        "dir": "in",
+        "annotation": "SqsListener",
+        "arg": "queues"
+      },
+      {
+        "kind": "stream",
+        "dir": "in",
+        "annotation": "StreamListener",
+        "arg": "value"
+      },
+      {
+        "kind": "kafka",
+        "dir": "out",
+        "recv": "KafkaTemplate",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "kafka",
+        "dir": "out",
+        "recv": "KafkaProducer",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "kafka",
+        "dir": "out",
+        "recv": "StreamBridge",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "out",
+        "recv": "JmsTemplate",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "out",
+        "recv": "JMSProducer",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "out",
+        "recv": "JMSContext",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "out",
+        "recv": "MessageProducer",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "rabbit",
+        "dir": "out",
+        "recv": "RabbitTemplate",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "sqs",
+        "dir": "out",
+        "recv": "SqsClient",
+        "names": [
+          "send",
+          "convertAndSend",
+          "publish",
+          "sendAndReceive",
+          "convertSendAndReceive",
+          "syncSend"
+        ]
+      },
+      {
+        "kind": "kafka",
+        "dir": "out",
+        "name": "withChannel",
+        "via": "eventuate"
+      },
+      {
+        "kind": "kafka",
+        "dir": "in",
+        "name": "fromChannel",
+        "via": "eventuate"
+      },
+      {
+        "kind": "kafka",
+        "dir": "in",
+        "name": "forAggregateType",
+        "via": "aggregate"
+      },
+      {
+        "kind": "kafka",
+        "dir": "in",
+        "name": "andForAggregateType",
+        "via": "aggregate"
+      },
+      {
+        "kind": "kafka",
+        "dir": "out",
+        "recv": "Publisher",
+        "names": [
+          "publish"
+        ],
+        "publisher": true
+      },
+      {
+        "kind": "kafka",
+        "dir": "in",
+        "recv": "StreamsBuilder",
+        "name": "stream",
+        "named": true
+      },
+      {
+        "kind": "kafka",
+        "dir": "out",
+        "name": "to",
+        "named": true
+      },
+      {
+        "kind": "kafka",
+        "dir": "in",
+        "consumer": true,
+        "recv": "KafkaConsumer",
+        "names": [
+          "subscribe",
+          "basicConsume",
+          "createConsumer"
+        ]
+      },
+      {
+        "kind": "rabbit",
+        "dir": "in",
+        "consumer": true,
+        "recv": "Channel",
+        "names": [
+          "subscribe",
+          "basicConsume",
+          "createConsumer"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "in",
+        "consumer": true,
+        "recv": "Session",
+        "names": [
+          "subscribe",
+          "basicConsume",
+          "createConsumer"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "in",
+        "consumer": true,
+        "recv": "JMSContext",
+        "names": [
+          "subscribe",
+          "basicConsume",
+          "createConsumer"
+        ]
+      },
+      {
+        "kind": "jms",
+        "dir": "in",
+        "consumer": true,
+        "recv": "MessageConsumer",
+        "names": [
+          "subscribe",
+          "basicConsume",
+          "createConsumer"
+        ]
+      }
+    ]
+  }
 }

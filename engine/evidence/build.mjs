@@ -4,10 +4,10 @@
 import assert from 'node:assert';
 import { childOf, childrenOf, parseXml, textOf } from './xml.mjs';
 import { resolvePlaceholders } from '../core/placeholders.mjs';
+import { listOf } from '../catalogs/catalog.mjs';
 
-const SCOPES = /^(compile|provided|runtime|test|system|import)$/;
-const GRADLE_CONFIGS =
-  'implementation|api|compileOnly|compileOnlyApi|runtimeOnly|testImplementation|testCompileOnly|testRuntimeOnly|annotationProcessor|kapt|ksp|providedCompile|providedRuntime|developmentOnly|testFixturesImplementation';
+// The Gradle configurations a dependency can sit in, from the vocabulary; the regexes below are built from them.
+const GRADLE_CONFIGS = [...listOf('gradle-configurations')].join('|');
 
 const uniq = (xs) => [...new Set(xs)];
 

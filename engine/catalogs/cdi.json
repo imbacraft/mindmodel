@@ -349,5 +349,14 @@
         "method"
       ]
     }
-  ]
+  ],
+  "lists": {
+    "named-annotations": [
+      "Named"
+    ],
+    "observer-annotations": [
+      "Observes",
+      "ObservesAsync"
+    ]
+  }
 }

@@ -712,5 +712,10 @@
         "parameter"
       ]
     }
-  ]
+  ],
+  "lists": {
+    "order-annotations": [
+      "Order"
+    ]
+  }
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { accessFor } from './security.mjs';
 import { superBindings } from '../model/type-args.mjs';
 import { simple } from '../core/names.mjs';
+import { listOf, patternOf } from '../catalogs/catalog.mjs';
 
 // Flow skeletons: a path from an entry point to at least one effect. An effect is a state write (a
 // repository or EntityManager call, from the state family), an outside call (HTTP, mail, messaging, from the outside
@@ -18,8 +19,8 @@ import { simple } from '../core/names.mjs';
 // weight. An effect that one unconditional trail also reaches is not conditional at all — some path always runs it.
 
 const ENTRY_VERB = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'ANY']);
-const SCHEDULE = /(?:^|\.)(Scheduled|Schedules|Schedule)$/;
-const LISTENER = /(?:^|\.)(JmsListener|RabbitListener|KafkaListener|MessageDriven|EventListener)$/;
+const SCHEDULE = listOf('scheduled-annotations');
+const LISTENER = listOf('listener-annotations');
 const BOUNDARY = new Set(['requires-new', 'after-commit', 'outside-in-transaction', 'outside-then-save']);
 // A consumer loop is walked further than a request: its effect is often four or five hops away.
 const WORKER_DEPTH = 18;
@@ -28,10 +29,9 @@ const FLOW_DEPTH = 5;
 // A worker is summarized by reachability, not by every trail: the alert pipeline alone has hundreds of call chains,
 // and what a reader needs is the ordered first sighting of each method plus every effect it can reach.
 const WORKER_METHODS = 1500;
-const MESSAGING = /^(Kafka|Rabbit|RabbitMQ|JMS|SQS|PubSub|Messaging|MQ|AMQP)$/i;
+const MESSAGING = patternOf('message-kind');
 // Call names that are plumbing in any program: they are never a hop and never an effect.
-const NOISE =
-  /^(?:(?:get|set|is|has|to|of|with|from)[A-Z_$]|name$|size$|isEmpty$|isBlank$|orElse$|ifPresent$|toString$|equals$|hashCode$|valueOf$|stream$|collect$|map$|filter$|forEach$|add$|put$|remove$|iterator$|next$|parse$|now$|split$|trim$|length$|charAt$|contains$|matches$|matcher$|test$|apply$|accept$|run$|execute$|warn$|info$|error$|debug$|trace$|lock$|unlock$|requireNonNull$|printStackTrace$|format$|append$|build$|call$)/;
+const NOISE = patternOf('plumbing-calls');
 
 // The rank, in one place. Every weight is a fact count or a fixed kind; nothing here reads a method or type name
 // except the entry verb. Changing a weight changes the digest order and nothing else.
@@ -203,8 +203,8 @@ export function flowEntries(model, endpoints = [], selected = []) {
   for (const t of model.types.values())
     for (const m of t.methods) {
       const names = (m.ann ?? []).map((a) => a.fqn ?? a.name);
-      if (names.some((n) => SCHEDULE.test(n))) entries.push({ kind: 'job', t, m });
-      else if (names.some((n) => LISTENER.test(n)) || (m.name === 'onMessage' && isListener(t)))
+      if (names.some((n) => SCHEDULE.has(simple(n)))) entries.push({ kind: 'job', t, m });
+      else if (names.some((n) => LISTENER.has(simple(n))) || (m.name === 'onMessage' && isListener(t)))
         entries.push({ kind: 'listener', t, m });
     }
   for (const t of model.types.values()) {
@@ -704,6 +704,6 @@ export function buildFlows(
   return flows.sort((a, b) => b.score - a.score || b.steps.length - a.steps.length || a.id.localeCompare(b.id));
 }
 
-const isListener = (t) => (t.supers ?? []).some((s) => /(?:^|\.)(MessageListener|MessageDrivenBean)$/.test(s.fqn ?? s.text ?? ''));
+const isListener = (t) => (t.supers ?? []).some((s) => listOf('listener-types').has(simple(s.fqn ?? s.text ?? '')));
 // A model built from source carries `abstract`; one built from the dump carries the modifier list.
 const isAbstract = (t) => !!t?.abstract || (t?.modifiers ?? []).includes('abstract');

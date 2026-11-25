@@ -82,5 +82,39 @@
         "parameter"
       ]
     }
-  ]
+  ],
+  "maps": {
+    "access-calls": {
+      "permitAll": "anonymous",
+      "authenticated": "authenticated",
+      "hasRole": "role:{literal}",
+      "hasAnyRole": "role:{literal}",
+      "hasAuthority": "authority:{literal}",
+      "hasAnyAuthority": "authority:{literal}",
+      "denyAll": "blocked"
+    },
+    "security-types": {
+      "context-holder": "org.springframework.security.core.context.SecurityContextHolder"
+    }
+  },
+  "lists": {
+    "verifier-types": [
+      "org.springframework.security.authentication.AuthenticationManager",
+      "org.springframework.security.authentication.ProviderManager",
+      "org.springframework.security.oauth2.jwt.JwtDecoder",
+      "io.jsonwebtoken.JwtParser",
+      "java.security.MessageDigest",
+      "javax.crypto.Mac",
+      "java.security.Signature",
+      "org.springframework.security.crypto.password.PasswordEncoder",
+      "org.springframework.security.oauth2.server.resource.web.BearerTokenResolver"
+    ],
+    "caller-types": [
+      "Authentication",
+      "Principal"
+    ]
+  },
+  "patterns": {
+    "http-method-enum": "HttpMethod\\.(\\w+)"
+  }
 }

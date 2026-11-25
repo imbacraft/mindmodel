@@ -2,12 +2,12 @@
 // on a repository-typed receiver whose target (or name) mutates: the entity is the repository's type argument, so the
 // fact says what changed, not just that something was called.
 import assert from 'node:assert';
-import { annotationIndex, meanHit, typeIndex } from '../catalogs/catalog.mjs';
+import { annotationIndex, meanHit, patternOf, typeIndex } from '../catalogs/catalog.mjs';
 import { typeArgsOf } from '../model/type-args.mjs';
 import { citeOf, factOf, withUniqueIds } from './facts.mjs';
 
-const WRITE = /^(save|saveAll|saveAndFlush|delete|deleteAll|deleteById|deleteBy|remove|removeIf|update|insert|persist|merge|flush)/;
-const CACHE_ACTION = { Cacheable: 'read', CachePut: 'write', CacheEvict: 'evict' };
+// A repository method whose name says it writes: a prefix of the vocabulary's write names.
+const WRITE = patternOf('repository-write-prefixes');
 
 // The repository's entity: the first type argument of the catalog supertype it extends (`JpaRepository<Order, Long>`).
 function entityOf(model, type) {
@@ -107,7 +107,7 @@ export function extractState(model, selected) {
       for (const a of m.ann ?? []) {
         const hit = meanHit(index, a.fqn, 'method');
         if (hit?.entry?.means !== 'cache') continue;
-        const action = CACHE_ACTION[(a.fqn ?? a.name).split('.').pop()];
+        const action = hit.entry.action;
         facts.push(
           factOf({
             id: `state:cache ${action}@${m.id}`,
@@ -168,7 +168,7 @@ export function extractState(model, selected) {
       catalog: {
         id: 'spring-data',
         types: [{ fqn: 'org.springframework.data.jpa.repository.JpaRepository', means: 'repository' }],
-        annotations: [{ fqn: 'org.springframework.cache.annotation.CacheEvict', means: 'cache' }],
+        annotations: [{ fqn: 'org.springframework.cache.annotation.CacheEvict', means: 'cache', action: 'evict' }],
       },
     },
   ];
