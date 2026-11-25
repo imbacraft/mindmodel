@@ -37,7 +37,6 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    > Plugin root: `${CLAUDE_PLUGIN_ROOT}`
    > Rules: `${CLAUDE_PLUGIN_ROOT}/rules/core.md` (read it all) · section rules: `${CLAUDE_PLUGIN_ROOT}/rules/sections.md` (open one section at a time) · JSON shape: `node ${CLAUDE_PLUGIN_ROOT}/engine/shape.mjs`
    > Facts digest: `<root>/mindmodel/.work/facts.md` (details in `facts.json`)
-   > Code excerpts: `<root>/mindmodel/.work/excerpts.md` (read once, right after the digest; every heading is a citation)
    > Validator: `${CLAUDE_PLUGIN_ROOT}/engine/validate.mjs`
    > Write `<root>/mindmodel/mindmodel.json` and make it pass the validator.
 
@@ -51,7 +50,8 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    ```
    `version` is `version` in `<plugin>/.claude-plugin/plugin.json`, `validatorWarnings` the warning count on the
    validator's last line (0 if it printed none), `spotcheck` the `n/10` from the writer's spot-check line. `tokens`
-   excludes cache reads, so `toolUses` is the cost proxy: cost grows with turns × context. Every writer, rules or
+   excludes cache reads. `toolUses` counts calls, not turns — parallel calls share a turn — so compare runs by
+   `durationMs` and the owner's transcript check, never by the call count. Every writer, rules or
    engine change is judged by this file, so keep the numbers exact and the file small.
 
 5. **Save the findings.** Do this before rendering: the writer subagent is not reliably allowed to write this file (a harness refused it once), so the blocks in its reply are the source of truth. Write `<root>/mindmodel/.work/findings.md` in exactly this shape:

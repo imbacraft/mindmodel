@@ -12,7 +12,6 @@ import { bindingRates } from './model/calls.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
 import { dumpFor } from './run.mjs';
 import { resolve as resolveClasspath, tildify } from './classpath.mjs';
-import { writeExcerpts } from './excerpts.mjs';
 import { open as openDump } from './dump.mjs';
 import { annotationFqns, annotationIndex, loadCatalogs, meanOf, selectCatalogs, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
@@ -22,6 +21,7 @@ import { extractSchedules } from './extract/schedules.mjs';
 import {
   anonymousWrites,
   authSources,
+  checkSummary,
   identityWarnings,
   methodSecurityFacts,
   securityModel as buildSecurityModel,
@@ -1456,7 +1456,7 @@ export function summarize(f) {
 
   sec('Security model (prefixes, user sources, tenant; copy into "How security works")');
   for (const p of (f.securityModel?.prefixes ?? []).slice(0, 14))
-    L.push(`- ${p.prefix}: ${p.access} — ${p.endpoints} endpoint(s)${p.checked ? `, ${p.checked} use ${p.checks[0]}` : ''} (e.g. ${p.example})`);
+    L.push(`- ${p.prefix}: ${p.access} — ${p.endpoints} endpoint(s)${p.checked ? `, ${checkSummary(p)}` : ''} (e.g. ${p.example})`);
   if ((f.securityModel?.prefixes ?? []).length > 14) L.push(`- +${f.securityModel.prefixes.length - 14} more prefixes in facts.json`);
   if (f.securityModel?.userSources.length)
     L.push(`- the user comes from: ${f.securityModel.userSources.map((u) => `${u.kind} (${u.cites[0]})`).join('; ')}`);
@@ -1645,16 +1645,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const digestStart = Date.now();
   const digest = summarize(facts);
   facts.timings.digest = Date.now() - digestStart;
-  const excerptsStart = Date.now();
-  const code = writeExcerpts(root, facts, facts.model);
-  facts.timings.excerpts = Date.now() - excerptsStart;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(facts, null, 1));
   fs.writeFileSync(out.replace(/\.json$/, '.md'), digest);
   const f = facts;
   const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
   console.log(
-    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.schedules.length} scheduled job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'} · ${Object.entries(f.timings).map(([k, v]) => `${k} ${seconds(v)}`).join(' ')} · excerpts ${Math.round(code.bytes / 1024)} KB`,
+    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.schedules.length} scheduled job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'} · ${Object.entries(f.timings).map(([k, v]) => `${k} ${seconds(v)}`).join(' ')}`,
   );
   if (retired) console.log(`previous map kept at ${retired}`);
 }

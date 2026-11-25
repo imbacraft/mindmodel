@@ -354,3 +354,165 @@ test('classpath: a warm scan asks Maven nothing, and the answer is the one it ca
     fs.rmSync(m2, { recursive: true, force: true });
   }
 });
+
+// F1/F2: the holder and its element type both live in the organisation's shared jar, and the filter names two cookies
+// through a helper that filters the cookie stream. This is the shape that produced "no tenant source found" on a real
+// project while every other test passed.
+const CTX = L(
+  'package com.acme.holder;',
+  'public final class Ctx {',
+  '  private final String userId;',
+  '  private final String region;',
+  '  private Ctx(Builder b) { this.userId = b.userId; this.region = b.region; }',
+  '  public String userId() { return userId; }',
+  '  public String region() { return region; }',
+  '  public static Builder builder() { return new Builder(); }',
+  '  public static final class Builder {',
+  '    private String userId;',
+  '    private String region;',
+  '    public Builder userId(String v) { this.userId = v; return this; }',
+  '    public Builder region(String v) { this.region = v; return this; }',
+  '    public Ctx build() { return new Ctx(this); }',
+  '  }',
+  '}',
+);
+const HOLDER_OF_CTX = L(
+  'package com.acme.holder;',
+  'public final class ContextHolder {',
+  '  private static final ThreadLocal<Ctx> CONTEXT = new ThreadLocal<>();',
+  '  public static void setContext(Ctx value) { CONTEXT.set(value); }',
+  '  public static Ctx getContext() { return CONTEXT.get(); }',
+  '  public static void clearContext() { CONTEXT.remove(); }',
+  '}',
+);
+const TWO_COOKIE_FILTER = L(
+  'package shop;',
+  'import com.acme.holder.ContextHolder;',
+  'import com.acme.holder.Ctx;',
+  'import jakarta.servlet.http.Cookie;',
+  'import jakarta.servlet.http.HttpServletRequest;',
+  'import java.util.Arrays;',
+  'public class ContextFilter {',
+  '  private static final String A_COOKIE = "mm_user";',
+  '  private static final String B_COOKIE = "mm_tenant";',
+  '  private final UserPort users;',
+  '  public ContextFilter(UserPort users) { this.users = users; }',
+  '  public void doFilterInternal(HttpServletRequest request) {',
+  '    try {',
+  '      String a = firstCookieValueOrBlank(request, A_COOKIE);',
+  '      String b = firstCookieValueOrBlank(request, B_COOKIE);',
+  '      if (a != null && !a.isEmpty()) {',
+  '        store(ctx(a));',
+  '      } else if (b != null) {',
+  '        store(Long.valueOf(b));',
+  '      }',
+  '    } finally {',
+  '      ContextHolder.clearContext();',
+  '    }',
+  '  }',
+  '  private void store(Ctx ctx) { ContextHolder.setContext(ctx); }',
+  '  private void store(Long id) {',
+  '    User u = users.findById(id);',
+  '    ContextHolder.setContext(Ctx.builder().userId(u.id()).region(u.region()).build());',
+  '  }',
+  '  private Ctx ctx(String userId) { return Ctx.builder().userId(userId).region("eu").build(); }',
+  '  private static String firstCookieValueOrBlank(HttpServletRequest request, String... names) {',
+  '    if (request.getCookies() == null) return "";',
+  '    return Arrays.stream(request.getCookies())',
+  '        .filter(cookie -> Arrays.asList(names).contains(cookie.getName()))',
+  '        .map(Cookie::getValue)',
+  '        .findFirst().orElse("");',
+  '  }',
+  '}',
+);
+const USER_PORT = L(
+  'package shop;',
+  'public interface UserPort {',
+  '  User findById(Long id);',
+  '}',
+);
+const USER = L('package shop;', 'public record User(String id, String region) {}');
+
+/** The two-cookie project: the filter, the port it loads a user through, and one module that depends on the holder. */
+function cookieProject() {
+  const dir = fs.mkdtempSync(path.join(real(os.tmpdir()), 'mindmodel-cookiefixture-'));
+  fs.writeFileSync(
+    path.join(dir, 'pom.xml'),
+    L(
+      '<project xmlns="http://maven.apache.org/POM/4.0.0">',
+      '  <modelVersion>4.0.0</modelVersion>',
+      '  <groupId>shop</groupId><artifactId>fixture</artifactId><version>1.0</version>',
+      '  <packaging>pom</packaging>',
+      '  <modules><module>app</module></modules>',
+      '</project>',
+    ),
+  );
+  const src = path.join(dir, 'app/src/main/java/shop');
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'app/pom.xml'), POM('app', [['mindmodelfixture', 'holder', '1.0']]));
+  fs.writeFileSync(path.join(src, 'ContextFilter.java'), TWO_COOKIE_FILTER);
+  fs.writeFileSync(path.join(src, 'UserPort.java'), USER_PORT);
+  fs.writeFileSync(path.join(src, 'User.java'), USER);
+  return dir;
+}
+
+const filterFacts = (dir) => {
+  const facts = scan(dir);
+  const users = facts.securityModel?.userSources ?? [];
+  return {
+    facts,
+    users,
+    warnings: facts.securityWarnings ?? [],
+    tenant: facts.tenantSources ?? [],
+    note: facts.tenantSourcesNote,
+  };
+};
+
+test('F1: a holder whose element is in the jar becomes a user source, and the tenant note goes', { skip }, () => {
+  const dir = cookieProject();
+  const lib = compile(fs.mkdtempSync(path.join(real(os.tmpdir()), 'mindmodel-lib-')), {
+    'com/acme/holder/Ctx.java': CTX,
+    'com/acme/holder/ContextHolder.java': HOLDER_OF_CTX,
+  });
+  const m2 = localRepository(home2, lib);
+  try {
+    const withPath = withEnv({ MINDMODEL_M2: m2, MINDMODEL_CLASSPATH: 'auto' }, () => filterFacts(dir));
+    assert.equal(withPath.facts.classpath.mode, 'maven-offline', `resolved: ${withPath.facts.classpath.reason ?? ''}`);
+    // The store is a security sink because the element is a value class in the jar, and the cookies are the sources.
+    assert.ok(withPath.users.length >= 1, `no user source: ${JSON.stringify(withPath.users)}`);
+    assert.ok(
+      withPath.users.some((u) => String(u.why ?? '').includes('ContextHolder.setContext')),
+      `the user source names the holder: ${JSON.stringify(withPath.users)}`,
+    );
+    assert.equal(withPath.note, undefined, 'the tenant note must be gone once the store is found');
+    assert.ok(withPath.tenant.length >= 1, `no tenant source: ${JSON.stringify(withPath.tenant)}`);
+    // F2: both cookies are named, from the constant each call site passes.
+    const names = withPath.users.map((u) => u.kind).join(' ');
+    assert.match(names, /mm_user/, `the first cookie: ${names}`);
+    assert.match(names, /mm_tenant/, `the second cookie: ${names}`);
+    // No identity warning here, and that is the documented gap (docs/round-4-status.md, F1 note 2): with the classpath
+    // the store is typed, the parameter-only sink is skipped as a forward, and the caller frame builds its value through
+    // a project factory (`ctx(a)`) that `builtValue` does not follow. Without the classpath the shape-only sink does
+    // warn, because it has no forwarding rule to lose to.
+    assert.equal(withPath.warnings.filter((w) => w.kind === 'client-asserted-identity').length, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(m2, { recursive: true, force: true });
+  }
+});
+
+test('F1: without the jar the same store is inferred, with its element unresolved', { skip }, () => {
+  const dir = cookieProject();
+  try {
+    const off = withEnv({ MINDMODEL_CLASSPATH: 'off' }, () => filterFacts(dir));
+    assert.equal(off.facts.classpath.mode, 'none');
+    // The store is still there: found by its try/finally shape, inferred, and never dropped.
+    assert.ok(off.tenant.length >= 1, `the shape alone must still give a store: ${JSON.stringify(off.tenant)}`);
+    assert.equal(off.tenant[0].confidence, 'inferred');
+    assert.equal(off.tenant[0].via, 'try-finally-pattern');
+    const unresolved = off.warnings.some((w) => (w.why ?? []).join(' ').includes('element unresolved'));
+    assert.ok(unresolved || off.warnings.length === 0, `an unknown element is said, not guessed: ${JSON.stringify(off.warnings)}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

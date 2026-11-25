@@ -349,9 +349,38 @@ export function requestReads(entryId, q, db, model, depth = 2, methods = null) {
   const cookieRecv = (c) => libraryCall(c) && simpleType(c.recv.type) === 'Cookie';
   // A cookie is only read where one is in reach: `getName()` names it, `getValue()` reads it. Without that, a helper
   // comparing its parameter to a constant is a host check, not a cookie name.
+  // A cookie is only read where one is in reach: `getName()`/`getValue()` on a `Cookie`, or the request's cookie stream
+  // (`getCookies()`, which a helper then filters). Without that, a helper comparing its parameter to a constant is a
+  // host check, not a cookie name.
   const cookieInReach = reach.some(({ id }) =>
-    db.callsOf(id).some((c) => ['getName', 'getValue'].includes(c.name) && cookieRecv(c)),
+    db.callsOf(id).some(
+      (c) => (['getName', 'getValue'].includes(c.name) && cookieRecv(c)) || (c.name === 'getCookies' && requestRecv(c)),
+    ),
   );
+  /**
+   * The parameter that carries cookie names in a helper: the `String[]` (or `String...`) parameter of a method that
+   * reads the request's cookie stream (`getCookies()`) and turns it into values (`Cookie::getValue`). Both structural
+   * facts are call rows; the type is the declaration's own. No text is read, and a helper without such a parameter names
+   * nothing, so a method that merely calls `getCookies()` grants no cookie.
+   */
+  const cookieNamesParam = (methodId) => {
+    const member = memberAt(db, methodId);
+    // The dump writes the type as the declaration does (`String[]`, qualified only when the source writes it so), and a
+    // varargs parameter says so on its own flag — `baseType` strips the brackets, so the flag is what tells them apart.
+    const isStringArray = (p) => {
+      const written = String(p.type ?? '').trim();
+      const bare = /^(?:java\.lang\.)?String$/.test(baseType(written));
+      return bare && (p.varargs === true || /\[\]$/.test(written) || /\.\.\.$/.test(written));
+    };
+    const index = (member?.params ?? []).findIndex(isStringArray);
+    if (index < 0) return -1;
+    const calls = db.callsOf(methodId);
+    const readsCookies = calls.some((c) => c.name === 'getCookies' && requestRecv(c));
+    const mapsValue = calls.some((c) =>
+      (c.args ?? []).some((a) => a.kind === 'methodRef' && String(a.text ?? '').includes('::getValue')),
+    );
+    return readsCookies && mapsValue ? index : -1;
+  };
   for (const { id } of reach) {
     const member = memberAt(db, id);
     const file = member?.pos?.file ?? member?.file ?? null;
@@ -394,6 +423,28 @@ export function requestReads(entryId, q, db, model, depth = 2, methods = null) {
           // `"actAs".equals(c.getName())`: the name is the receiver, and the dump records a receiver's written text,
           // not its value. Unresolved with that reason, never parsed out of the text.
           unresolved.push({ ...siteOf(c), what: 'cookie-name', reason: 'receiver-is-not-a-value' });
+      }
+    }
+    // A helper that filters the cookie stream by its own parameter (`Arrays.asList(names).contains(cookie.getName())`)
+    // names each cookie at its call site: the constant the caller passes is the name, and one call site is one read.
+    // Without the classpath the helper's `Cookie` is untyped, so this never fires on a guess.
+    if (cookieInReach) {
+      const namesIndex = cookieNamesParam(id);
+      for (const [index, param] of (member.params ?? []).entries()) {
+        if (!param.name || index !== namesIndex) continue;
+        for (const caller of reach) {
+          if (caller.id === id) continue;
+          for (const c of db.callsOf(caller.id)) {
+            if (!targetIds(c).includes(id)) continue;
+            const name = constantArg(q, c, index);
+            if (!name) {
+              unresolved.push({ ...siteOf(c), what: 'cookie-name', reason: 'helper-callsite-not-constant' });
+              continue;
+            }
+            if (reads.some((r) => r.cite === cite(c) && r.name === name)) continue;
+            reads.push({ kind: 'cookie', name, value: null, cite: cite(c), call: c.id, method: caller.id, via: 'helper' });
+          }
+        }
       }
     }
     // A helper that compares its own parameter to a constant: the cookie name is what the caller passes.
@@ -754,7 +805,24 @@ const isVerifierType = (type, model) => {
 // A value of a type the project declares — a User, a ResolvedTenantContext — is an identity once a holder keeps it.
 // A String, a primitive or a JDK type (an IP, a request id, an idempotency key) is request bookkeeping: that is the
 // whole distinction, and it is the value's type, never the holder's name.
-const isIdentityType = (model, written) => Boolean(projectType(model, written));
+// A JDK type is bookkeeping even when it has fields: a String, a number, a UUID, a Locale, an InetAddress.
+const JDK_NAMESPACE = /^(?:java|javax|jakarta|sun|jdk)\./;
+
+/**
+ * The type that makes a holder's value an identity, or null. A project type always; a library type when the classpath
+ * read it as a value class — at least one field, not a JDK type. The holder's element often lives in the organisation's
+ * shared jar next to the holder (`ThreadLocal<Ctx>` where `Ctx` is no project's type), and a name-only guess is exactly
+ * what this must not do: the dump's own rows decide, and a stub with no members is unresolved rather than an identity.
+ */
+const isIdentityType = (model, written, db = null) => {
+  const project = projectType(model, written);
+  if (project) return project;
+  const text = baseType(written);
+  if (!text) return null;
+  const row = db?.library?.get(text) ?? [...(db?.library?.values() ?? [])].find((r) => simple(r.fqn) === simple(text));
+  if (!row || row.unresolved || JDK_NAMESPACE.test(row.fqn ?? text)) return null;
+  return (row.fields ?? []).length ? row.fqn : null;
+};
 
 /**
  * The stores a method performs: `stores()`'s own list, plus the store-shaped calls it could not tie to a receiver — a
@@ -765,6 +833,11 @@ const isIdentityType = (model, written) => Boolean(projectType(model, written));
 function identityStores(q, id, db) {
   const { stores, unresolved } = q.stores(id, 0);
   const kept = stores.filter((s) => s.op !== 'clear');
+  // The request-scoped shape (set in a try, cleared in its finalizer) when no classpath was there to type the holder.
+  // One store is one site: a store the reach already found as a typed holder is not counted twice.
+  const seen = new Set(kept.map((s) => `${s.file}:${s.line}`));
+  for (const s of q.scopedStores(id).stores)
+    if (s.op !== 'clear' && !seen.has(`${s.file}:${s.line}`)) kept.push({ ...s, element: null });
   for (const gap of unresolved)
     if (/%?(setAuthentication|setContext)$/.test(gap.name ?? '') && /receiver-untyped$/.test(gap.reason ?? ''))
       kept.push({
@@ -831,8 +904,25 @@ function securitySinks(entryId, q, db, model, holders) {
         continue;
       }
       if (store.kind !== 'holder') continue; // a request attribute is a user source, not a security sink
-      const holder = holders.find((h) => h.field === store.field);
-      if (!holder || !isIdentityType(model, holder.element)) continue;
+      const holder = store.field ? holders.find((h) => h.field === store.field) : null;
+      if (!holder) {
+        // A store found by shape: the holder's type is in no jar this run could read, so its element is unknown. That is
+        // an inferred sink, not a silence — the store is real and the value it carries may be the caller.
+        if (store.via !== 'try-finally-pattern') continue;
+        sinks.push({
+          method: label,
+          what: `thread-local ${simpleType(store.holder)} (element unresolved)`,
+          cite: `${store.file}:${store.line}`,
+          arg: args[0] ?? null,
+          element: 'unresolved',
+          confidence: 'inferred',
+          // Evidence, not an accusation: with the element unknown the engine cannot tell a caller from a tenant, and a
+          // warning that says "any client can claim that identity" about a tenant store would be wrong.
+          inferred: true,
+        });
+        continue;
+      }
+      if (!isIdentityType(model, holder.element, db)) continue;
       // A setter that only forwards its own parameter is the caller's store one frame up: the call site carries it,
       // and counting both would make two warnings for one store.
       if (args[0]?.kind === 'param' && params[args[0].index]?.name === args[0].text) continue;
@@ -896,7 +986,7 @@ function projectHolderSlot(hit, call, q, db, model) {
   for (const store of q.stores(hit.id, 0).stores) {
     if (store.kind !== 'holder' || store.op === 'clear') continue;
     const holder = q.holders().holders.find((h) => h.field === store.field);
-    if (!holder || !isIdentityType(model, holder.element)) continue;
+    if (!holder || !isIdentityType(model, holder.element, db)) continue;
     const args = callById(db, store.call)?.args ?? [];
     if (args[0]?.kind !== 'param') continue; // the method builds its own value: found in its own body
     const built = builtValue(q, call, args[0].index, db, model);
@@ -908,7 +998,7 @@ function projectHolderSlot(hit, call, q, db, model) {
 /** The project value built at a call site: the dump says `new` and names the created type. */
 const builtValue = (q, call, i, db, model) => {
   for (const { value } of q.argValue(call, i).values)
-    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.type)) return value;
+    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.type, db)) return value;
   return null;
 };
 
@@ -1015,6 +1105,20 @@ export function authSources(model, _textOf, isTest = () => false, db = null) {
 // whose type the project declares), and no verification call is reachable in the same reach. Anything less certain
 // stays a user source — a ThreadLocal of an IP, a request id or a workspace id is not a caller.
 // One warning per (method, holder): every source that reaches that holder is listed in the one entry.
+/**
+ * A prefix's method checks in one clause: the commonest check with its own count, then how many checks there are. The
+ * old line printed the first check and the count of *every* checked endpoint, which reads as if one check covered them.
+ */
+export const checkSummary = (p) => {
+  const list = p?.checkCounts ?? [];
+  const top = list[0];
+  if (!top) return null;
+  const distinct = list.length;
+  // Against the prefix's endpoints, not against the checked ones: "2 of 2 checked" says nothing about how much of the
+  // prefix the check covers, and the reader's question is how many of the 119 carry it.
+  return `${top.check} on ${top.count} of ${p.endpoints ?? p.checked} endpoint(s)${distinct > 1 ? `, ${distinct} distinct checks` : ''}`;
+};
+
 export function identityWarnings(model, _textOf, isTest = () => false, db = null) {
   const warnings = [];
   const d = db ?? model?.dump ?? null;
@@ -1036,7 +1140,9 @@ export function identityWarnings(model, _textOf, isTest = () => false, db = null
         ...new Map(requestReads(id, q, d, model, 2, methods).reads.map((r) => [`${r.kind}:${r.name}`, r])).values(),
       ];
       const byHolder = new Map();
-      for (const s of sinks) byHolder.set(s.method, [...(byHolder.get(s.method) ?? []), s]);
+      // A warning accuses, so it is built from the sinks whose element type the run could actually read: an inferred
+      // store (element unresolved) is evidence for the user sources, never the reason for a claim about the caller.
+      for (const s of sinks) if (!s.inferred) byHolder.set(s.method, [...(byHolder.get(s.method) ?? []), s]);
       for (const [key, group] of byHolder) {
         const used = reads.filter((r) => group.some((s) => valueReaches(r, s.arg, q, d, Boolean(s.weak))));
         if (!used.length) continue;
@@ -1052,7 +1158,10 @@ export function identityWarnings(model, _textOf, isTest = () => false, db = null
           why: [
             `${t.name}#${m.name} takes the caller from ${used.map((r) => `${r.kind} ${r.name} (${r.cite})`).join(', ')}`,
             `${key} stores it as the caller (${[...new Set(group.map((s) => s.what))].join(', ')}) with no verification ` +
-              'call: any client can claim that identity',
+              'call: any client can claim that identity' +
+              (group.some((s) => s.element === 'unresolved')
+                ? '. The holder\'s element type is unresolved: no classpath read its jar, so the check is by shape'
+                : ''),
           ],
         });
       }
@@ -1076,6 +1185,19 @@ export function identityWarnings(model, _textOf, isTest = () => false, db = null
   assert.ok(isIdentityType(model, 'shop.UserContext'), 'written or qualified');
   assert.ok(!isIdentityType(model, 'String'), 'a String is bookkeeping');
   assert.ok(!isIdentityType(model, 'long'), 'a primitive is bookkeeping');
+  // A holder's element in the organisation's shared jar: a value class, read from the classpath as a stub.
+  const jar = {
+    library: new Map([
+      ['com.acme.Ctx', { fqn: 'com.acme.Ctx', fields: [{ name: 'userId', type: 'java.lang.String' }] }],
+      ['com.acme.Marker', { fqn: 'com.acme.Marker', fields: [] }],
+      ['com.acme.Broken', { fqn: 'com.acme.Broken', unresolved: 'library-class-unreadable' }],
+    ]),
+  };
+  assert.equal(isIdentityType(model, 'com.acme.Ctx', jar), 'com.acme.Ctx', 'a library value type carries an identity');
+  assert.equal(isIdentityType(model, 'com.acme.Marker', jar), null, 'a stub with no state does not');
+  assert.equal(isIdentityType(model, 'com.acme.Broken', jar), null, 'an unreadable class is not a guess');
+  assert.equal(isIdentityType(model, 'java.util.UUID', { library: new Map([['java.util.UUID', { fqn: 'java.util.UUID', fields: [{ name: 'msb' }] }]]) }), null,
+    'a JDK type is bookkeeping even with fields');
   assert.ok(isVerifierType('org.springframework.security.oauth2.jwt.JwtDecoder', model));
   assert.ok(isVerifierType('java.security.MessageDigest', model));
   assert.ok(isVerifierType('shop.JwtTokenService', model));
@@ -1131,7 +1253,8 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
       (f) => f.type === owner || f.method === `${owner}#${String(e.handler ?? '').split('.').pop()}`,
     );
   };
-  const checksCount = (p) => methodSecurity.filter((f) => p.checks.some((c) => c === `${f.annotation}${f.args || ''}`)).length;
+  // `@Ann(arg)`, the way a reader writes it: the annotation's own name, its argument in parentheses when it has one.
+  const checkOf = (f) => `@${simple(f.annotation)}${String(f.args ?? '').trim() ? (String(f.args).trim().startsWith('(') ? f.args.trim() : `(${String(f.args).trim()})`) : ''}`;
   const prefixes = [];
   for (const [prefix, eps] of [...byPrefix.entries()].sort((a, b) => b[1].length - a[1].length)) {
     const accessOfEndpoint = (e) => {
@@ -1164,7 +1287,17 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     const mixed = ranked.length > 1;
     const access = mixed ? `${modal} on ${n} of ${eps.length}` : modal;
     const example = eps.find((e) => accessOfEndpoint(e) === modal) ?? eps[0];
-    const checks = eps.flatMap(checkedFor).map((f) => `${f.annotation}${f.args || ''}`).filter((x, i, a) => a.indexOf(x) === i);
+    // Every check with its own count: one prefix usually carries several (`@PreAuthorize(...)` on some endpoints,
+    // `@RolesAllowed` on others), and printing the first one alone says "these 133 use X" when X is merely the earliest.
+    // Per endpoint, not per fact: one endpoint may carry a class-level check and a method-level one, and a count larger
+    // than the endpoints it describes is nonsense ("on 6 of 2 checked endpoint(s)"). A check counted once per endpoint.
+    const checkHits = new Map();
+    for (const e of eps)
+      for (const c of new Set(checkedFor(e).map(checkOf))) checkHits.set(c, (checkHits.get(c) ?? 0) + 1);
+    const checkCounts = [...checkHits.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([check, count]) => ({ check, count }));
+    const checks = checkCounts.map((c) => c.check);
     const checkedCount = eps.filter((e) => checkedFor(e).length).length;
     prefixes.push({
       prefix,
@@ -1174,6 +1307,7 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
       ...(mixed ? { dominant: modal, accessCounts: counts } : {}),
       example: `${example.verb} ${example.path}`,
       checks,
+      checkCounts,
       checked: checkedCount,
       evidence: [...new Set(eps.map((e) => e.evidence?.[1] ?? e.evidence?.[0]).filter(Boolean))].slice(0, 3),
       why: [
@@ -1230,9 +1364,9 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
                 .map(([a, c]) => `${a} on ${c} of ${p.endpoints}`)
                 .join(', ')}): no single rule covers the prefix`
             : p.access === 'anonymous'
-              ? `endpoints under ${p.prefix} are public: ${p.checks.length ? `${p.checked} of ${p.endpoints} use ${p.checks[0]}; the rest must protect themselves` : 'each endpoint must protect itself'}`
+              ? `endpoints under ${p.prefix} are public: ${p.checks.length ? `${checkSummary(p)}; the rest must protect themselves` : 'each endpoint must protect itself'}`
               : p.access === 'authenticated'
-                ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? `; ${p.checked} of ${p.endpoints} also use ${p.checks[0]}` : ''}`
+                ? `endpoints under ${p.prefix} need a logged-in caller${p.checked ? `; ${checkSummary(p)}` : ''}`
                 : p.access.startsWith('role:')
                   ? `endpoints under ${p.prefix} need role ${p.access.slice(5)}`
                   : `endpoints under ${p.prefix} are ${p.access}`,

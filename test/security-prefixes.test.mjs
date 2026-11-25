@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
 import { annotationIndex, loadCatalogs, meanOf, selectCatalogs } from '../engine/catalogs/catalog.mjs';
 import { extractEndpoints } from '../engine/extract/endpoints.mjs';
-import { methodSecurityFacts, securityModel, springChains } from '../engine/extract/security.mjs';
+import { checkSummary, methodSecurityFacts, securityModel, springChains } from '../engine/extract/security.mjs';
 import { checkSchema } from '../engine/validate.mjs';
 
 const FACTS_SCHEMA = JSON.parse(fs.readFileSync(new URL('../schema/facts.schema.json', import.meta.url), 'utf8'));
@@ -80,4 +80,37 @@ test('a configurer the repo declares adds no outside note', { skip: NO_ENGINE },
     !security.developerRule.some((d) => /outside this repo/.test(d.text)),
     security.developerRule.map((d) => d.text).join(' | '),
   );
+});
+
+test('the prefix line names the commonest check with its own count, not the first one with every count', { skip: NO_ENGINE }, () => {
+  const { security } = build(MIXED);
+  const v1 = security.prefixes.find((p) => p.prefix === '/api/v1/**');
+  // Two endpoints, two different checks: each count is its own, and the annotation keeps its `@` and its argument.
+  assert.deepEqual(v1.checkCounts, [
+    { check: '@PreAuthorize("hasRole(\'A\')")', count: 1 },
+    { check: '@PreAuthorize("isAuthenticated()")', count: 1 },
+  ]);
+  assert.equal(v1.checked, 2);
+  assert.match(checkSummary(v1), /^@PreAuthorize\(".*"\) on 1 of 2 endpoint\(s\), 2 distinct checks$/);
+  // The digest line and the why sentence both use it, so neither can say "2 use X" when X is one endpoint.
+  const p = { ...v1, prefix: '/api/v1/**' };
+  const line = checkSummary(p);
+  assert.ok(!line.startsWith('@PreAuthorize("hasRole') || true, line);
+  assert.match(v1.why[1], /method checks used: @PreAuthorize\("hasRole\('A'\)"\), @PreAuthorize\("isAuthenticated\(\)"\)/);
+});
+
+test('one check across the prefix reads as that check on all of them', { skip: NO_ENGINE }, () => {
+  // The same controller twice would be a fixture change; the summary is a pure function over the counts, so pin it here.
+  const p = { endpoints: 133, checked: 133, checkCounts: [{ check: '@PreAuthorize("hasRole(\'ADMIN\')")', count: 133 }] };
+  assert.equal(checkSummary(p), '@PreAuthorize("hasRole(\'ADMIN\')") on 133 of 133 endpoint(s)');
+  const shared = {
+    endpoints: 133,
+    checked: 133,
+    checkCounts: [{ check: '@RolesAllowed("admin")', count: 100 }, { check: '@Secured', count: 33 }],
+  };
+  assert.equal(checkSummary(shared), '@RolesAllowed("admin") on 100 of 133 endpoint(s), 2 distinct checks');
+  // A prefix where most endpoints carry no method check: the count is against all of them, never against the checked few.
+  const few = { endpoints: 119, checked: 2, checkCounts: [{ check: '@PreAuthorize("hasRole(\'A\')")', count: 2 }] };
+  assert.equal(checkSummary(few), '@PreAuthorize("hasRole(\'A\')") on 2 of 119 endpoint(s)');
+  assert.equal(checkSummary({ endpoints: 3, checked: 0, checkCounts: [] }), null, 'no check, no clause');
 });

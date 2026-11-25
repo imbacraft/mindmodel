@@ -3,7 +3,7 @@ name: writer
 description: Writes a mindmodel.json for one application by following the mindmodel generation rules, starting from the scanner's facts. Dispatched by the /mindmodel skill.
 model: opus
 effort: low
-tools: Read, Write, Edit, Bash
+tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # mindmodel writer
@@ -14,29 +14,23 @@ You produce `mindmodel/mindmodel.json` for one application: the essential mental
 1. **The generation rules** (`<plugin>/rules/core.md`). Read it fully once: it is the authority for the principles (Part 1), the process order (Part 2), the critic checklist (Part 4), the cut order (Part 5) and the budgets (Part 7).
    - **The section rules are on demand.** Part 3 (one section per heading, 3.1–3.9), the differently shaped repos (Part 6) and the two end notes live in `<plugin>/rules/sections.md`. Open **only** the section you are drafting, when you start drafting it, and only the other headings you actually need. Do not read the whole file, and do not load it up front: it is twice the size of the core file and most of it is about sections you are not writing yet.
 2. **The JSON shape:** run `node <plugin>/engine/shape.mjs` for a compact view of the exact JSON you must write (field names, required/optional, enums). Don't read the full schema; the validator enforces it.
-3. **The facts digest** (`<root>/mindmodel/.work/facts.md`): everything mechanical the scanner already found (entity funnel with scores, flags and relations; enums; controllers; frontend routes and the API join; views; security lines; interceptors; context scopes; session state; scheduled, async, listener and socket work; externals; docs; git window). **Start every phase from it**, and read it once: for a detail later, `grep -n` `facts.json`, never the digest again.
-4. **The code excerpts** (`<root>/mindmodel/.work/excerpts.md`, about 40 KB): the ranked flows step by step, every lifecycle setter with its surrounding lines, and the filters that read the caller. Read it **once, right after the digest**, and cite from it: each heading is already a `path:start-end#method`. It replaces the reads every run repeats; it does not replace looking around — the findings and the best rules come from code outside the top flows.
+3. **The facts digest** (`<root>/mindmodel/.work/facts.md`): everything mechanical the scanner already found (entity funnel with scores, flags and relations; enums; controllers; frontend routes and the API join; views; security lines; interceptors; context scopes; session state; scheduled, async, listener and socket work; externals; docs; git window). **Start every phase from it.**
 
 ## Work efficiently
 The facts replace searching. Your budget goes on reading the few places that need judgment.
 - **The digest's computed sections are facts, not hints:** Boot, Seams, Lifecycles, Schedules and retries. Copy them into the map; open code only to judge importance, to explain *why*, or where a line says to confirm.
 - **Cite methods by name:** `path#method`, as the digest does. `validate.mjs --fix` fills in the exact line range, so never open a file just to find line numbers.
 - **Never re-derive what the facts give you.** Don't grep for entities, mappings, jobs, security lines or relations. Look things up in the digest, or search `facts.json` with `grep` when you need a detail (never read it whole).
-- **Read code through `ask.mjs`, never with a shell.** It answers from the dump with a `file:line` on every line, caps every answer, and works from any directory (no `cd`):
-  - `node <plugin>/engine/ask.mjs <root> src src/main/java/shop/OrderService.java#placeOrder` — one method's body, numbered, capped at 40 lines.
-  - `node <plugin>/engine/ask.mjs <root> lines src/main/java/shop/OrderService.java:120-150` — a range, capped at 60 lines.
-  - `node <plugin>/engine/ask.mjs <root> find placeOrder` — a fixed-string search of the Java sources and the config the scan reads, 20 hits, secret-looking config values redacted.
-  - `type`, `method`, `calls`, `callers`, `impls`, `ann`, `constant`, `grep` answer from the typed model.
-  One method or one range per call: never a whole file, never a recursive grep, never `cat`/`sed -n`. If `ask.mjs` cannot answer, say so in the fact corrections rather than falling back to the shell.
-- **Commands the user's permissions can check:** absolute paths, no `cd`, no shell variables; read the rules, the digest and the excerpts with Read; change the map with Edit, never `sed -i`. A refused command costs a turn.
+- **Reading budget: methods, not files.** Open code by method (`path#method` from the digest: read that method's range) or ±20 lines around a cited line. Never read a whole file over 300 lines; on a large app that alone can exhaust your context. Stories start from the flow skeletons, so you open only the steps you must explain.
+- **Commands the user's permissions can check:** absolute paths, no `cd`, no shell variables; read the rules and the digest with Read; change the map with Edit, never `sed -i`. A refused command costs a turn.
 - **Edit by anchor, never by re-reading the file.** After the first write, `mindmodel.json` is 50–100 KB: grep for the field or the sentence you are changing (`Grep -n "\"concepts\"" mindmodel.json`), then `Edit` that one string. Reading the whole file back costs a full context reload per fix.
-- **Keep turns few** (aim for ≤ 25): every turn re-reads your whole context, so cost grows with each one. Batch independent reads into one turn rather than one call per range. A run past ~35 calls is re-reading, not writing.
+- **Keep turns few** (aim for ≤ 25): every turn re-reads your whole context, so cost grows with each one. Batch independent reads into one turn, and collect several ranges in one command (e.g. one `sed -n` per file, joined) rather than one call per range. A run past ~35 calls is re-reading, not writing.
 - **Read the project's docs selectively:** intro docs fully, plus only the docs whose titles concern the domain, architecture, tenancy, flows or security (Part 2, phase 2).
 - **Give each region its `paths`** (the folders or files it is made of). Don't write `activity`: `validate.mjs --fix` computes the badges from the paths.
 - **Cite per claim block, not per sentence (P3a).** One or two cites prove a whole block — a rule, a region part, a concept card, a story step — and the block's sentences ride on them. Citing sentence by sentence triples the lookups and the count (the validator warns above 1.4× the ~90–120 a block-cited map needs).
 - **Cite with symbols** where you can: `path:120-130#saveCustomer`. The validator checks that the symbol is in those lines, so you never need to re-open a file to double-check a citation. Symbols must be identifiers (no spaces).
 - **Draft to the section targets in one pass.** `facts.md` opens with its `**budget: tier N — core ≤ X words, regions ≤ 1,000, state ≤ 400**` line and the per-section numbers; write to those. The validator prints `sections: purpose 150/144 · …` and marks each over-share section with `!`: correct only the marked sections, with edits to those fields, and stop. Never rewrite the map to fix one number.
-- **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json --fix` and fix every ERROR **with small edits to the file, never by rewriting it whole**. Then run it once more and stop: fix only the sections the `sections:` line marks (`!` words, `cites …!` citations), fix them with edits to those fields, revalidate once — and stop there, even if warnings remain. A warning that is not an error is a note for the report, not another round.
+- **Write the JSON once**, then run `node <plugin>/engine/validate.mjs <root>/mindmodel/mindmodel.json --fix` and fix every ERROR **with small edits to the file, never by rewriting it whole**. Warnings are fine if justified.
 - **The map is the file; it is never the output of a program.** Do not write a Python/Node generator that assembles `mindmodel.json`, and do not keep the content in a draft format and convert it. Every budget or wording change is an `Edit` on the JSON itself. A generator turns each small fix into a full rebuild, and a run that should take six minutes takes fifteen.
 - **Spot-check ten claims before finishing.** `node <plugin>/engine/spotcheck.mjs <root>` writes `<root>/mindmodel/.work/spotcheck.md`: ten claims picked with a fixed seed, each with the code its citation points at. Confirm or correct every row; a claim the cited lines do not support is wrong even when it reads well. Fix the map, then run the checker again with a different `--seed` if you have turns left.
 - **Stop when the checks pass.** Don't polish beyond the critic checklist.
