@@ -915,6 +915,7 @@ function securitySinks(entryId, q, db, model, holders) {
           cite: `${store.file}:${store.line}`,
           arg: args[0] ?? null,
           element: 'unresolved',
+          holderType: store.holder,
           confidence: 'inferred',
           // Evidence, not an accusation: with the element unknown the engine cannot tell a caller from a tenant, and a
           // warning that says "any client can claim that identity" about a tenant store would be wrong.
@@ -923,14 +924,36 @@ function securitySinks(entryId, q, db, model, holders) {
         continue;
       }
       if (!isIdentityType(model, holder.element, db)) continue;
-      // A setter that only forwards its own parameter is the caller's store one frame up: the call site carries it,
-      // and counting both would make two warnings for one store.
-      if (args[0]?.kind === 'param' && params[args[0].index]?.name === args[0].text) continue;
+      // A setter that only forwards its own parameter is not the sink: its call sites are. Counting both would make two
+      // warnings for one store, but dropping the sink entirely loses the path — the caller builds the value from a
+      // cookie (`Ctx.builder().systemUser(system)`), and that cookie is the acting identity too.
+      if (args[0]?.kind === 'param' && params[args[0].index]?.name === args[0].text) {
+        for (const caller of methods) {
+          const owner = memberAt(db, caller.id);
+          if (!owner) continue;
+          const callerLabel = `${simple(owner.owner)}#${owner.name}`;
+          for (const c of db.callsOf(caller.id)) {
+            if (!targetIds(c).includes(id)) continue;
+            sinks.push({
+              method: callerLabel,
+              what: `thread-local ${String(store.field).split('#').pop()} (${simpleType(holder.element)})`,
+              cite: `${c.file}:${c.line}`,
+              arg: db.argsOf(c.id)[args[0].index] ?? null,
+              holderType: holder.owner,
+              // Evidence, not an accusation: a sink moved to a call site would otherwise accuse a filter whose
+              // verification call the dump could not type (`manager.authenticate(...)`) — a wrong claim on two real apps.
+              inferred: true,
+            });
+          }
+        }
+        continue;
+      }
       sinks.push({
         method: label,
         what: `thread-local ${String(store.field).split('#').pop()} (${simpleType(holder.element)})`,
         cite: `${store.file}:${store.line}`,
         arg: args[0] ?? null,
+        holderType: holder.owner,
       });
     }
     // A field of the caller type (`Authentication`, `Principal`) the method assigns: the dump's own field write.
@@ -973,7 +996,10 @@ function securitySinks(entryId, q, db, model, holders) {
           });
       }
   }
-  return sinks;
+  // A holder the reach typed one frame down makes the shape-found sink for the same holder redundant, and its
+  // `(element unresolved)` label false: the element is in the dump.
+  const typed = new Set(sinks.filter((s) => !s.inferred && s.holderType).map((s) => s.holderType));
+  return typed.size ? sinks.filter((s) => !(s.inferred && s.holderType && typed.has(s.holderType))) : sinks;
 }
 
 /**

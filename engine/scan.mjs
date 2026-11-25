@@ -1627,7 +1627,7 @@ export function summarize(f) {
   return out.length > 70_000
     ? out.replace(
         '\n',
-        `\n**Over the 70 KB digest budget (${Math.round(out.length / 1024)} KB): read sections selectively.**\n`,
+        `\n**Over the 70,000-character digest budget (${out.length} characters): read sections selectively.**\n`,
       )
     : out;
 }
