@@ -48,10 +48,17 @@ final class Refs {
     }
 
     private final CallIds ids;
+    private final Failures failures;
     private Map<CtLocalVariable<?>, List<CtExpression<?>>> writes = Map.of();
 
-    Refs(CallIds ids) {
+    Refs(CallIds ids, Failures failures) {
         this.ids = ids;
+        this.failures = failures;
+    }
+
+    /** The run's failure counts; the readers below count into it rather than failing. */
+    Failures failures() {
+        return failures;
     }
 
     /** The writes of the body about to be read: without them a local has no `from`. */
@@ -180,13 +187,14 @@ final class Refs {
     }
 
     /** The type as the compiler names it; a type variable is unknown, so it is absent rather than a letter. */
-    static String typeOf(CtExpression<?> expression) {
+    String typeOf(CtExpression<?> expression) {
         try {
             CtTypeReference<?> type = expression.getType();
             if (type == null || type instanceof CtTypeParameterReference) return null;
             String qualified = type.getQualifiedName();
             return qualified == null || qualified.isEmpty() || "?".equals(qualified) ? null : qualified;
         } catch (RuntimeException e) {
+            failures.count("refs.typeUnresolved");
             return null;
         }
     }
@@ -195,12 +203,13 @@ final class Refs {
      * The type arguments of a written type, as names: a project or library type qualified, a type parameter by the
      * letter its author wrote, a wildcard as {@code ?}. Order is the source's. Empty when the type takes none.
      */
-    static List<String> typeArgs(CtTypeReference<?> type) {
+    List<String> typeArgs(CtTypeReference<?> type) {
         List<String> out = new ArrayList<>();
         if (type == null) return out;
         try {
             for (CtTypeReference<?> argument : type.getActualTypeArguments()) out.add(typeName(argument));
         } catch (RuntimeException e) {
+            failures.count("refs.typeArgsUnresolved");
             return new ArrayList<>();
         }
         return out;
@@ -262,7 +271,7 @@ final class Refs {
      * rather than pretty-printed: a million arguments make the difference between 1 ms and 1 us each the difference
      * between a dump inside its budget and one outside it. An expression with no source position has no text.
      */
-    static String textOf(CtExpression<?> expression) {
+    String textOf(CtExpression<?> expression) {
         if (expression == null) return null;
         try {
             var position = expression.getPosition();
@@ -274,6 +283,7 @@ final class Refs {
             if (start < 0 || end < start || end >= source.length()) return null;
             return clip(collapse(source, start, end));
         } catch (RuntimeException e) {
+            failures.count("refs.textUnresolved");
             return null;
         }
     }

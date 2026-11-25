@@ -25,9 +25,12 @@ final class Chains {
     /** Builder types the synthesis invents (`Foo.Builder`): not declared, and not a library either. */
     private final Set<String> builders;
 
-    Chains(Map<String, String> generated, Set<String> builders) {
+    private final Failures failures;
+
+    Chains(Map<String, String> generated, Set<String> builders, Failures failures) {
         this.generated = generated;
         this.builders = builders;
+        this.failures = failures;
     }
 
     String receiver(CtExpression<?> expression) {
@@ -73,11 +76,12 @@ final class Chains {
         return type != null && !"java.lang.Object".equals(type) && !"?".equals(type);
     }
 
-    private static String rawType(CtTypeReference<?> type) {
+    private String rawType(CtTypeReference<?> type) {
         if (type == null || type instanceof CtTypeParameterReference) return null;
         try {
             return LibraryTypes.raw(Names.qualified(type));
         } catch (RuntimeException e) {
+            failures.count("chains.typeUnresolved");
             return null;
         }
     }

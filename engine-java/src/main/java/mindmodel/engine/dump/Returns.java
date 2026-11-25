@@ -123,21 +123,21 @@ final class Returns {
     private static Entry switchEntry(CtSwitchExpression<?, ?> choose, String form, String target, int line, int col,
             Refs refs) {
         List<Arm> arms = new ArrayList<>();
-        for (CtCase<?> arm : choose.getCases()) arms.add(new Arm(labels(arm), refs.of(armValue(arm, null))));
+        for (CtCase<?> arm : choose.getCases()) arms.add(new Arm(labels(arm, refs), refs.of(armValue(arm, null))));
         return new Entry("switch", line, col, null, refs.of(choose.getSelector()), form, target, arms);
     }
 
     private static List<Arm> statementArms(CtSwitch<?> choose, String target, Refs refs) {
         List<Arm> arms = new ArrayList<>();
-        for (CtCase<?> arm : choose.getCases()) arms.add(new Arm(labels(arm), refs.of(armValue(arm, target))));
+        for (CtCase<?> arm : choose.getCases()) arms.add(new Arm(labels(arm, refs), refs.of(armValue(arm, target))));
         return arms;
     }
 
     /** A case's labels as written; an empty list means `default`. */
-    private static List<String> labels(CtCase<?> arm) {
+    private static List<String> labels(CtCase<?> arm, Refs refs) {
         List<String> out = new ArrayList<>();
         for (CtExpression<?> label : arm.getCaseExpressions()) {
-            String text = Refs.textOf(label);
+            String text = refs.textOf(label);
             out.add(text == null ? "" : text);
         }
         return out;

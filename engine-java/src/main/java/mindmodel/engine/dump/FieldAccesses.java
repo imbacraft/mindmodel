@@ -46,7 +46,7 @@ final class FieldAccesses {
             // The field's declared type's arguments: `GenericRepo<T>` is [T], and a reader that binds the parameter
             // knows what the field holds at that site.
             rows.add(new Row(methodId, field, isStatic(ref), op, pos, value,
-                    Refs.typeArgs(ref == null ? null : ref.getType())));
+                    refs.typeArgs(ref == null ? null : ref.getType())));
         }
     }
 

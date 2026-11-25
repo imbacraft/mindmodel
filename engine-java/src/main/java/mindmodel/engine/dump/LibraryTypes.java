@@ -1,5 +1,6 @@
 package mindmodel.engine.dump;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,18 +23,22 @@ public final class LibraryTypes {
     private LibraryTypes() {
     }
 
+    /**
+     * The table ships in the jar, so a missing or unreadable one means the jar is broken: that is fatal, not a dump
+     * with every library chain silently unresolved.
+     */
     private static Map<String, Map<String, String>> load() {
         Map<String, Map<String, String>> out = new LinkedHashMap<>();
-        try (InputStream in = LibraryTypes.class.getResourceAsStream("/library-signatures.json")) {
-            if (in == null) return out;
+        InputStream resource = LibraryTypes.class.getResourceAsStream("/library-signatures.json");
+        if (resource == null) throw new IllegalStateException("library-signatures.json is missing from the jar");
+        try (InputStream in = resource) {
             JsonNode root = new ObjectMapper().readTree(in);
             for (var type : root.path("types").properties())
                 for (var method : type.getValue().properties())
                     out.computeIfAbsent(type.getKey(), k -> new LinkedHashMap<>())
                             .put(method.getKey(), normalise(method.getValue().asText()));
-        } catch (Exception e) {
-            // A missing or broken table costs chain typing, not the dump: every such site stays unresolved.
-            return new LinkedHashMap<>();
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalStateException("library-signatures.json in the engine jar cannot be read", e);
         }
         return out;
     }

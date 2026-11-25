@@ -43,7 +43,7 @@ public final class Files {
 
     /** @return how many input files carry at least one error. */
     public static int write(List<String> inputs, List<CtType<?>> types, Map<String, String> packages,
-            Map<String, List<String>> problems, Path root, Path out) throws IOException {
+            Map<String, List<String>> problems, Path root, Path out, Failures failures) throws IOException {
         // A file's package is the one its own header declares, read from its compilation unit. Taking it from a type
         // borrowed the type's file instead: a file that declares no type (all of it commented out) has a package and no
         // type, and a file whose type Spoon built as a bare shell has neither — the row has to say which file it is.
@@ -53,7 +53,7 @@ public final class Files {
             Positions.Pos p = Positions.of(t, root);
             if (p == null) continue;
             pkgOf.putIfAbsent(p.file(), t.getPackage() == null ? "" : t.getPackage().getQualifiedName());
-            if (!written.containsKey(p.file())) written.put(p.file(), fromUnit(t));
+            if (!written.containsKey(p.file())) written.put(p.file(), fromUnit(t, failures));
         }
         List<String> rows = new ArrayList<>(new TreeSet<>(inputs));
         int failed = 0;
@@ -91,7 +91,7 @@ public final class Files {
     }
 
     /** Spoon's own import list for the file a type was read from, or null when there is no compilation unit. */
-    private static List<Import> fromUnit(CtType<?> type) {
+    private static List<Import> fromUnit(CtType<?> type, Failures failures) {
         try {
             var position = type.getPosition();
             if (position == null || !position.isValidPosition() || position.getCompilationUnit() == null) return null;
@@ -102,6 +102,7 @@ public final class Files {
             out.sort(null);
             return out;
         } catch (RuntimeException e) {
+            failures.count("files.importsUnreadable");
             return null;
         }
     }

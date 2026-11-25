@@ -73,16 +73,17 @@ public final class Dump {
         Types.write(types, root, outDir.resolve("types.ndjson"));
         // One walk per body: the call rows carry the ids the other sections name, so calls are written first.
         CallIds ids = new CallIds();
-        Refs refs = new Refs(ids);
+        Failures failures = new Failures();
+        Refs refs = new Refs(ids, failures);
         Sites.Written written = Sites.write(types, known, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
         Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns());
         FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
         // The library types the classpath let Spoon read: shallow rows, no positions, never cited (LibraryStubs).
         int libraries = mindmodel.engine.dump.LibraryStubs.write(types, known, outDir.resolve("library.ndjson"));
         int failed = Files.write(inputs, types, model.packages(), problems(model, root, unread), root,
-                outDir.resolve("files.ndjson"));
+                outDir.resolve("files.ndjson"), failures);
         meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"), classpath, generatedDirs,
-                model.generatedFiles(), libraries, dropped);
+                model.generatedFiles(), libraries, dropped, failures);
     }
 
     /**
@@ -146,7 +147,7 @@ public final class Dump {
 
     private static void meta(Path root, List<String> inputs, List<CtType<?>> types, int failed, int compliance,
             Path out, List<String> classpath, List<String> generatedDirs, int generatedFiles, int libraries,
-            String dropped) throws IOException {
+            String dropped, Failures failures) throws IOException {
         int fields = 0;
         int methods = 0;
         for (CtType<?> t : types) {
@@ -176,6 +177,8 @@ public final class Dump {
             g.writeNumberField("fields", fields);
             g.writeNumberField("methods", methods);
             g.writeNumberField("failedFiles", failed);
+            // What the engine answered empty rather than failing, by reason: a run says what it could not read.
+            for (var count : failures.counts().entrySet()) g.writeNumberField(count.getKey(), count.getValue());
             g.writeEndObject();
             g.writeEndObject();
         }

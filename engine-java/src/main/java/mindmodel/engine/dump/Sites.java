@@ -52,7 +52,8 @@ public final class Sites {
     record Target(String id, String kind) {
     }
 
-    private static Index index(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth) {
+    private static Index index(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth,
+            Failures failures) {
         java.util.Set<String> declared = new java.util.HashSet<>();
         java.util.Map<String, java.util.Map<String, String>> methods = new java.util.HashMap<>();
         java.util.Map<String, java.util.Map<String, String>> arity = new java.util.HashMap<>();
@@ -148,7 +149,7 @@ public final class Sites {
             supertypes.put(Names.qualified(t), supers);
         }
         return new Index(declared, subtypes, supertypes, methods, generated, generatedFields, arity,
-                bindings(types, declared));
+                bindings(types, declared, failures));
     }
 
     /**
@@ -157,7 +158,8 @@ public final class Sites {
      * subtypes disagree binds nothing. Only arguments declared here count: a member reached through a parameter bound
      * to a type outside the checkout is still unresolved, because nothing in this dump can say what that type is.
      */
-    private static java.util.Map<String, String> bindings(List<CtType<?>> types, java.util.Set<String> declared) {
+    private static java.util.Map<String, String> bindings(List<CtType<?>> types, java.util.Set<String> declared,
+            Failures failures) {
         java.util.Map<String, java.util.Set<String>> seen = new java.util.HashMap<>();
         for (CtType<?> t : types) {
             try {
@@ -167,6 +169,7 @@ public final class Sites {
                 for (CtTypeReference<?> superRef : supers) bindingOf(superRef, declared, seen);
             } catch (RuntimeException e) {
                 // One type Spoon cannot read must not cost the dump the bindings of every other type.
+                failures.count("sites.bindingsUnresolved");
             }
         }
         java.util.Map<String, String> out = new java.util.HashMap<>();
@@ -213,7 +216,7 @@ public final class Sites {
      */
     static Written write(List<CtType<?>> types, List<CtType<?>> known, java.util.Map<String, List<Lombok.Item>> synth,
             Path root, Path out, CallIds ids, Refs refs) throws IOException {
-        Index index = index(known, synth);
+        Index index = index(known, synth, refs.failures());
         // What Lombok writes, in the two shapes a chain needs: a member's return type, and the builder types it invents.
         java.util.Map<String, String> generatedTypes = new java.util.HashMap<>();
         java.util.Set<String> builders = new java.util.HashSet<>();
@@ -232,7 +235,7 @@ public final class Sites {
                 if (named.getValue().size() == 1)
                     generatedTypes.putIfAbsent(entry.getKey() + "#" + named.getKey(), named.getValue().get(0));
         }
-        Chains chains = new Chains(generatedTypes, builders);
+        Chains chains = new Chains(generatedTypes, builders, refs.failures());
         java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns = new java.util.IdentityHashMap<>();
         List<FieldAccesses.Row> fields = FieldAccesses.rows();
         try (Ndjson w = new Ndjson(out)) {
@@ -285,10 +288,10 @@ public final class Sites {
         try {
             if (site instanceof CtInvocation<?> call) w.row(g -> row(g, type, methodId, call, pos, index, chains, ids, refs));
             else if (site instanceof CtExecutableReferenceExpression<?, ?> ref)
-                w.row(g -> methodRefRow(g, type, methodId, ref, pos, index, chains, ids));
+                w.row(g -> methodRefRow(g, type, methodId, ref, pos, index, chains, ids, refs));
         } catch (RuntimeException e) {
             // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
-            w.row(g -> errorRow(g, methodId, site, pos, e));
+            w.row(g -> errorRow(g, methodId, site, pos, e, refs.failures()));
         }
     }
 
@@ -310,7 +313,7 @@ public final class Sites {
         CtExecutableReference<?> ref = call.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
         int argc = call.getArguments().size();
-        String targetText = Refs.textOf(call.getTarget());
+        String targetText = refs.textOf(call.getTarget());
         // Lombok's `log` is a field nobody declared: the target is a bare name, and the synthesis knows its type.
         String fieldType = targetText != null && targetText.matches("[A-Za-z_$][\\w$]*")
                 ? index.generatedFields().get(Names.qualified(type) + "#" + targetText) : null;
@@ -352,7 +355,7 @@ public final class Sites {
         g.writeObjectFieldStart("recv");
         if (receiverName == null) g.writeNullField("type");
         else g.writeStringField("type", receiverName);
-        writeTypeArgs(g, call.getTarget() == null ? null : call.getTarget().getType());
+        writeTypeArgs(g, call.getTarget() == null ? null : call.getTarget().getType(), refs);
         g.writeStringField("kind", kind(call));
         g.writeStringField("how", how(call.getTarget()));
         // The receiver as written (`cargoRepository`, `this.x`, `a.b()`), which is how a reader names the site.
@@ -402,7 +405,7 @@ public final class Sites {
      */
     private static void methodRefRow(JsonGenerator g, CtType<?> type, String methodId,
             CtExecutableReferenceExpression<?, ?> expression, Positions.Pos pos, Index index, Chains chains,
-            CallIds ids) throws IOException {
+            CallIds ids, Refs refs) throws IOException {
         CtExecutableReference<?> ref = expression.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
         var declaration = ref == null ? null : ref.getDeclaration();
@@ -424,10 +427,10 @@ public final class Sites {
         g.writeNumberField("argc", argc);
         g.writeObjectFieldStart("recv");
         g.writeStringField("type", receiverName);
-        writeTypeArgs(g, target == null ? null : target.getType());
+        writeTypeArgs(g, target == null ? null : target.getType(), refs);
         g.writeStringField("kind", ref != null && ref.isStatic() ? "static" : "instance");
         g.writeStringField("how", target == null ? "static" : how(target));
-        String text = Refs.textOf(expression);
+        String text = refs.textOf(expression);
         if (text == null) g.writeNullField("text");
         else g.writeStringField("text", text);
         g.writeEndObject();
@@ -470,9 +473,9 @@ public final class Sites {
      * The type arguments of a written type, as names: a project or library type qualified, a type parameter by the
      * letter its author wrote. Sorted by nothing — the order is Java's — and empty when the type has no arguments.
      */
-    private static void writeTypeArgs(JsonGenerator g, CtTypeReference<?> type) throws IOException {
+    private static void writeTypeArgs(JsonGenerator g, CtTypeReference<?> type, Refs refs) throws IOException {
         g.writeArrayFieldStart("typeArgs");
-        for (String name : Refs.typeArgs(type)) g.writeString(name);
+        for (String name : refs.typeArgs(type)) g.writeString(name);
         g.writeEndArray();
     }
 
@@ -503,8 +506,8 @@ public final class Sites {
     }
 
     /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
-    private static void errorRow(JsonGenerator g, String methodId, CtElement site, Positions.Pos pos, RuntimeException e)
-            throws IOException {
+    private static void errorRow(JsonGenerator g, String methodId, CtElement site, Positions.Pos pos,
+            RuntimeException e, Failures failures) throws IOException {
         String name = "?";
         try {
             CtExecutableReference<?> ref = site instanceof CtInvocation<?> call ? call.getExecutable()
@@ -513,6 +516,7 @@ public final class Sites {
             name = ref == null ? "?" : ref.getSimpleName();
         } catch (RuntimeException ignored) {
             // the name is worth having but not worth failing for
+            failures.count("sites.nameUnresolved");
         }
         g.writeStringField("method", methodId);
         g.writeNullField("id");
