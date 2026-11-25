@@ -250,7 +250,7 @@ function receiverOf(row) {
 function howOf(row) {
   const targets = (row.targets ?? []).map((t) => t?.id).filter(Boolean);
   // `arity` is a member lookup that found exactly one member: it names a target just as the compiler does.
-  if (row.origin === 'java' || row.origin === 'lombok' || row.origin === 'arity') {
+  if (['java', 'lombok', 'compiler', 'arity'].includes(row.origin)) {
     // A generated member (Lombok's builder step) has a receiver but no declaration to name: the chain typed it.
     if (!targets.length) return row.reason === 'lombok-builder' ? 'generated' : 'unresolved';
     return targets.length > 1 || (targets.length === 1 && targets[0].split('#')[0] !== row.recv?.type)
