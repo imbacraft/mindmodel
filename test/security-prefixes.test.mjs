@@ -9,7 +9,7 @@ import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
 import { annotationIndex, loadCatalogs, meanOf, selectCatalogs } from '../engine/catalogs/catalog.mjs';
 import { extractEndpoints } from '../engine/extract/endpoints.mjs';
 import { checkSummary, methodSecurityFacts, securityModel, springChains } from '../engine/extract/security.mjs';
-import { checkSchema } from '../engine/validate.mjs';
+import { checkSchema } from '../engine/core/schema.mjs';
 
 const FACTS_SCHEMA = JSON.parse(fs.readFileSync(new URL('../schema/facts.schema.json', import.meta.url), 'utf8'));
 

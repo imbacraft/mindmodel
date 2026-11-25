@@ -2,6 +2,9 @@
 // annotation with a destination argument, a send is a call on a messaging client with a channel argument. The name is
 // the argument when it is a literal or a resolvable static constant, else the argument text.
 
+import { placeholderOf } from '../core/placeholders.mjs';
+import { annotationOn } from '../core/annotations.mjs';
+
 const LISTENERS = new Set(['KafkaListener', 'JmsListener', 'RabbitListener', 'StreamListener', 'MessageDriven', 'SqsListener']);
 const CLIENTS = /(KafkaTemplate|JmsTemplate|RabbitTemplate|StreamBridge|JMSProducer|JMSContext|KafkaProducer|MessageProducer|SqsClient)$/;
 const SENDS = new Set(['send', 'convertAndSend', 'publish', 'sendAndReceive', 'convertSendAndReceive', 'syncSend']);
@@ -34,12 +37,12 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
     const lit = /^"([^"]+)"$/.exec(arg.trim());
     if (lit) {
       // `${key:default}` in a topic annotation: the configured value, else the default, else the key.
-      const spel = /^\$\{([^:}]+)(?::([^}]*))?\}$/.exec(lit[1].trim());
+      const spel = placeholderOf(lit[1]);
       if (spel) {
         const normChannelName = (x) => String(x).toLowerCase().replace(/[-_.]/g, '');
-        const want = normChannelName(spel[1]);
+        const want = normChannelName(spel.key);
         for (const [k, v] of config) if (normChannelName(k) === want || normChannelName(k).endsWith(want)) return v;
-        return spel[2] || spel[1];
+        return spel.def || spel.key;
       }
       return lit[1];
     }
@@ -55,7 +58,7 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
     return typeof hit === 'string' ? hit : null;
   };
   for (const t of model.types.values()) {
-    const mdb = (t.ann ?? []).find((a) => a.name === 'MessageDriven');
+    const mdb = annotationOn(t, 'MessageDriven');
     if (mdb) {
       const dest = /propertyName\s*=\s*"(?:destinationLookup|destination)"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(mdb.args ?? '')?.[1]
         ?? /propertyValue\s*=\s*"([^"]+)"\s*,\s*propertyName\s*=\s*"(?:destinationLookup|destination)"/.exec(mdb.args ?? '')?.[1]

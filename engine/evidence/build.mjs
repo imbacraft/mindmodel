@@ -5,6 +5,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { childOf, childrenOf, parseXml, textOf } from './xml.mjs';
+import { resolvePlaceholders } from '../core/placeholders.mjs';
 
 const SCOPES = /^(compile|provided|runtime|test|system|import)$/;
 const GRADLE_CONFIGS =
@@ -76,10 +77,9 @@ function blocksOf(text, keyword) {
 }
 
 
-// ${property} and ${project.version} inside a POM; anything else is left as written, which is what the file says.
-function interpolate(value, props) {
-  return String(value ?? '').replace(/\$\{([^}]+)\}/g, (m, key) => (key in props ? props[key] : m));
-}
+// ${property} and ${project.version} inside a POM; a property the POM does not set is left as written.
+const interpolate = (value, props) =>
+  resolvePlaceholders(value, (key) => (Object.hasOwn(props, key) ? props[key] : null));
 
 function dependencyOf(node, resolve) {
   const group = resolve(textOf(childOf(node, 'groupId'))),

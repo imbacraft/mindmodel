@@ -10,25 +10,26 @@ import { scan, summarize } from './scan.mjs';
 import { configKeys } from './extract/config.mjs';
 import { dumpFor } from './run.mjs';
 import { open as openDump } from './dump.mjs';
-import { simple } from './model/names.mjs';
+import { simple } from './core/names.mjs';
+import { annotationOn, hasAnnotation } from './core/annotations.mjs';
+import { NON_SERVICE_DIRS, relPosix } from './core/paths.mjs';
+import { placeholderOf } from './core/placeholders.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
 
 // --- per-service extraction --------------------------------------------------------
 // Placeholders like "${app.topics.orders:orders}" resolve from the service's own config, else their default.
 export function resolve(value, keys) {
-  const m = /^\$\{([^}:]+)(?::([^}]*))?\}$/.exec(value);
-  if (!m) return { name: value };
-  const k = keys.get(m[1]);
-  if (k && !/^\$\{/.test(k.value)) return { name: k.value, via: `${m[1]}` };
-  return m[2] != null && m[2] !== '' ? { name: m[2], via: `${m[1]} default` } : { name: null, unresolved: m[1] };
+  const p = placeholderOf(value);
+  if (!p) return { name: value };
+  const k = keys.get(p.key);
+  if (k && !/^\$\{/.test(k.value)) return { name: k.value, via: p.key };
+  return p.def ? { name: p.def, via: `${p.key} default` } : { name: null, unresolved: p.key };
 }
 
-const relOf = (root, p) => path.relative(root, p).split(path.sep).join('/');
 const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
 const stringArg = (a) => (typeof a?.value === 'string' ? a.value : null);
 const quoted = (v) => `"${v}"`;
 // An annotation as the dump wrote it: its arguments are values, not the source text the model keeps for display.
-const annOn = (row, name) => (row?.ann ?? []).find((a) => a.name === name || simple(a.name) === name) ?? null;
 const typeRow = (module, t) => module?.db?.type(t.fqn) ?? null;
 const memberRow = (module, m) => (m.id ? (module.db.members.get(m.id) ?? null) : null);
 
@@ -76,7 +77,7 @@ export function messaging(module, patterns = BUILTIN) {
     for (const m of t.methods ?? []) {
       const row = memberRow(module, m);
       for (const rule of patterns.filter((p) => p.annotation)) {
-        const a = annOn(row, rule.annotation);
+        const a = annotationOn(row, rule.annotation);
         if (!a) continue;
         for (const v of flatStrings(a.args?.[rule.arg]))
           out.push({
@@ -131,7 +132,7 @@ export function jakartaJms(module) {
   if (!db) return out;
   for (const t of types ?? []) {
     const row = typeRow(module, t);
-    const mdb = annOn(row, 'MessageDriven');
+    const mdb = annotationOn(row, 'MessageDriven');
     if (mdb) {
       const dest = messageDestination(mdb);
       if (dest) out.push({ kind: 'jms', dir: 'in', name: dest, line: mdb.line || t.start, file: module.prefix + t.file });
@@ -140,7 +141,7 @@ export function jakartaJms(module) {
     const injected = new Map();
     for (const f of t.fields ?? []) {
       const fieldRow = (db.membersOf(t.fqn) ?? []).find((x) => x.kind === 'field' && x.name === f.name);
-      const a = annOn(fieldRow, 'Resource');
+      const a = annotationOn(fieldRow, 'Resource');
       if (!a) continue;
       const name = ['lookup', 'name', 'mappedName'].map((k) => flatStrings(a.args?.[k])[0]).find(Boolean);
       if (name) injected.set(`${t.fqn}#${f.name}`, name);
@@ -231,7 +232,7 @@ export function channelName(x, module, keys, ix) {
     const fieldRow = (db?.membersOf(owner?.fqn) ?? []).find(
       (x) => x.kind === 'field' && `${x.owner}#${x.name}` === arg.field,
     );
-    const key = flatStrings(annOn(fieldRow, 'Value')?.args?.value)[0];
+    const key = flatStrings(annotationOn(fieldRow, 'Value')?.args?.value)[0];
     if (key) return resolve(key, keys);
     return { name: null, unresolved: written };
   }
@@ -251,7 +252,7 @@ export function restCalls(module) {
   const out = [];
   if (!db) return out;
   for (const t of types ?? []) {
-    const feign = annOn(typeRow(module, t), 'FeignClient');
+    const feign = annotationOn(typeRow(module, t), 'FeignClient');
     if (feign) {
       const host = flatStrings(feign.args?.name)[0] ?? flatStrings(feign.args?.value)[0];
       if (host) out.push({ host, path: '', line: feign.line ?? t.start, via: 'feign', file: module.prefix + t.file });
@@ -294,11 +295,10 @@ export function gatewayRoutes(yml) {
 }
 
 // --- discovery -----------------------------------------------------------------------
-const IGNORE = /(^|\/)(node_modules|target|build|\.git|mindmodel|mindmodel-system|docs|docker|scripts)(\/|$)/;
 function findServices(folder) {
   const out = [];
   const visit = (dir, depth) => {
-    if (depth > 2 || IGNORE.test(dir)) return;
+    if (depth > 2) return;
     const has = (f) => fs.existsSync(path.join(dir, f));
     if (
       (has('pom.xml') || has('build.gradle') || has('build.gradle.kts')) &&
@@ -308,7 +308,8 @@ function findServices(folder) {
       return;
     }
     for (const e of fs.readdirSync(dir, { withFileTypes: true }))
-      if (e.isDirectory() && !e.name.startsWith('.')) visit(path.join(dir, e.name), depth + 1);
+      if (e.isDirectory() && !e.name.startsWith('.') && !NON_SERVICE_DIRS.has(e.name))
+        visit(path.join(dir, e.name), depth + 1);
   };
   visit(folder, 0);
   return out;
@@ -376,7 +377,7 @@ const linesOf = (types) => {
 
 /** One dump of the whole folder, and the model built from it: the only reader of the modules' Java. */
 function folderModel(folder, modules) {
-  const rels = modules.flatMap((d) => javaFiles(d).map((p) => relOf(folder, p)));
+  const rels = modules.flatMap((d) => javaFiles(d).map((p) => relPosix(folder, p)));
   if (!rels.length) return null;
   const run = dumpFor(folder, rels, { outDir: path.join(folder, 'mindmodel-system', '.work', 'dump') });
   if (!run.ok) throw new Error(`mindmodel: no engine dump for ${rels.length} Java file(s) (${run.reason})`);
@@ -390,11 +391,11 @@ function folderModel(folder, modules) {
  * its calls belong to and a copied class name must not empty its messaging.
  */
 function moduleOf(folder, dir, db, model, collided) {
-  const rel = relOf(folder, dir);
+  const rel = relPosix(folder, dir);
   // A module at the folder itself has no prefix: its files are already relative to the folder.
   const prefix = rel ? `${rel}/` : '';
   if (collided.has(dir)) {
-    const own = dumpFor(dir, javaFiles(dir).map((p) => relOf(dir, p)));
+    const own = dumpFor(dir, javaFiles(dir).map((p) => relPosix(dir, p)));
     if (own.ok) {
       const ownDb = openDump(own.dir);
       const ownModel = buildModelFromDump(ownDb, sourcesOf(ownDb));
@@ -422,7 +423,7 @@ export function systemScan(folder) {
   const collided = new Set(
     [...(db?.files?.values() ?? [])]
       .filter((f) => (f.errors ?? []).length)
-      .map((f) => modules.find((d) => f.path.startsWith(`${relOf(folder, d)}/`)))
+      .map((f) => modules.find((d) => f.path.startsWith(`${relPosix(folder, d)}/`)))
       .filter(Boolean),
   );
   const byModule = new Map(modules.map((d) => [d, moduleOf(folder, d, db, model, collided)]));
@@ -472,7 +473,7 @@ export function systemScan(folder) {
       // Destinations bound from config that is not in the repo (env vars, deployment): named, marked unresolved.
       const unresolvedDest = [];
       for (const t of module.types) {
-        const pre = flatStrings(annOn(typeRow(module, t), 'ConfigurationProperties')?.args?.prefix)[0];
+        const pre = flatStrings(annotationOn(typeRow(module, t), 'ConfigurationProperties')?.args?.prefix)[0];
         if (!pre) continue;
         for (const f of t.fields ?? []) {
           if (!/(Url|Uri|Host)$/.test(f.name)) continue;
@@ -489,7 +490,7 @@ export function systemScan(folder) {
             cite: `${path.relative(folder, f)}:${g.line}`,
           });
       // Plumbing the system relies on to run (config, discovery, admin): named, not a business service.
-      const moduleCarriesAnn = (name) => module.types.some((t) => annOn(typeRow(module, t), name));
+      const moduleCarriesAnn = (name) => module.types.some((t) => hasAnnotation(typeRow(module, t), name));
       const role = moduleCarriesAnn('EnableConfigServer')
         ? 'config server'
         : moduleCarriesAnn('EnableEurekaServer')

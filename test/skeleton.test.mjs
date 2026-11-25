@@ -13,7 +13,7 @@ import { extractEndpoints } from '../engine/extract/endpoints.mjs';
 import { extractOutside } from '../engine/extract/outside.mjs';
 import { extractState } from '../engine/extract/state.mjs';
 import { extractTransactions } from '../engine/extract/transactions.mjs';
-import { parseCite } from '../engine/validate.mjs';
+import { parseCite } from '../engine/core/cite.mjs';
 
 const root = path.join(os.homedir(), 'Projects/test-apps/cargotracker');
 

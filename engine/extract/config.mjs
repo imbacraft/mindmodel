@@ -1,12 +1,12 @@
 // Config keys from yml/properties (moved unchanged from deep.mjs).
 import assert from 'node:assert';
-import { isSrcTestPath } from '../model/names.mjs';
+import { isE2e, isTestCode, relPosix } from '../core/paths.mjs';
 
 // Config values by property key, from every application*.yml and .properties outside src/test. Channel and queue names
 // come from here; nested YAML keys are joined with dots.
 export function channelConfigOf(files, read) {
   const out = new Map();
-  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !isSrcTestPath(x))) {
+  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !isTestCode(x))) {
     const text = read(f);
     if (/\.properties$/.test(f)) {
       for (const m of text.matchAll(/^([\w.-]+)\s*[=:]\s*(.+)$/gm)) out.set(m[1].trim(), m[2].trim());
@@ -26,14 +26,18 @@ export function channelConfigOf(files, read) {
   return out;
 }
 
-// The application and bootstrap config files under resources, outside test and e2e folders (absolute paths).
-export function configFilesOf(files) {
-  return files.filter(
-    (f) =>
-      /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) &&
-      /resources/.test(f) &&
-      !/\/src\/test\/|[-_]e2e\b|\/e2e\//.test(f),
-  );
+// The application and bootstrap config files under resources, outside test and e2e code. Tests are judged on the
+// repo-relative path, so a checkout that sits under a folder named `tests` keeps its config.
+export function configFilesOf(files, root) {
+  return files.filter((f) => {
+    const rel = relPosix(root, f);
+    return (
+      /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(rel) &&
+      /resources/.test(rel) &&
+      !isTestCode(rel) &&
+      !isE2e(rel)
+    );
+  });
 }
 
 // Config keys by file, with the database a JDBC URL names. Keys only: a value never leaves the file.

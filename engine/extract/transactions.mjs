@@ -4,6 +4,7 @@
 import assert from 'node:assert';
 import { annotationIndex, meanHit, simpleMeans } from '../catalogs/catalog.mjs';
 import { citeOf, factOf, methodIdOf, withUniqueIds } from './facts.mjs';
+import { parseCite } from '../core/cite.mjs';
 
 const NO_TX = /\b(NOT_SUPPORTED|NEVER|SUPPORTS)\b/;
 const EJB_BEAN = /\.ejb\.(Stateless|Stateful|Singleton)$/;
@@ -208,7 +209,7 @@ export function extractTransactions(model, selected, { outside = [], writes = []
   return { facts: withUniqueIds(facts), counts: byClass };
 }
 
-const lineOf = (f) => Number(/:(\d+)/.exec((f.evidence ?? [])[0] ?? '')?.[1] ?? 0) || null;
+const lineOf = (f) => parseCite(f.evidence?.[0])?.start || null;
 
 {
   // A project with one transactional method that calls an HTTP client, one afterCommit registration, and one

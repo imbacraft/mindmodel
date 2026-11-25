@@ -7,7 +7,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CONTRACT } from '../engine/dump.mjs';
-import { validate, declaredFromModel, citeCandidates, citeProblem, parseCite } from '../engine/validate.mjs';
+import { validate, declaredFromModel, citeCandidates, citeProblem } from '../engine/validate.mjs';
+import { parseCite } from '../engine/core/cite.mjs';
 
 // The long overload does the work; the short one only throws, which is the failure the fixer used to pin silently.
 const FIXTURE = `package demo;

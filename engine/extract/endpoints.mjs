@@ -4,7 +4,9 @@
 // fact says so, because a half-printed path is worse than an honest hole.
 import assert from 'node:assert';
 import { annotationIndex, meanHit, simpleMeans } from '../catalogs/catalog.mjs';
-import { evalString, splitTop } from '../model/strings.mjs';
+import { evalString, splitTop } from '../core/strings.mjs';
+import { normalizePath } from '../core/paths.mjs';
+import { weakest } from '../core/rank.mjs';
 
 // The expression an annotation gives for its path: the first named argument the catalog declares, else the first
 // positional one. Segments are split at top-level commas so `value = A + "/x", method = GET` keeps its expression.
@@ -26,21 +28,6 @@ function verbOf(entry, args = '') {
   return m ? m[1] : (entry.verbFromArg?.default ?? 'ANY');
 }
 
-// Same shape as the scanner's path normalization, so old and new facts are comparable letter for letter. `{?}` is the
-// engine's own marker for an unresolved part and survives; every other brace group is a path variable.
-const normPath = (p) => {
-  // `{?}` is ours, not a path variable or a query string: park it outside the replacements and put it back.
-  const MARK = '\u0000';
-  const out = ('/' + String(p).replace(/\{\?\}/g, MARK))
-    .replace(/\/+/g, '/')
-    .replace(/\$\{[^}]*\}/g, '{}')
-    .replace(/\{[^}]*\}/g, '{}')
-    .replace(/:\w+/g, '{}')
-    .replace(/\?.*$/, '')
-    .replace(/\/$/, '');
-  return (out || '/').replace(new RegExp(MARK, 'g'), '{?}');
-};
-
 // A file's imports can name a catalog annotation through a wildcard even when the model could not resolve it.
 function fqnFromCatalogs(model, file, name, index) {
   for (const i of model.importsOf.get(file)?.imports ?? [])
@@ -61,8 +48,6 @@ function match(model, type, ann, on, index) {
   return null;
 }
 
-const RANK = { resolved: 0, inferred: 1, unresolved: 2 };
-const weakest = (...hows) => hows.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), 'resolved');
 // An overload is told apart by arity: the syntax index's own count first, then the parameter list.
 const arityOf = (m) => m.arity ?? m.params?.length ?? 0;
 
@@ -167,7 +152,7 @@ export function extractEndpoints(model, selected, { include = () => true } = {})
           const methodPart = ownPart ?? { hit, ...pathPart(model, type, hit, a.args) };
           const parts = [app, base, methodPart].filter((p) => p && p.text !== '');
           const unresolved = parts.flatMap((p) => p.unresolved);
-          const path = normPath(parts.map((p) => p.text).join('/'));
+          const path = normalizePath(parts.map((p) => p.text).join('/'));
           const why = [`@${a.name} (${hit.entry.means}, ${hit.how})`];
           if (base) why.push(`class @${baseAt.hit.a.name}("${base.text}")`);
           if (app.text) why.push(`application path "${app.text}" (${base?.hit.catalog.id ?? hit.catalog.id})`);

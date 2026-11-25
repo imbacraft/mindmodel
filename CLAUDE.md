@@ -6,7 +6,7 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 ## Layout
 - `engine-java/`: the Java engine (Maven, Java 17+, Spoon 11.5.0), shaded into `engine-java/target/mindmodel-engine.jar`.
   It answers which project method each call reaches; `engine/run.mjs` runs it; `engine/dump.mjs` reads its dump.
-- `engine/`: Node scripts, no dependencies. `syntax/` (removed: the dump is the only Java reader),
+- `engine/`: Node scripts, no dependencies. `core/` (pure helpers, one owner per concept),
   `model/` (the symbol model: full names, resolved annotations and supertypes), `catalogs/` (framework meaning as
   JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/`; `scan.mjs` and `system.mjs`
   orchestrate, `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs` keep their roles.

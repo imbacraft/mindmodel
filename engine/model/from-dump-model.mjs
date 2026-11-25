@@ -2,8 +2,8 @@
 // its annotations point, what its fields are typed as, which methods it has, and what each call reaches — so nothing
 // here resolves anything: it arranges the answers in the shape the extractors read.
 import assert from 'node:assert';
-import { simple } from './names.mjs';
-import { push } from './collections.mjs';
+import { simple } from '../core/names.mjs';
+import { push } from '../core/collections.mjs';
 
 const typeNameOf = (text) => (text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
 

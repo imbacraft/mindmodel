@@ -5,13 +5,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkCite, checkSchema, citesOf, resolveCites } from './validate.mjs';
+import { checkCite, citesOf, resolveCites } from './validate.mjs';
+import { checkSchema } from './core/schema.mjs';
+import { simple } from './core/names.mjs';
 import { inlineBase } from './base.mjs';
 
 // "How it talks" as a table: per service, what it calls, what it publishes (and who listens), what it listens to.
 export function talks(map, sys) {
   const role = new Map(sys.services.map((s) => [s.name, s.role]));
-  const short = (n) => (n ?? '').split('.').pop();
   return map.services
     .filter((s) => !role.get(s.name))
     .map((s) => ({
@@ -33,7 +34,7 @@ export function talks(map, sys) {
         .map((c) => {
           const to = [...new Set(c.in.map((i) => i.service))];
           return {
-            channel: short(c.name) || `unresolved ${c.unresolved}`,
+            channel: simple(c.name) || `unresolved ${c.unresolved}`,
             kind: c.kind,
             to: to.filter((n) => n !== s.name),
             self: to.includes(s.name),
@@ -44,7 +45,7 @@ export function talks(map, sys) {
         .map((c) => {
           const from = [...new Set(c.out.map((o) => o.service))];
           return {
-            channel: short(c.name) || `unresolved ${c.unresolved}`,
+            channel: simple(c.name) || `unresolved ${c.unresolved}`,
             kind: c.kind,
             from: from.filter((n) => n !== s.name),
             self: from.includes(s.name),

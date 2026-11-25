@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { scheduleFacts } from './schedules.mjs';
 import { queries } from '../model/query.mjs';
 import { declaredId, targetIds } from '../model/targets.mjs';
-import { simple } from '../model/names.mjs';
+import { simple } from '../core/names.mjs';
 
 const normFqn = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
 const STATUS_NAME = /(?:Status|State)$/;

@@ -5,8 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { configKeys } from './config.mjs';
-import { carriesAnn, isSrcTestPath, simple } from '../model/names.mjs';
-import { linesMatching } from '../model/strings.mjs';
+import { simple } from '../core/names.mjs';
+import { hasAnnotation } from '../core/annotations.mjs';
+import { isTestCode } from '../core/paths.mjs';
+import { placeholderOf } from '../core/placeholders.mjs';
+import { linesMatching } from '../core/strings.mjs';
 import { dumpFor } from '../run.mjs';
 
 // What makes a `main` an app's entry point: a Spring Boot annotation on its type, or a Spring Boot initialiser it
@@ -15,10 +18,9 @@ import { dumpFor } from '../run.mjs';
 const SPRING_APP = ['SpringBootApplication', 'SpringBootConfiguration', 'EnableAutoConfiguration'];
 const SPRING_BASE = ['SpringBootServletInitializer'];
 
-const carriesSimpleAnn = (row, name) => (row.ann ?? []).some((a) => simple(a.name) === name);
-const baseOf = (s) => simple(s.fqn ?? String(s.text ?? '').replace(/<[\s\S]*/, ''));
+const baseOf = (s) => simple(s.fqn ?? s.text);
 const bindsSpring = (t) =>
-  SPRING_APP.some((n) => carriesSimpleAnn(t, n)) || (t.supertypes ?? []).some((s) => SPRING_BASE.includes(baseOf(s)));
+  SPRING_APP.some((n) => hasAnnotation(t, n)) || (t.supertypes ?? []).some((s) => SPRING_BASE.includes(baseOf(s)));
 const linesOf = (file) =>
   (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []);
 
@@ -292,13 +294,13 @@ function eeBoot(pom, B, mvn, prefix = '') {
 // `SpringApplication`.
 function mainsOf(model) {
   return [...model.types.values()]
-    .filter((t) => !isSrcTestPath(t.file))
+    .filter((t) => !isTestCode(t.file))
     .filter((t) =>
       t.methods.some(
         (m) =>
           m.isMain &&
-          (carriesAnn(t, 'SpringBootApplication') ||
-            carriesAnn(t, 'SpringBootConfiguration') ||
+          (hasAnnotation(t, 'SpringBootApplication') ||
+            hasAnnotation(t, 'SpringBootConfiguration') ||
             (m.calls ?? []).some((c) => /(^|\.)SpringApplication(Builder)?$/.test(c.recvFqn ?? ''))),
       ),
     )
@@ -452,8 +454,9 @@ export function bootFacts({ root, files, rel, git, app, read = (p) => fs.readFil
   const port = (k) => k?.keys.get('server.port') && { ...k.keys.get('server.port'), file: k.file };
   const p = port(prof) ?? port(base);
   if (p) {
-    const d = /^\$\{(\w+):(\d+)\}$/.exec(p.value);
-    out.push(`port: ${d ? `${d[2]} unless ${d[1]} is set` : p.value} (${p.file}:${p.line})`);
+    const d = placeholderOf(p.value);
+    const fixed = d?.def && /^\d+$/.test(d.def);
+    out.push(`port: ${fixed ? `${d.def} unless ${d.key} is set` : p.value} (${p.file}:${p.line})`);
   } else out.push('port: 8080 (Spring default; no server.port)');
 
   // Does the backend build also build and serve the frontend?

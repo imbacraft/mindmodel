@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { fileURLToPath } from 'node:url';
-import { checkSchema } from '../validate.mjs';
+import { checkSchema } from '../core/schema.mjs';
+import { simple } from '../core/names.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA = JSON.parse(fs.readFileSync(path.join(HERE, '../../schema/catalog.schema.json'), 'utf8'));
@@ -80,9 +81,9 @@ export function annotationIndex(selected) {
       for (const fqn of fqnsOf(entry)) {
         if (!byFqn.has(fqn)) byFqn.set(fqn, []);
         byFqn.get(fqn).push({ entry, catalog });
-        const simple = fqn.split('.').pop();
-        if (!bySimple.has(simple)) bySimple.set(simple, []);
-        bySimple.get(simple).push({ entry, catalog, fqn });
+        const short = simple(fqn);
+        if (!bySimple.has(short)) bySimple.set(short, []);
+        bySimple.get(short).push({ entry, catalog, fqn });
       }
   return { byFqn, bySimple };
 }

@@ -1,7 +1,9 @@
 // Import-time self-checks moved out of engine/validate.mjs (Task 9); the assertions are unchanged.
 import test from 'node:test';
 import assert from 'node:assert';
-import { parseCite, parsed } from '../engine/validate.mjs';
+import { parseCite } from '../engine/core/cite.mjs';
+
+const parsed = (file, start, end, symbol, arity) => ({ file, start, end, symbol, arity });
 
 test('parseCite: path, range, symbol and arity forms', () => {
   assert.deepStrictEqual(parseCite('a/b.java:10-12'), parsed('a/b.java', 10, 12, null, null));

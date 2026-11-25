@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { queries } from '../model/query.mjs';
 import { targetIds } from '../model/targets.mjs';
-import { simple } from '../model/names.mjs';
+import { simple } from '../core/names.mjs';
+import { annotationOn } from '../core/annotations.mjs';
 
 // Security, in plain terms. One fact per path prefix the application protects, with what the prefix allows:
 // anonymous, authenticated, or a role. Sources: Spring Security filter chains (each chain's `securityMatcher` is its
@@ -54,7 +55,6 @@ const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
 const stringValues = (rows) => rows.map((a) => (typeof a?.value === 'string' ? a.value : null)).filter((v) => v !== null);
 // An argument as a rule's reason displays it: a string in quotes, anything else by the name the dump wrote.
 const shownArg = (a) => (typeof a?.value === 'string' ? `"${a.value}"` : String(a?.text ?? ''));
-const annOfElement = (element, names) => (element?.ann ?? []).find((a) => names.includes(a.name));
 
 function accessOf(rule, args) {
   for (const [re, make] of ACCESS) if (re.test(rule)) return make(args);
@@ -78,10 +78,10 @@ export function springChains(model, db = model?.dump ?? null) {
         const next = matchers[n + 1];
         const span = calls.slice(at + 1, next ? calls.indexOf(next) : undefined);
         const scope = stringValues(dumpArgs(db, sm));
-        const order = Number(/^\s*(-?\d+)/.exec(annOfElement(m, ['Order'])?.args ?? '')?.[1] ?? NaN);
+        const order = Number(/^\s*(-?\d+)/.exec(annotationOn(m, 'Order')?.args ?? '')?.[1] ?? NaN);
         // The chain's own condition: a chain behind a profile or a property is not in force everywhere.
         const cond =
-          annOfElement(m, ['ConditionalOnProperty', 'Profile']) ?? annOfElement(t, ['ConditionalOnProperty', 'Profile']);
+          annotationOn(m, 'ConditionalOnProperty', 'Profile') ?? annotationOn(t, 'ConditionalOnProperty', 'Profile');
         // A configurer applied to this chain whose class the repo does not declare: its requestMatchers rules exist only
         // in that library, so this chain's paths are unknown — say so instead of reporting them as "unknown" with no
         // reason. Only `new X(...)` is claimed: a value passed to `apply` has no class the dump can name.
@@ -289,7 +289,7 @@ export function anonymousWrites(rules, endpoints, methodSecurity) {
 // (one dump per scan); a test may hand the dump in instead. Without one every primitive answers `no-dump` and the
 // facts below come out empty with a reason — never filled in from source text.
 const baseType = (text) => String(text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
-const simpleType = (text) => baseType(text).split('.').pop();
+const simpleType = (text) => simple(baseType(text));
 // The entry methods this repo reads identity and context from: framework method names, not project conventions.
 const IDENTITY_ENTRY = /^(doFilter|doFilterInternal|preHandle)$/;
 // A tenant store is asked of `stores()`, the same definition security uses; the entry set is the doc's (doFilter and

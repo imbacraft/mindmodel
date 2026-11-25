@@ -18,7 +18,7 @@ import assert from 'node:assert';
 import { raw, table } from '../tools/library-table.mjs';
 import { targetIds } from './targets.mjs';
 import { typeArgsOf } from './type-args.mjs';
-import { simple } from './names.mjs';
+import { simple } from '../core/names.mjs';
 
 // ThreadLocal, its JDK subclass, and any project type extending either one.
 const HOLDER_BASES = ['java.lang.ThreadLocal', 'java.lang.InheritableThreadLocal'];

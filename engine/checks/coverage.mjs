@@ -1,9 +1,9 @@
 // L6: what the engine understood, and what it did not. Coverage is computed from the model (not from the facts), so
 // it reports the engine's own blind spots and not just the claims it managed to make.
 import { annotationIndex, simpleMeans, typeIndex } from '../catalogs/catalog.mjs';
+import { simple } from '../core/names.mjs';
 
 const rate = (id, num, den) => ({ id, numerator: num, denominator: den, percent: den ? Math.round((num / den) * 100) : 0 });
-const simple = (name) => name.split('.').pop();
 
 // Annotations that carry no fact and are not worth reporting as unknowns even when nothing resolved their name.
 const HARMLESS = new Set([

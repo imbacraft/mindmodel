@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { parseCite } from './core/cite.mjs';
 
 // mulberry32: small, deterministic, good enough for picking ten rows.
 function rng(seed) {
@@ -35,22 +36,14 @@ function claimsOf(map) {
   return out;
 }
 
-// `path:12-18#sym` -> {file, from, to}
-export function parseCite(cite) {
-  const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#\S+)?$/.exec(String(cite ?? ''));
-  if (!m) return null;
-  const from = m[2] ? Number(m[2]) : null;
-  return { file: m[1], from, to: m[3] ? Number(m[3]) : from };
-}
-
 function excerpt(root, cite) {
   const c = parseCite(cite);
   if (!c) return null;
   const abs = path.join(root, c.file);
   if (!fs.existsSync(abs)) return { missing: c.file };
   const lines = fs.readFileSync(abs, 'utf8').split('\n');
-  const from = Math.max(1, c.from ?? 1);
-  const to = Math.min(lines.length, c.to ?? from + 11, from + 19);
+  const from = Math.max(1, c.start ?? 1);
+  const to = Math.min(lines.length, c.end ?? from + 11, from + 19);
   return { from, to, lines: lines.slice(from - 1, to) };
 }
 
@@ -109,6 +102,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const claims = Array.from({ length: 25 }, (_, i) => ({ where: `rule ${i}`, text: `claim ${i}`, cites: [`a.java:${i + 1}`] }));
   assert.deepStrictEqual(pick(claims, 7, 10), pick(claims, 7, 10));
   assert.notDeepStrictEqual(pick(claims, 7, 10), pick(claims, 8, 10));
-  assert.deepStrictEqual(parseCite('src/a/B.java:12-18#m'), { file: 'src/a/B.java', from: 12, to: 18 });
-  assert.deepStrictEqual(parseCite('src/a/B.java'), { file: 'src/a/B.java', from: null, to: null });
+  assert.equal(parseCite('src/a/B.java:12-18#m').start, 12);
+  assert.equal(parseCite('src/a/B.java:12-18#m').end, 18);
+  assert.equal(parseCite('src/a/B.java').end, null);
 }

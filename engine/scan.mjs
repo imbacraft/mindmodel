@@ -13,8 +13,10 @@ import { buildModelFromDump } from './model/from-dump-model.mjs';
 import { dumpFor } from './run.mjs';
 import { resolve as resolveClasspath, tildify } from './classpath.mjs';
 import { open as openDump } from './dump.mjs';
-import { carriesAnn, isSrcTestOrItPath, isSrcTestPath } from './model/names.mjs';
-import { linesMatching } from './model/strings.mjs';
+import { simple } from './core/names.mjs';
+import { annotationOn, hasAnnotation } from './core/annotations.mjs';
+import { IGNORED_DIRS, isE2e, isTestCode, normalizePath, relPosix } from './core/paths.mjs';
+import { linesMatching } from './core/strings.mjs';
 import {
   annotationFqns,
   annotationIndex,
@@ -56,31 +58,6 @@ export { budgetLine, summarize };
 // The shipped catalogs are read once per process; a project catalog is merged here when it lands.
 const CATALOGS = loadCatalogs();
 
-const IGNORE = new Set([
-  '.git',
-  'node_modules',
-  'target',
-  'build',
-  'bin',
-  'dist',
-  'out',
-  '.gradle',
-  '.idea',
-  '.vscode',
-  '.settings',
-  '.ua',
-  'mindmodel',
-  'uploads',
-  'coverage',
-  '.next',
-  'android',
-  'ios',
-  '.mvn',
-  'vendor',
-  '.claude',
-  '.cursor',
-  '.agent',
-]);
 // Compiled and binary files are never read, so don't even list them (wherever a build tool put them).
 const SKIP_EXT = new RegExp(
   [
@@ -90,12 +67,11 @@ const SKIP_EXT = new RegExp(
   'i',
 );
 const lc = (s) => s[0].toLowerCase() + s.slice(1);
-const rel = (root, p) => path.relative(root, p).split(path.sep).join('/');
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name.startsWith('.') && !['.github'].includes(e.name) && e.isDirectory()) continue;
-    if (IGNORE.has(e.name)) continue;
+    if (IGNORED_DIRS.has(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
     else if (!SKIP_EXT.test(e.name)) out.push(p);
@@ -169,39 +145,6 @@ export function routePath(line, angular = false) {
   return a ? '/' + a[1] : null;
 }
 
-// --- end-to-end test code -------------------------------------------------------
-// A Cypress/Playwright spec runs in a browser against a *running* application, so the calls it makes belong to
-// whoever wrote the test, not to this app's frontend: in one run 31 of 48 "unmatched frontend API calls" were
-// helpers in `cypress/cypress/integration/utils/`. The rule mirrors the Java scan's `src/test/` exclusion: a test
-// folder — or the
-// Cypress `*.cy.*` naming — says the file is a test, wherever it sits.
-const E2E_DIRS = new Set([
-  'cypress',
-  'e2e',
-  'e2e-tests',
-  'playwright',
-  'playwright-tests',
-  'playwright-e2e',
-  '__e2e__',
-  '__tests__',
-  'test',
-  'tests',
-]);
-export const isE2ePath = (p) => {
-  const rel = p ?? '';
-  if (/\.cy\.[cm]?[jt]sx?$/i.test(rel)) return true;
-  // The folder, not the file: `src/App.tsx` is the app, `cypress/e2e/App.tsx` is a test.
-  return rel.split('/').slice(0, -1).some((s) => E2E_DIRS.has(s.toLowerCase()));
-};
-
-// --- helpers ------------------------------------------------------------------
-export const normPath = (p) =>
-  ('/' + p)
-    .replace(/\/+/g, '/')
-    .replace(/\$\{[^}]*\}|\{[^}]*\}|:\w+/g, '{}')
-    .replace(/\?.*$/, '')
-    .replace(/\/$/, '') || '/';
-
 // --- main ---------------------------------------------------------------------
 // `import jakarta.persistence.*;` then `@Entity`: an annotation with no explicit import is resolved through the
 // catalog, not guessed. Only names a catalog knows resolve; everything else stays unknown and shows up in coverage.
@@ -264,7 +207,6 @@ function ensureWork(root) {
   return work;
 }
 
-const simpleName = (text) => String(text ?? '').replace(/<[\s\S]*/, '').split('.').pop().trim();
 // An annotation as the facts state it: its name and the argument list the dump wrote, never the source line.
 const describeAnn = (a) => `@${a.name}${a.args ? `(${a.args})` : ''}`.slice(0, 160);
 
@@ -280,7 +222,7 @@ function modelEntries(types, { types: tSpec = {}, methods: mSpec = {}, fields: f
       if ((tSpec.ann ?? []).some((re) => re.test(a.name)))
         out.push({ file: t.file, line: a.line ?? t.nameLine, text: describeAnn(a) });
     for (const sp of t.supers ?? []) {
-      const name = simpleName(sp.fqn ?? sp.text ?? '');
+      const name = simple(sp.fqn ?? sp.text ?? '');
       if (!tSpec.supers || !tSpec.supers.test(name)) continue;
       const verb = sp.kind === 'interface' ? 'implements' : 'extends';
       out.push({ file: t.file, line: t.nameLine, text: `${verb} ${name}` });
@@ -349,7 +291,7 @@ function scheduledOf(t) {
         if (/^Observes(Async)?$/.test(a.name))
           jobs.push({ kind: a.name, args: String(p.type ?? '').slice(0, 120), line: a.line ?? m.nameLine });
   }
-  const mdb = (t.ann ?? []).find((a) => a.name === 'MessageDriven');
+  const mdb = annotationOn(t, 'MessageDriven');
   if (mdb) {
     const dest =
       /propertyName\s*=\s*"destination(?:Lookup)?"\s*,\s*propertyValue\s*=\s*"([^"]+)"/.exec(mdb.args ?? '') ??
@@ -361,7 +303,7 @@ function scheduledOf(t) {
 }
 
 const tableOf = (t) =>
-  /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
+  /name\s*=\s*"([^"]+)"/.exec(annotationOn(t, 'Table')?.args ?? '')?.[1];
 
 // The SDK packages that mark an integration, and the name each one is reported under.
 const EXT = {
@@ -438,7 +380,7 @@ function memoizedReader() {
 /** The checkout's files, the Java files the dump reads, and the one app among the deployables. */
 function inventory(root) {
   const files = walk(root);
-  const R = (p) => rel(root, p);
+  const R = (p) => relPosix(root, p);
   const read = memoizedReader();
   const byExt = {};
   for (const f of files) {
@@ -446,7 +388,7 @@ function inventory(root) {
     byExt[e] = (byExt[e] ?? 0) + 1;
   }
   // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
-  const javaAll = files.filter((f) => f.endsWith('.java') && !isSrcTestPath(f)).map((p) => ({ p: R(p) }));
+  const javaAll = files.filter((f) => f.endsWith('.java') && !isTestCode(f)).map((p) => ({ p: R(p) }));
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
   const java = javaAll.filter((j) => !app.isExcluded(j.p));
@@ -522,7 +464,7 @@ function exactTargetsOf({ answered, ambiguous, unanswered, sites }) {
 // shows up.
 function viewsReturnedBy(dump, t) {
   return (t.methods ?? [])
-    .filter((m) => !carriesAnn(m, 'ResponseBody'))
+    .filter((m) => !hasAnnotation(m, 'ResponseBody'))
     .flatMap((m) =>
       (dump?.returnsOf(m.id) ?? [])
         .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string' && /^\S+$/.test(r.value.value))
@@ -535,23 +477,23 @@ function viewsReturnedBy(dump, t) {
  * repository passes here, before the wildcard-annotation pass, as the facts always were.
  */
 function typeFacts({ model, dump, app }) {
-  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !isSrcTestPath(t.file));
+  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !isTestCode(t.file));
   const appEntries = appTypes.map(typeEntry);
-  const entities = appEntries.filter((e) => carriesAnn(e.type, 'Entity'));
+  const entities = appEntries.filter((e) => hasAnnotation(e.type, 'Entity'));
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
   const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
   const isController = (t) =>
-    carriesAnn(t, 'RestController') ||
-    carriesAnn(t, 'Controller') ||
-    carriesAnn(t, 'Path') ||
-    (carriesAnn(t, 'Named') && UI_SCOPES.some((s) => carriesAnn(t, s)));
+    hasAnnotation(t, 'RestController') ||
+    hasAnnotation(t, 'Controller') ||
+    hasAnnotation(t, 'Path') ||
+    (hasAnnotation(t, 'Named') && UI_SCOPES.some((s) => hasAnnotation(t, s)));
   const controllers = appEntries
     .filter((e) => isController(e.type))
     // A REST or JAX-RS method's string is a response body, not a view name.
     .map((e) => ({
       ...e,
       views:
-        carriesAnn(e.type, 'RestController') || carriesAnn(e.type, 'Path') ? [] : viewsReturnedBy(dump, e.type),
+        hasAnnotation(e.type, 'RestController') || hasAnnotation(e.type, 'Path') ? [] : viewsReturnedBy(dump, e.type),
     }));
   const repos = appEntries.filter((e) =>
     (e.type.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')),
@@ -601,7 +543,7 @@ function frontendFiles({ files, R, read }) {
         !built(f) &&
         // End-to-end test code: Cypress/Playwright helpers call *another* application's API, so a spec is not this
         // app's frontend — the same rule that keeps `src/test/` out of the Java model.
-        !isE2ePath(R(f)),
+        !isE2e(R(f)),
     )
     .map((p) => ({ p: R(p), source: read(p) }));
   const views = files
@@ -626,7 +568,7 @@ function frontendApiCalls(fe) {
         .slice(Math.max(0, i - 3), i + 4)
         .join(' ');
       const vm = /method:\s*["'](GET|POST|PUT|DELETE|PATCH)["']/i.exec(around);
-      return [{ path: normPath(m[1]), verb: vm?.[1]?.toUpperCase(), file: f.p, line: i + 1 }];
+      return [{ path: normalizePath(m[1]), verb: vm?.[1]?.toUpperCase(), file: f.p, line: i + 1 }];
     }),
   );
 }
@@ -702,14 +644,14 @@ function securityRulesOf(model, files, R, read) {
   return [
     ...springChains(model),
     ...resourceFiles
-      .filter((r) => /sureness\.ya?ml$/i.test(r.p) && !isSrcTestPath(r.p))
+      .filter((r) => /sureness\.ya?ml$/i.test(r.p) && !isTestCode(r.p))
       .flatMap((r) => surenessRules(r.text, r.p)),
     ...files
-      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !isSrcTestPath(f))
+      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !isTestCode(f))
       .flatMap((f) => shiroRules(read(f), R(f))),
     ...shiroCodeRules(model),
     ...files
-      .filter((f) => /web\.xml$/.test(f) && !isSrcTestPath(f))
+      .filter((f) => /web\.xml$/.test(f) && !isTestCode(f))
       .flatMap((f) => webXmlRules(read(f), R(f))),
   ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
 }
@@ -722,7 +664,7 @@ function securityOf({ model, files, R, read, annIndex }, endpoints) {
   // (a filter takes a header/cookie value as the caller with no verification call between).
   const securityWarnings = [
     ...anonymousWrites(securityRules, endpoints, methodSec.index),
-    ...identityWarnings(model, isSrcTestOrItPath),
+    ...identityWarnings(model, isTestCode),
   ];
   return { methodSec, securityRules, securityWarnings };
 }
@@ -782,7 +724,7 @@ function userSourcesOf(model, selected) {
           `${holder.name} is a Sureness ${t.authType} processor`,
         );
     }
-  for (const a of authSources(model, isSrcTestOrItPath))
+  for (const a of authSources(model, isTestCode))
     if (!userSources.some((u) => u.kind === a.kind))
       userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
   return userSources;
@@ -941,7 +883,7 @@ function backgroundOf({ files, R, read }, { appTypes, appEntries }, endpoints) {
     .filter(
       (t) =>
         (t.supers ?? []).some((s) => /(CommandLineRunner|ApplicationRunner)/.test(s.text ?? '')) ||
-        carriesAnn(t, 'Startup'),
+        hasAnnotation(t, 'Startup'),
     )
     .map((t) => ({ file: t.file, line: t.start }));
   return {
@@ -1284,9 +1226,9 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   const web = webFacts(ctx, types, endpoints);
   const persist = persistenceFacts(ctx);
   const recurring = extractSchedules(model, selected);
-  const configFiles = configFilesOf(files);
+  const configFiles = configFilesOf(files, root);
   const sec = securityOf(ctx, endpoints);
-  const tenantFacts = tenantSources(model, isSrcTestOrItPath);
+  const tenantFacts = tenantSources(model, isTestCode);
   // Flow entries serve tenancy (worker callers) and the flows: computed once, before the wildcard-annotation pass.
   const flowEntryList = flowEntries(model, endpoints, selected);
   const entFacts = entityFactsOf(ctx);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { accessFor } from './security.mjs';
 import { superBindings } from '../model/type-args.mjs';
-import { simple } from '../model/names.mjs';
+import { simple } from '../core/names.mjs';
 
 // Flow skeletons: a path from an entry point to at least one effect. An effect is a state write (a
 // repository or EntityManager call, from the state family), an outside call (HTTP, mail, messaging, from the outside

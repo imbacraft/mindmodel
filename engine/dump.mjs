@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { declaredId, overrideIds, targetIds, uniqueImplOf } from './model/targets.mjs';
-import { simple } from './model/names.mjs';
-import { push } from './model/collections.mjs';
+import { simple } from './core/names.mjs';
+import { push } from './core/collections.mjs';
+import { annotationOn } from './core/annotations.mjs';
 
 export const CONTRACT = 6;
 
@@ -70,7 +71,7 @@ export function open(dir) {
 
   /** Annotations on a type or member, by full name or simple name; the arguments are values, or null when unresolved. */
   const annotation = (element, name) => {
-    const hit = (element?.ann ?? []).find((a) => a.name === name || simple(a.name) === name);
+    const hit = annotationOn(element, name);
     if (!hit) return null;
     const args = {};
     for (const [k, v] of Object.entries(hit.args ?? {})) args[k] = v.kind === 'unresolved' ? null : v.value;

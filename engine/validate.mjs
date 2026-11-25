@@ -8,70 +8,12 @@ import { open as openDump } from './dump.mjs';
 import { startsAt } from './model/from-dump-model.mjs';
 import { fileURLToPath } from 'node:url';
 import { gitWindow, activityFor } from './activity.mjs';
+import { formatCite, parseCite } from './core/cite.mjs';
+import { checkSchema } from './core/schema.mjs';
 
 const SCHEMA = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/mindmodel.schema.json'), 'utf8'),
 );
-
-// `path:start-end#symbol`, and the arity form `#symbol/2` that names one overload by its parameter count.
-export function parseCite(c) {
-  const m = /^([^:#]+?)(?::(\d+)(?:-(\d+))?)?(?:#(\S+?)(?:\/(\d+))?)?$/.exec(c);
-  if (!m) return null;
-  return {
-    file: m[1],
-    start: m[2] ? +m[2] : null,
-    end: m[3] ? +m[3] : m[2] ? +m[2] : null,
-    symbol: m[4] ?? null,
-    arity: m[5] != null ? +m[5] : null,
-  };
-}
-export const parsed = (file, start, end, symbol, arity) => ({ file, start, end, symbol, arity });
-
-// The JSON Schema subset our schemas use (type, required, additionalProperties, enum, const, pattern, items,
-// min/maxItems, maxLength, $ref): enough to catch a misspelled field or a wrong enum, with no dependency.
-export function checkSchema(v, s, defs, at, err) {
-  if (s.$ref) return checkSchema(v, defs[s.$ref.split('/').pop()], defs, at, err);
-  const type = Array.isArray(v) ? 'array' : v === null ? 'null' : Number.isInteger(v) ? 'integer' : typeof v;
-  const types = s.type == null ? null : [].concat(s.type); // JSON Schema allows a list: ["object", "null"]
-  if (types && !types.includes(type) && !(types.includes('number') && type === 'integer'))
-    return err(`${at}: expected ${types.join(' or ')}, got ${type}`);
-  if (s.const !== undefined && v !== s.const) err(`${at}: must be ${JSON.stringify(s.const)}`);
-  if (s.enum && !s.enum.includes(v)) err(`${at}: "${v}" is not one of ${s.enum.join(', ')}`);
-  if (s.pattern && typeof v === 'string' && !new RegExp(s.pattern).test(v))
-    err(`${at}: "${v}" does not match ${s.pattern}`);
-  if (s.maxLength && typeof v === 'string' && v.length > s.maxLength) err(`${at}: longer than ${s.maxLength} chars`);
-  if (type === 'array') {
-    if (s.maxItems != null && v.length > s.maxItems) err(`${at}: ${v.length} items > ${s.maxItems}`);
-    if (s.minItems != null && v.length < s.minItems) err(`${at}: ${v.length} items < ${s.minItems}`);
-    if (s.items) v.forEach((x, i) => checkSchema(x, s.items, defs, `${at}[${i}]`, err));
-  }
-  if (type === 'object' && s.properties) {
-    for (const k of s.required ?? []) if (!(k in v)) err(`${at}: missing "${k}"`);
-    for (const [k, x] of Object.entries(v))
-      if (s.properties[k]) checkSchema(x, s.properties[k], defs, `${at}.${k}`, err);
-      else if (s.additionalProperties === false) err(`${at}: unknown field "${k}"`);
-  }
-}
-{
-  const e = [],
-    s = {
-      type: 'object',
-      required: ['a'],
-      additionalProperties: false,
-      properties: { a: { enum: ['x'] }, b: { type: 'array', maxItems: 1, items: { type: 'string' } } },
-    };
-  checkSchema({ a: 'y', b: ['p', 2], c: 1 }, s, {}, '$', (m) => e.push(m));
-  assert.deepStrictEqual(e, [
-    '$.a: "y" is not one of x',
-    '$.b: 2 items > 1',
-    '$.b[1]: expected string, got integer',
-    '$: unknown field "c"',
-  ]);
-  // A list of types: either is accepted, anything else names both.
-  const t = [], u = { type: ['object', 'null'] };
-  for (const v of [{}, null, 'x']) checkSchema(v, u, {}, '$', (m) => t.push(m));
-  assert.deepStrictEqual(t, ['$: expected object or null, got string']);
-}
 
 // P8 size tiers: the core ceiling scales with the app, because a 40-endpoint tool and a 900-endpoint platform cannot
 // say the same thing in the same number of words. Regions and state keep a flat cap: that is where overflow lives.
@@ -190,8 +132,6 @@ export function citeCandidates(declared, pc) {
 const overlaps = (d, pc) => pc.start != null && d.start <= pc.end && pc.start <= d.end;
 const containsSymbol = (lines, pc) =>
   pc.start != null && pc.end <= lines.length && lines.slice(pc.start - 1, pc.end).join('\n').includes(pc.symbol);
-// The symbol as the writer wrote it, arity included: what a repaired citation keeps.
-const symbolWithArity = (pc) => (pc.arity == null ? pc.symbol : `${pc.symbol}/${pc.arity}`);
 
 // `path:start-end#name (N params)` for each declaration the citation could mean, so the error can list them all.
 function citeCandidatesText(file, named) {
@@ -308,7 +248,7 @@ export function resolveCites(map, root, declared = null, cache = new Map()) {
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return c;
     const lines = linesOf(cache, abs);
     const named = citeCandidates(declared, pc);
-    const cite = (d) => `${pc.file}:${d.start}-${d.end}#${symbolWithArity(pc)}`;
+    const cite = (d) => formatCite({ ...pc, start: d.start, end: d.end });
     // The range names one declaration: nothing to repair, and nothing to guess.
     if (named && named.filter((d) => overlaps(d, pc)).length === 1) return c;
     // Several methods of that name: only the writer knows which one the claim is about.

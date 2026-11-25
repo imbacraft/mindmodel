@@ -4,7 +4,7 @@
 // keyed entities and whether it sets the tenant context first.
 import assert from 'node:assert/strict';
 import { queries } from '../model/query.mjs';
-import { isTestPath } from '../model/names.mjs';
+import { isTestCode } from '../core/paths.mjs';
 import { targetIds } from '../model/targets.mjs';
 
 const MIN_ENTITIES = 3;
@@ -74,7 +74,7 @@ export function tenancyFacts(
   const distance = new Map();
   const storeCallers = (id) => d?.callersOf?.(id) ?? [];
   for (const { t, m } of methodsInOrder) {
-    if (isTestPath(t.file)) continue;
+    if (isTestCode(t.file)) continue;
     if (q.stores(m.id, 0).stores.some((s) => s.op !== 'clear')) distance.set(m.id, 0);
   }
   let frontier = [...distance.keys()];
@@ -117,7 +117,7 @@ export function tenancyFacts(
     const selfNamed = [],
       viaArg = [];
     for (const { t, m } of methodsInOrder) {
-      if (isTestPath(t.file)) continue;
+      if (isTestCode(t.file)) continue;
       if (!distance.has(m.id)) continue;
       if ((m.params ?? []).some((p) => p.name && named(p.name)) || named(m.name)) {
         selfNamed.push(`${t.name}#${m.name}`);
@@ -137,7 +137,7 @@ export function tenancyFacts(
   const strongLink = (key) => {
     const named = namesKey(key);
     for (const t of model?.types?.values() ?? []) {
-      if (isTestPath(t.file)) continue;
+      if (isTestCode(t.file)) continue;
       if (!/(Filter|Interceptor|Security|ApiToken)/i.test(t.name)) continue;
       for (const m of t.methods ?? []) {
         // The request names the key literally: `request.getParameter("workspaceId")`, `headers.get("X-Tenant")`, or a

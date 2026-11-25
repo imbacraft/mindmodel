@@ -6,22 +6,17 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { jarPath } from '../engine/engine.mjs';
-
-const IGNORE = new Set([
-  '.git', 'node_modules', 'target', 'build', 'bin', 'dist', 'out', '.gradle', '.idea', '.vscode', '.settings',
-  '.ua', 'mindmodel', 'uploads', 'coverage', '.next', 'android', 'ios', '.mvn', 'vendor', '.claude', '.cursor',
-  '.agent',
-]);
+import { IGNORED_DIRS, isTestCode } from '../engine/core/paths.mjs';
 const SKIP_EXT =
   /\.(class|jar|war|ear|so|dll|dylib|exe|o|pyc|png|jpe?g|gif|webp|ico|bmp|tiff?|woff2?|ttf|otf|eot|mp[34]|mov|avi|zip|gz|tgz|rar|7z|pdf|psd|map)$/i;
 
 function javaFiles(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name.startsWith('.') && e.name !== '.github' && e.isDirectory()) continue;
-    if (IGNORE.has(e.name)) continue;
+    if (IGNORED_DIRS.has(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) javaFiles(p, out);
-    else if (!SKIP_EXT.test(e.name) && e.name.endsWith('.java') && !/\/src\/test\//.test(p)) out.push(p);
+    else if (!SKIP_EXT.test(e.name) && e.name.endsWith('.java') && !isTestCode(p)) out.push(p);
   }
   return out;
 }

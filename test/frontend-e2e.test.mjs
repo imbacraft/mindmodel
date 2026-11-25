@@ -3,7 +3,7 @@
 // keeps `src/test/` out of the Java model. Fixture: one SPA call plus Cypress and Playwright helpers.
 import test from 'node:test';
 import assert from 'node:assert';
-import { isE2ePath } from '../engine/scan.mjs';
+import { isE2e } from '../engine/core/paths.mjs';
 import { cachedFixtureScan } from '../test-support/scan-cache.mjs';
 
 test('a test folder, or the Cypress `*.cy.*` naming, marks end-to-end code', () => {
@@ -17,10 +17,10 @@ test('a test folder, or the Cypress `*.cy.*` naming, marks end-to-end code', () 
     '__tests__/App.tsx',
     'src/a.cy.tsx',
   ])
-    assert.ok(isE2ePath(p), `${p} is test code`);
+    assert.ok(isE2e(p), `${p} is test code`);
   // The app itself is not: the folder decides, so `src/App.tsx` stays and only a test folder is skipped.
   for (const p of ['src/App.tsx', 'src/routes.tsx', 'src/Layout.ts', 'src/contest.ts', 'server/index.js'])
-    assert.ok(!isE2ePath(p), `${p} is the app`);
+    assert.ok(!isE2e(p), `${p} is the app`);
 });
 
 test('only the SPA call is in frontend.apiCalls', () => {
