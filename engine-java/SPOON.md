@@ -8,7 +8,8 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
   - Signatures: `javap -cp ~/.m2/repository/fr/inria/gforge/spoon/spoon-core/11.5.0/spoon-core-11.5.0.jar <class>`.
   - Source: the sources jar next to it (`spoon-core-11.5.0-sources.jar`); read a class with
     `unzip -p <sources jar> spoon/reflect/code/CtCase.java`.
-- Prove behaviour with a JUnit test in `src/test/java/mindmodel/engine/dump/` (use `DumpRun`), not by reasoning.
+- Prove behaviour with a JUnit test in `src/test/java/mindmodel/engine/` (the package of the class it exercises, using
+  `DumpRun`), not by reasoning.
 
 ## Mode
 - The engine runs Spoon in noclasspath mode, with optional dependency jars. Unresolved references are normal: a
@@ -17,12 +18,28 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 
 ## Type hierarchy traps
 - `CtWildcardReference` extends `CtTypeParameterReference`. Check for the wildcard first, or its bounds are lost.
+- `CtSuperAccess` and `CtThisAccess` extend `CtVariableRead`. Exclude them before treating a read as a name.
 - `CtOperatorAssignment` (`+=`, `-=`, ...) extends `CtAssignment`. `getAssignment()` is only the right-hand side.
 - `CtCatchVariable` is not a `CtParameter`, `CtLocalVariable` or `CtField`. Handle it on its own.
 - Type parameters (`T`, `Value`, `Entity`) are `CtTypeParameterReference`. They are never receiver types.
 - A generic member's `getType()` is the declared type variable, not the bound argument: `c.get("a")` on a `Cache<Foo>`
   is typed `Value`. Bind it from the target's `getActualTypeArguments()` at the same position.
 - A catch parameter read is a `CtVariableRead` whose declaration is a `CtCatchVariable` (not a local, not a parameter).
+
+## Undeclared names
+- An undeclared name (`mystery.call()`, `mystery::call`) is a read whose variable has no declaration and no declaring
+  type. Spoon types the read, and the executable reference, as the class the name is written in. That is a guess about
+  the receiver, so the engine treats the name as unresolved (`Chains.undeclaredName`, `ReceiverTypesTest`).
+- An inherited library field that Spoon cannot see still has a declaring type. That is how it differs from an undeclared
+  name: a read with no declaring type is the only case the rule above applies to.
+
+## Constructors
+- `new Base(7) { ... }` and an enum constant with a body create an anonymous class. The call's executable is that
+  class's implicit constructor, which is not in the checkout's index. The call reaches the superclass constructor of the
+  same arity (`ConstructorTargetsTest`).
+- Spoon invents a default constructor for every class that writes none, Lombok annotated or not. Java writes a default
+  only when a class has no constructor, and a Lombok constructor counts as one. The dump writes Spoon's invention only
+  when Lombok writes no constructor for the type (`LombokTest`).
 
 ## Names
 - `getQualifiedName()` spells nested types `pkg.Outer$Inner`. The dump spells them dotted (`pkg.Outer.Inner`), so
@@ -43,7 +60,9 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 - Overrides: use `CtMethod.isOverriding(...)`, not name and arity.
 - Constants (JLS 4.12.4): a `final` variable of primitive or String type with a constant initializer, static or not.
   Fold with Java semantics: integer division, int and long overflow, float stays float.
-- Spoon keeps only the first declaration of a duplicate FQN, silently. The engine counts `types.duplicateFqn`.
+- Spoon keeps only one declaration of a duplicate FQN, silently. The engine counts `types.duplicateFqn`. Which one it
+  keeps depends on the checkout path string, not on the file list order (`DuplicateTypesTest` does not pin it). The
+  dump-spec's "first file in sorted order keeps it" is not what Spoon does; this is an open issue.
 - A type or record pattern case label (`case String s`, `case Pair(String l, int r)`) is a `CtCasePattern` wrapping the
   `CtTypePattern` or `CtRecordPattern`; the pattern has no source position, so its text is built from its parts.
 - `case null, default` is `getIncludesDefault()` true, and `getCaseExpressions()` holds only `null`. A `when` guard is
