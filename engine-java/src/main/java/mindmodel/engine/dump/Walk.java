@@ -8,6 +8,7 @@ import java.util.Map;
 import spoon.reflect.code.CtAssignment;
 import spoon.reflect.code.CtCase;
 import spoon.reflect.code.CtCatch;
+import spoon.reflect.code.CtConstructorCall;
 import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldAccess;
@@ -20,10 +21,14 @@ import spoon.reflect.code.CtSwitch;
 import spoon.reflect.code.CtSwitchExpression;
 import spoon.reflect.code.CtTry;
 import spoon.reflect.code.CtVariableWrite;
+import spoon.reflect.declaration.CtAnonymousExecutable;
 import spoon.reflect.declaration.CtElement;
+import spoon.reflect.declaration.CtEnumValue;
 import spoon.reflect.declaration.CtExecutable;
+import spoon.reflect.declaration.CtField;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
+import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.visitor.Filter;
 
 /**
@@ -50,6 +55,7 @@ final class Walk {
 
     private static final Filter<CtElement> ANY = element ->
             element instanceof CtInvocation<?> || element instanceof CtExecutableReferenceExpression<?, ?>
+                    || element instanceof CtConstructorCall<?>
                     || element instanceof CtReturn<?> || element instanceof CtSwitchExpression<?, ?>
                     || element instanceof CtSwitch<?> || element instanceof CtFieldAccess<?>
                     || element instanceof CtAssignment<?, ?> || element instanceof CtLocalVariable<?>
@@ -109,6 +115,28 @@ final class Walk {
         return buckets.body();
     }
 
+    /**
+     * The code a type runs outside its methods: field initialisers and initializer blocks, static ones (`statik`) or per
+     * instance. Only the call sites are read from them; an enum constant's arguments are a static field's initialiser.
+     */
+    static Body initializers(CtType<?> type, boolean statik) {
+        Buckets buckets = new Buckets();
+        for (CtField<?> field : type.getFields())
+            if (isStatic(field) == statik && field.getDefaultExpression() != null)
+                for (CtElement element : field.getDefaultExpression().getElements(ANY)) buckets.add(element);
+        for (var member : type.getTypeMembers())
+            if (member instanceof CtAnonymousExecutable block
+                    && block.getModifiers().contains(ModifierKind.STATIC) == statik)
+                for (CtElement element : block.getElements(ANY)) buckets.add(element);
+        return buckets.body();
+    }
+
+    /** A static field, an enum constant, or any field of an interface (which is static whatever it says). */
+    private static boolean isStatic(CtField<?> field) {
+        return field instanceof CtEnumValue<?> || field.getModifiers().contains(ModifierKind.STATIC)
+                || field.getDeclaringType() != null && field.getDeclaringType().isInterface();
+    }
+
     /** The buckets one walk fills, filled element by element. */
     private static final class Buckets {
         private final List<CtElement> sites = new ArrayList<>();
@@ -125,7 +153,8 @@ final class Walk {
         private final List<CtMethod<?>> methods = new ArrayList<>();
 
         void add(CtElement element) {
-            if (element instanceof CtInvocation<?> || element instanceof CtExecutableReferenceExpression<?, ?>)
+            if (element instanceof CtInvocation<?> || element instanceof CtExecutableReferenceExpression<?, ?>
+                    || element instanceof CtConstructorCall<?>)
                 sites.add(element);
             else if (element instanceof CtReturn<?> ret) returns.add(ret);
             else if (element instanceof CtSwitchExpression<?, ?> expression) switchExpressions.add(expression);

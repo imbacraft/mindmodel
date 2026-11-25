@@ -34,7 +34,7 @@ final class Chains {
         if (expression instanceof CtThisAccess<?> self) {
             // Inside a lambda Spoon writes the implicit `this`, but its type is the lambda, not the enclosing class.
             var owner = self.getParent(CtType.class);
-            if (owner != null) return Names.qualified(owner);
+            if (owner != null) return Names.nameOf(owner);
         }
         // `var x = ...`: Spoon 11.5 leaves some locals typed Object, but the initializer it inferred from is still
         // there. A receiver keeps the local's own type when Spoon resolved one, is typed from the initializer when it

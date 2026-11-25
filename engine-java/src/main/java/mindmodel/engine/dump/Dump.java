@@ -22,12 +22,12 @@ import spoon.reflect.declaration.CtType;
 import mindmodel.engine.SourceModel;
 
 /**
- * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 6.
+ * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 7.
  * Deterministic by construction: rows are ordered by file, then source position, then name.
  */
 public final class Dump {
 
-    public static final int CONTRACT = 6;
+    public static final int CONTRACT = 7;
     public static final String ENGINE = "spoon-11.5.0";
 
     private Dump() {
@@ -53,12 +53,16 @@ public final class Dump {
         // is measured against the canonical root, or it comes out as ../../ paths.
         Path root = SourceModel.realPath(given);
         java.nio.file.Files.createDirectories(outDir);
-        List<String> inputs = SourceModel.relativeFiles(root,
-                java.nio.file.Files.readAllLines(listPath, StandardCharsets.UTF_8));
+        // Sorted, so the model Spoon builds from them, and the first of two same-named declarations, do not depend on
+        // the order the list was written in.
+        List<String> inputs = new ArrayList<>(SourceModel.relativeFiles(root,
+                java.nio.file.Files.readAllLines(listPath, StandardCharsets.UTF_8)));
+        inputs.sort(null);
         Read read = readModel(root, inputs, compliance, classpath, generatedDirs);
         SourceModel model = read.model();
         Positions positions = new Positions(root);
         Failures failures = new Failures();
+        countDuplicateDeclarations(model, root, compliance, failures);
         Declared declared = declaredTypes(model, inputs, compliance, positions);
         List<CtType<?>> types = declared.types();
         // The generated sources are in the model for resolution only: a reader of call targets must know their
@@ -152,7 +156,21 @@ public final class Dump {
         for (CtType<?> nested : t.getNestedTypes()) collect(model, nested, rows, seen, positions);
     }
 
-    /** A type the map may name: not anonymous, not a class declared inside a method body. */
+    /**
+     * A name two input files declare is one row: an id is the name, so there is no second id to give it, and the first
+     * file in sorted order keeps it. Spoon drops the other declaration with its unit's type, so the files that declare
+     * nothing are read again alone, and each name one of them declares that the model kept is counted as
+     * `types.duplicateFqn`. Only a run with such a file pays for the second read.
+     */
+    private static void countDuplicateDeclarations(SourceModel model, Path root, int compliance, Failures failures)
+            throws IOException {
+        List<String> silent = model.unitsWithoutTypes();
+        if (silent.isEmpty()) return;
+        Set<String> kept = model.declaredNames();
+        SourceModel again = SourceModel.build(root, silent, compliance, List.of(), model.generatedDirs());
+        for (String name : again.declaredNames()) if (kept.contains(name)) failures.count("types.duplicateFqn");
+    }
+
     private static boolean declared(CtType<?> t) {
         if (t.isAnonymous()) return false;
         return !(t.getDeclaringType() == null && t.getParent(CtExecutable.class) != null);

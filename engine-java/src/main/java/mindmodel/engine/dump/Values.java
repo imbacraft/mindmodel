@@ -14,8 +14,10 @@ import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.code.CtUnaryOperator;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.declaration.CtAnnotation;
+import spoon.reflect.declaration.CtEnumValue;
 import spoon.reflect.declaration.CtField;
 import spoon.reflect.declaration.CtType;
+import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtFieldReference;
 import spoon.reflect.reference.CtTypeReference;
 
@@ -90,16 +92,25 @@ public final class Values {
         return type == null ? null : new Value("class", Names.qualified(type));
     }
 
-    /** Enum constants are constants; a static final field is worth folding only when Spoon already did. */
+    /**
+     * An enum constant is a constant. Any other field folds only when it is a constant variable of the language (static
+     * and final, every interface field included) and its initializer folds; everything else is a field read.
+     */
     private static Value field(CtFieldReference<?> ref) {
         CtTypeReference<?> owner = ref.getDeclaringType();
         CtType<?> type = owner == null ? null : owner.getTypeDeclaration();
-        if (type != null && type.isEnum())
+        CtField<?> declaration = ref.getFieldDeclaration();
+        if (type != null && type.isEnum() && (declaration == null || declaration instanceof CtEnumValue<?>))
             return new Value("enum", Names.dotted(Names.qualified(type), ref.getSimpleName()));
-        CtField<?> declaration = ref == null ? null : ref.getFieldDeclaration();
-        if (declaration != null && declaration.getDefaultExpression() != null)
-            return of(declaration.getDefaultExpression());
-        return null;
+        if (declaration == null || !constantVariable(declaration) || declaration.getDefaultExpression() == null)
+            return null;
+        return of(declaration.getDefaultExpression());
+    }
+
+    private static boolean constantVariable(CtField<?> field) {
+        CtType<?> owner = field.getDeclaringType();
+        if (owner != null && owner.isInterface()) return true;
+        return field.getModifiers().contains(ModifierKind.STATIC) && field.getModifiers().contains(ModifierKind.FINAL);
     }
 
     private static Value unary(CtUnaryOperator<?> op) {
@@ -128,6 +139,7 @@ public final class Values {
             return new Value("string", String.valueOf(left.value()) + right.value());
         }
         if (!(left.value() instanceof Number a) || !(right.value() instanceof Number b)) return null;
+        if (isIntegral(a) && isIntegral(b)) return integral(kind, a, b);
         double x = a.doubleValue();
         double y = b.doubleValue();
         Double result = switch (kind) {
@@ -137,8 +149,30 @@ public final class Values {
             case "DIV" -> y == 0 ? null : x / y;
             default -> null;
         };
+        return result == null ? null : literal(result);
+    }
+
+    private static boolean isIntegral(Number n) {
+        return n instanceof Integer || n instanceof Long || n instanceof Short || n instanceof Byte;
+    }
+
+    /**
+     * Java's integer arithmetic: a long if either operand is one, else an int that wraps on overflow. The low 32 bits of
+     * a long product are the int product, so an int result is the long result cut to int. Division by zero is no
+     * constant at all.
+     */
+    private static Value integral(String kind, Number a, Number b) {
+        long x = a.longValue();
+        long y = b.longValue();
+        Long result = switch (kind) {
+            case "PLUS" -> x + y;
+            case "MINUS" -> x - y;
+            case "MUL" -> x * y;
+            case "DIV" -> y == 0 ? null : x / y;
+            default -> null;
+        };
         if (result == null) return null;
-        return "int".equals(left.kind()) && "int".equals(right.kind()) && result == Math.rint(result)
-                ? literal((int) (double) result) : literal(result);
+        boolean wide = a instanceof Long || b instanceof Long;
+        return wide ? literal(result) : literal((int) (long) result);
     }
 }

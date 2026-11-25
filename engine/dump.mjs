@@ -8,7 +8,7 @@ import { simple } from './core/names.mjs';
 import { push } from './core/collections.mjs';
 import { annotationOn } from './core/annotations.mjs';
 
-export const CONTRACT = 6;
+export const CONTRACT = 7;
 
 function rows(file) {
   return fs

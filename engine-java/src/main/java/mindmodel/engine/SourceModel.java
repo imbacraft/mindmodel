@@ -143,6 +143,35 @@ public final class SourceModel {
     }
 
     /**
+     * The top-level type names each input file declares, by qualified name, each with the files that declare it (sorted).
+     * Spoon keeps one declaration of a name it is given twice, so this is where a second one is still visible.
+     */
+    /** The qualified names of the top-level types the input files declare, as Spoon kept them. */
+    public java.util.Set<String> declaredNames() {
+        java.util.Set<String> out = new java.util.TreeSet<>();
+        for (var unit : launcher.getFactory().CompilationUnit().getMap().entrySet()) {
+            if (relative(Path.of(unit.getKey())) == null) continue;
+            for (CtType<?> t : unit.getValue().getDeclaredTypes()) out.add(Names.qualified(t));
+        }
+        return out;
+    }
+
+    /**
+     * Input files whose unit declares no top-level type: a file of comments, or a second declaration of a name another
+     * file declares, whose type Spoon dropped with its unit's declaration. `package-info.java` declares none by design.
+     */
+    public List<String> unitsWithoutTypes() {
+        List<String> out = new ArrayList<>();
+        for (var unit : launcher.getFactory().CompilationUnit().getMap().entrySet()) {
+            String rel = relative(Path.of(unit.getKey()));
+            if (rel == null || !unit.getValue().getDeclaredTypes().isEmpty() || rel.endsWith("package-info.java")) continue;
+            out.add(rel);
+        }
+        java.util.Collections.sort(out);
+        return out;
+    }
+
+    /**
      * Each input file's own package, from its compilation unit: {@code ""} for the default package. A file that declares
      * no type is still a file with a package, and this is where that is read.
      */

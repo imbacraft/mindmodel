@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import spoon.reflect.code.CtConstructorCall;
 import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
@@ -23,6 +24,7 @@ import spoon.reflect.code.CtThisAccess;
 import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.declaration.CtClass;
+import spoon.reflect.declaration.CtConstructor;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtExecutable;
 import spoon.reflect.declaration.CtMethod;
@@ -67,7 +69,7 @@ public final class Sites {
      * `byArity` are keyed by owner, then by `name/argc`; `bound` is `owner#T -> bound fqn`, only where every subtype that
      * names the type writes the same argument.
      */
-    private record Index(Set<String> declared, Map<String, Set<String>> subtypes,
+    private record Index(Map<String, CtType<?>> types, Set<String> declared, Map<String, Set<String>> subtypes,
             Map<String, Set<String>> supertypes, Map<String, Map<String, String>> byShape,
             Map<String, Map<String, String>> byArity, Lombok.Index generated, Map<String, String> bound) {
     }
@@ -110,10 +112,14 @@ public final class Sites {
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> type : types) {
                 for (CtExecutable<?> executable : Walk.executables(type))
-                    writeBody(w, ctx, type, executable, Names.executableId(type, executable), bodies.of(executable));
-                // A method of an anonymous class is body work of the member that writes it, filed under the type.
+                    writeBody(w, ctx, type, executable, Names.executableId(type, executable),
+                            bodies.of(executable), true);
+                // A method of an anonymous class is body work of the member that writes it, filed under the type. The
+                // member owns the calls and field accesses inside it, so only the method's returns are read here.
                 for (Walk.Anon anon : bodies.anonymous(type))
-                    writeBody(w, ctx, type, anon.method(), anon.id(), bodies.of(anon.method()));
+                    writeBody(w, ctx, type, anon.method(), anon.id(), bodies.of(anon.method()), false);
+                writeInitializers(w, ctx, type, true);
+                writeInitializers(w, ctx, type, false);
             }
         }
         return new Written(ctx.returns(), ctx.fields());
@@ -123,19 +129,21 @@ public final class Sites {
 
     private static Index index(List<CtType<?>> known, Lombok.Index generated, Failures failures) {
         Set<String> declared = new HashSet<>();
+        Map<String, CtType<?>> types = new HashMap<>();
         Map<String, Map<String, String>> byShape = new HashMap<>();
         Map<String, Map<String, String>> byArity = new HashMap<>();
         for (CtType<?> t : known) {
             String fqn = Names.qualified(t);
             declared.add(fqn);
+            types.put(fqn, t);
             Map<String, String> shapes = new HashMap<>();
             Map<String, String> arities = new HashMap<>();
             shapes(t, shapes, arities);
             byShape.put(fqn, shapes);
             byArity.put(fqn, arities);
         }
-        return new Index(declared, subtypes(known, declared), supertypes(known, declared), byShape, byArity, generated,
-                bindings(known, declared, failures));
+        return new Index(types, declared, subtypes(known, declared), supertypes(known, declared), byShape, byArity,
+                generated, bindings(known, declared, failures));
     }
 
     /**
@@ -267,13 +275,35 @@ public final class Sites {
 
     // ---- the rows: one body at a time ----
 
+    /**
+     * One body's rows and what it hands the other sections. `ownSites` is false for an anonymous class's method, whose
+     * calls and field accesses the enclosing member's body already holds.
+     */
     private static void writeBody(Ndjson w, Ctx ctx, CtType<?> type, CtExecutable<?> executable, String methodId,
-            Walk.Body body) throws IOException {
+            Walk.Body body, boolean ownSites) throws IOException {
         // The body's own writes first: a returned local can still name the value it was assigned.
         ctx.refs().scope(body.writes());
-        // Ids for the whole body before its rows: a row's argument may name a call written after it.
+        if (ownSites) writeSites(w, ctx, type, methodId, body.sites());
+        ctx.returns().put(executable, Returns.plan(executable, body, ctx.refs()));
+        if (ownSites) FieldAccesses.collect(ctx.fields(), body, methodId, ctx.positions(), ctx.refs());
+    }
+
+    /**
+     * A type's field initialisers and initializer blocks, owned by a pseudo-member: `<clinit>()` for the static ones and
+     * `<init>()` for the ones that run per instance. Their sites are rows like any other.
+     */
+    private static void writeInitializers(Ndjson w, Ctx ctx, CtType<?> type, boolean statik) throws IOException {
+        Walk.Body body = Walk.initializers(type, statik);
+        ctx.refs().scope(body.writes());
+        String owner = Names.member(Names.qualified(type), statik ? "<clinit>()" : "<init>()");
+        writeSites(w, ctx, type, owner, body.sites());
+    }
+
+    /** Ids for a body's sites before any of its rows: a row's argument may name a call written after it. */
+    private static void writeSites(Ndjson w, Ctx ctx, CtType<?> type, String methodId, List<CtElement> elements)
+            throws IOException {
         List<Site> sites = new ArrayList<>();
-        for (CtElement element : body.sites()) {
+        for (CtElement element : elements) {
             // Spoon inserts an implicit super() with no source position; it is not a call anyone wrote.
             Positions.Pos pos = ctx.positions().of(element);
             if (pos == null) continue;
@@ -281,8 +311,6 @@ public final class Sites {
             sites.add(new Site(element, pos));
         }
         for (Site site : sites) writeSite(w, ctx, type, methodId, site);
-        ctx.returns().put(executable, Returns.plan(executable, body, ctx.refs()));
-        FieldAccesses.collect(ctx.fields(), body, methodId, ctx.positions(), ctx.refs());
     }
 
     private static void writeSite(Ndjson w, Ctx ctx, CtType<?> type, String methodId, Site site) throws IOException {
@@ -291,6 +319,8 @@ public final class Sites {
                 w.row(g -> callRow(g, ctx, type, methodId, call, site.pos()));
             else if (site.element() instanceof CtExecutableReferenceExpression<?, ?> ref)
                 w.row(g -> methodRefRow(g, ctx, type, methodId, ref, site.pos()));
+            else if (site.element() instanceof CtConstructorCall<?> created)
+                w.row(g -> ctorRow(g, ctx, type, methodId, created, site.pos()));
         } catch (RuntimeException e) {
             // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
             w.row(g -> errorRow(g, methodId, site.element(), site.pos(), e, ctx.refs().failures()));
@@ -340,7 +370,7 @@ public final class Sites {
         CtExpression<?> target = call.getTarget();
         String receiver = target == null ? null : ctx.chains().receiver(target);
         if (receiver == null && fieldType == null && ref != null && ref.getDeclaringType() != null)
-            receiver = Names.qualified(ref.getDeclaringType());
+            receiver = Names.nameOf(ref.getDeclaringType());
         // A call written without a receiver resolves against the class it is written in (or what that class inherits).
         if (receiver == null && fieldType == null && target == null) receiver = Names.qualified(type);
         if (fieldType != null) receiver = fieldType;
@@ -366,12 +396,12 @@ public final class Sites {
             CtExecutableReferenceExpression<?, ?> expression, Positions.Pos pos) throws IOException {
         CtExecutableReference<?> ref = expression.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
-        var declaration = ref == null ? null : ref.getDeclaration();
-        int argc = declaration instanceof CtMethod<?> method ? method.getParameters().size() : 0;
+        // The referenced method's arity is the reference's own: a library method has no declaration to count.
+        int argc = ref == null ? 0 : ref.getParameters().size();
         CtExpression<?> target = expression.getTarget();
         String receiver = target == null ? null : ctx.chains().receiver(target);
         if (receiver == null && ref != null && ref.getDeclaringType() != null)
-            receiver = Names.qualified(ref.getDeclaringType());
+            receiver = Names.nameOf(ref.getDeclaringType());
         if (receiver == null) receiver = Names.qualified(type);
         List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
         Recv recv = Recv.of(ctx, type, receiver, false);
@@ -391,6 +421,33 @@ public final class Sites {
         if (targets.isEmpty())
             g.writeStringField("reason", recv.invented() ? "unresolved-name"
                     : recv.declared() ? "no-declaration-here" : unknownVar ? "var-unresolved" : "library-signature");
+    }
+
+    /**
+     * A `new` as a call row: the constructor it reaches (`Foo#Foo(String)`), with the created type as its receiver. A
+     * constructor is not overridden, so its targets are the declaration alone.
+     */
+    private static void ctorRow(JsonGenerator g, Ctx ctx, CtType<?> type, String methodId, CtConstructorCall<?> call,
+            Positions.Pos pos) throws IOException {
+        CtExecutableReference<?> ref = call.getExecutable();
+        String name = ref == null ? "<init>" : ref.getSimpleName();
+        int argc = call.getArguments().size();
+        String receiver = ref == null || ref.getDeclaringType() == null ? null
+                : Names.nameOf(ref.getDeclaringType());
+        List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
+        Recv recv = Recv.of(ctx, type, receiver, false);
+        head(g, methodId, ctx.ids().id(call), pos, name);
+        g.writeNumberField("argc", argc);
+        writeRecv(g, recv.invented() ? null : recv.type(), ctx, null, "instance", "new", ctx.refs().textOf(call));
+        writeTargets(g, targets);
+        g.writeBooleanField("uniqueImpl", false);
+        writeArgs(g, ctx, call.getArguments());
+        inLambda(g, call);
+        g.writeStringField("origin", !targets.isEmpty() ? "java" : recv.declared() || recv.invented() ? "unresolved"
+                : "library");
+        if (targets.isEmpty())
+            g.writeStringField("reason", recv.invented() ? "unresolved-name"
+                    : recv.declared() ? "no-declaration-here" : "library-signature");
     }
 
     /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
@@ -531,6 +588,7 @@ public final class Sites {
             int argc) {
         List<Target> out = new ArrayList<>();
         if (ref == null) return out;
+        if (ref.getDeclaration() instanceof CtConstructor<?> ctor) return constructorTargets(index, ctor);
         if (!(ref.getDeclaration() instanceof CtMethod<?> method)) return byArity(index, receiver, name, argc);
         CtType<?> owner = method.getDeclaringType();
         if (owner == null || !index.declared().contains(Names.qualified(owner))) return out;
@@ -540,10 +598,32 @@ public final class Sites {
         out.add(new Target(Names.executableId(owner, method), "declared"));
         boolean open = owner.isInterface() || owner.getModifiers().contains(ModifierKind.ABSTRACT);
         if (!open) return out;
-        String shape = Names.shape(method.getSimpleName(), method.getParameters().size());
         for (String subtype : index.subtypes().getOrDefault(Names.qualified(owner), Set.of()))
-            addTarget(out, index.byShape().getOrDefault(subtype, Map.of()).get(shape), "override");
+            addTarget(out, overrideIn(index, subtype, method), "override");
         return out;
+    }
+
+    /** A constructor reached by `new` or by a constructor reference: its own declaration, the only one it can be. */
+    private static List<Target> constructorTargets(Index index, CtConstructor<?> ctor) {
+        CtType<?> owner = ctor.getDeclaringType();
+        if (owner == null || !index.declared().contains(Names.qualified(owner))) return List.of();
+        if (owner.getPosition() == null || !owner.getPosition().isValidPosition()) return List.of();
+        return List.of(new Target(Names.executableId(owner, ctor), "declared"));
+    }
+
+    /**
+     * The member of a subtype that overrides `method`, by Spoon's own signature check (so `take(Integer)` is not the
+     * override of `take(String)`). A record's accessor is written by the record, not declared, and answers to its
+     * component's name with no argument.
+     */
+    private static String overrideIn(Index index, String subtype, CtMethod<?> method) {
+        CtType<?> sub = index.types().get(subtype);
+        if (sub == null) return null;
+        for (CtMethod<?> candidate : sub.getMethods())
+            if (candidate.getSimpleName().equals(method.getSimpleName()) && candidate.isOverriding(method))
+                return Names.executableId(sub, candidate);
+        String shape = Names.shape(method.getSimpleName(), method.getParameters().size());
+        return sub instanceof CtRecord ? index.byShape().getOrDefault(subtype, Map.of()).get(shape) : null;
     }
 
     /**

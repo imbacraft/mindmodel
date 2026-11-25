@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import spoon.reflect.cu.SourcePosition;
+import spoon.reflect.declaration.CtClass;
 import spoon.reflect.declaration.CtConstructor;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtExecutable;
@@ -30,6 +31,23 @@ public final class Names {
         if (ref instanceof CtArrayTypeReference<?> array) return qualified(array.getComponentType()) + "[]";
         if (ref.getDeclaringType() != null) return qualified(ref.getDeclaringType()) + "." + ref.getSimpleName();
         return inPackage(ref.getPackage() == null ? "" : ref.getPackage().getQualifiedName(), ref.getSimpleName());
+    }
+
+    /**
+     * The name a reader can use for a type: an anonymous class has none of its own and is named by the type it implements
+     * or extends, so a call through it names what the program can see, never a synthetic `Outer.1`.
+     */
+    public static String nameOf(CtType<?> type) {
+        if (!type.isAnonymous()) return qualified(type);
+        if (!type.getSuperInterfaces().isEmpty()) return qualified(type.getSuperInterfaces().iterator().next());
+        if (type instanceof CtClass<?> c && c.getSuperclass() != null) return qualified(c.getSuperclass());
+        return "java.lang.Object";
+    }
+
+    /** {@link #nameOf(CtType)} for a reference: a reference to an anonymous class is named by its supertype. */
+    public static String nameOf(CtTypeReference<?> ref) {
+        CtType<?> declaration = ref.getTypeDeclaration();
+        return declaration != null && declaration.isAnonymous() ? nameOf(declaration) : qualified(ref);
     }
 
     private static String inPackage(String pkg, String simple) {

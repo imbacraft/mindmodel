@@ -10,8 +10,10 @@ import java.util.Map;
 import java.util.Set;
 
 import spoon.reflect.declaration.CtAnnotation;
+import spoon.reflect.declaration.CtConstructor;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtField;
+import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtRecord;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.declaration.ModifierKind;
@@ -71,7 +73,17 @@ public final class Lombok {
         }
     }
 
-    private static final Set<String> LOGGERS = Set.of("Slf4j", "Log4j2", "Log", "CommonsLog", "JBossLog", "XSlf4j");
+    /** Each logger annotation and the type of the field it writes. The field is always `log`, whatever the annotation. */
+    private static final Map<String, String> LOGGERS = new LinkedHashMap<>();
+
+    static {
+        LOGGERS.put("Slf4j", "org.slf4j.Logger");
+        LOGGERS.put("Log4j2", "org.apache.logging.log4j.Logger");
+        LOGGERS.put("Log", "java.util.logging.Logger");
+        LOGGERS.put("CommonsLog", "org.apache.commons.logging.Log");
+        LOGGERS.put("JBossLog", "org.jboss.logging.Logger");
+        LOGGERS.put("XSlf4j", "org.slf4j.ext.XLogger");
+    }
 
     private Lombok() {
     }
@@ -126,7 +138,7 @@ public final class Lombok {
         if (type.isEnum()) enumMethods(type, owner, sink);
         boolean data = has(type, "Data");
         boolean value = has(type, "Value");
-        boolean getters = data || value || has(type, "Getter");
+        boolean getters = data || value || (has(type, "Getter") && !noGetter(type));
         boolean setters = data || has(type, "Setter");
         accessors(type, owner, value, getters, setters, sink);
         constructors(type, owner, data, value, sink);
@@ -137,20 +149,17 @@ public final class Lombok {
             method(type, owner, "equals", "boolean", List.of("Object"), "EqualsAndHashCode", sink);
             method(type, owner, "hashCode", "int", List.of(), "EqualsAndHashCode", sink);
         }
-        for (String logger : LOGGERS)
-            if (has(type, logger)) {
-                String name = logger.startsWith("Slf") ? "log" : logger.toLowerCase();
-                sink.add(owner, "field", name, "org.slf4j.Logger", List.of(),
-                        Set.of(ModifierKind.PRIVATE, ModifierKind.STATIC, ModifierKind.FINAL), type, logger);
+        for (var logger : LOGGERS.entrySet())
+            if (has(type, logger.getKey())) {
+                sink.add(owner, "field", "log", logger.getValue(), List.of(),
+                        Set.of(ModifierKind.PRIVATE, ModifierKind.STATIC, ModifierKind.FINAL), type, logger.getKey());
                 break;
             }
     }
 
-    /** The four members javac writes for an enum: `name()`, `ordinal()`, `values()` and `valueOf(String)`. */
+    /** The two members javac writes for an enum: `values()` and `valueOf(String)`. `name()`/`ordinal()` are inherited. */
     private static void enumMethods(CtType<?> type, String owner, Sink sink) {
         Set<ModifierKind> pub = Set.of(ModifierKind.PUBLIC);
-        sink.add(owner, "method", "name", "String", List.of(), pub, type, "enum");
-        sink.add(owner, "method", "ordinal", "int", List.of(), pub, type, "enum");
         sink.add(owner, "method", "values", owner, List.of(), pub, type, "enum");
         sink.add(owner, "method", "valueOf", owner, List.of("String"), pub, type, "enum");
     }
@@ -162,35 +171,83 @@ public final class Lombok {
             if (field.getModifiers().contains(ModifierKind.STATIC)) continue;
             String name = field.getSimpleName();
             String typeText = Names.typeText(field.getType());
-            if (getters || has(field, "Getter")) {
-                String getter = typeText.equals("boolean") || typeText.equals("Boolean") ? "is" + cap(name)
-                        : "get" + cap(name);
-                sink.add(owner, "method", getter, typeText, List.of(), Set.of(ModifierKind.PUBLIC), field, "Getter");
-            }
+            if ((getters || has(field, "Getter")) && !noGetter(field))
+                sink.add(owner, "method", getterName(name, typeText), typeText, List.of(), Set.of(ModifierKind.PUBLIC),
+                        field, "Getter");
             boolean mutable = !value && !field.getModifiers().contains(ModifierKind.FINAL);
             if ((setters || has(field, "Setter")) && mutable)
-                sink.add(owner, "method", "set" + cap(name), "void", List.of(typeText), Set.of(ModifierKind.PUBLIC),
-                        field, "Setter");
+                sink.add(owner, "method", setterName(name, typeText), "void", List.of(typeText),
+                        Set.of(ModifierKind.PUBLIC), field, "Setter");
         }
     }
 
+    /** A primitive `boolean isActive` is read as `isActive()`; any other type, `Boolean` included, is `get` plus name. */
+    private static String getterName(String name, String typeText) {
+        if (!typeText.equals("boolean")) return "get" + cap(name);
+        return isPrefixed(name) ? name : "is" + cap(name);
+    }
+
+    /** A primitive `boolean isActive` is written as `setActive`: the `is` is the getter's, not the property's. */
+    private static String setterName(String name, String typeText) {
+        return "set" + cap(typeText.equals("boolean") && isPrefixed(name) ? name.substring(2) : name);
+    }
+
+    /** The `is` prefix Lombok strips: `is` followed by a capital (`isActive`, not `issue`). */
+    private static boolean isPrefixed(String name) {
+        return name.length() > 2 && name.startsWith("is") && Character.isUpperCase(name.charAt(2));
+    }
+
+    /** True when a `@Getter` on the element says `AccessLevel.NONE`: no getter is written for it. */
+    private static boolean noGetter(CtElement element) {
+        for (CtAnnotation<?> a : element.getAnnotations()) {
+            boolean getter = a.getAnnotationType().getSimpleName().equals("Getter");
+            if (getter && String.valueOf(a).matches("(?s).*\\bNONE\\b.*")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The three constructors Lombok writes. A final field initialised where it is declared takes no argument, static
+     * fields take none. A constructor the program already writes with the same parameters is the one that stands, so
+     * Lombok writes none beside it; `@Data` writes its required-args constructor only when no constructor is written.
+     */
     private static void constructors(CtType<?> type, String owner, boolean data, boolean value, Sink sink) {
         List<String> required = new ArrayList<>();
         List<String> all = new ArrayList<>();
         for (CtField<?> field : type.getFields()) {
             if (field.getModifiers().contains(ModifierKind.STATIC)) continue;
-            all.add(Names.typeText(field.getType()));
-            if (field.getModifiers().contains(ModifierKind.FINAL)) required.add(Names.typeText(field.getType()));
+            String text = Names.typeText(field.getType());
+            all.add(text);
+            if (field.getModifiers().contains(ModifierKind.FINAL) && field.getDefaultExpression() == null)
+                required.add(text);
         }
-        if (has(type, "NoArgsConstructor"))
-            sink.add(owner, "constructor", type.getSimpleName(), null, List.of(), Set.of(ModifierKind.PUBLIC), type,
-                    "NoArgsConstructor");
-        if ((has(type, "RequiredArgsConstructor") || data) && !required.isEmpty() && !all.isEmpty())
-            sink.add(owner, "constructor", type.getSimpleName(), null, required, Set.of(ModifierKind.PUBLIC), type,
-                    "RequiredArgsConstructor");
-        if ((has(type, "AllArgsConstructor") || value) && !all.isEmpty())
-            sink.add(owner, "constructor", type.getSimpleName(), null, all, Set.of(ModifierKind.PUBLIC), type,
-                    "AllArgsConstructor");
+        Set<String> explicit = explicitConstructors(type);
+        boolean noArgs = has(type, "NoArgsConstructor");
+        boolean requiredArgs = has(type, "RequiredArgsConstructor");
+        boolean allArgs = has(type, "AllArgsConstructor") || value;
+        boolean dataRequired = data && !noArgs && !requiredArgs && !allArgs && explicit.isEmpty();
+        if (noArgs) constructor(owner, type, List.of(), "NoArgsConstructor", explicit, sink);
+        if (requiredArgs || dataRequired)
+            constructor(owner, type, required, "RequiredArgsConstructor", explicit, sink);
+        if (allArgs) constructor(owner, type, all, "AllArgsConstructor", explicit, sink);
+    }
+
+    private static void constructor(String owner, CtType<?> type, List<String> params, String from,
+            Set<String> explicit, Sink sink) {
+        if (explicit.contains(String.join(",", params))) return;
+        sink.add(owner, "constructor", type.getSimpleName(), null, params, Set.of(ModifierKind.PUBLIC), type, from);
+    }
+
+    /** The parameter lists of the constructors the program writes, joined the way a generated id joins them. */
+    private static Set<String> explicitConstructors(CtType<?> type) {
+        Set<String> out = new HashSet<>();
+        for (var member : type.getTypeMembers()) {
+            if (!(member instanceof CtConstructor<?> ctor) || ctor.isImplicit()) continue;
+            List<String> params = new ArrayList<>();
+            for (CtParameter<?> p : ctor.getParameters()) params.add(Names.typeText(p.getType()));
+            out.add(String.join(",", params));
+        }
+        return out;
     }
 
     /** builder(), Builder.setX(...) and Builder.build(); the builder type is a member owner, not a dumped type. */

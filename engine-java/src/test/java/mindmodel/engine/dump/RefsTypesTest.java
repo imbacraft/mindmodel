@@ -52,6 +52,30 @@ class RefsTypesTest {
     }
 
     @Test
+    void aNestedTypeArgumentIsNamedByItsDottedFqn() throws Exception {
+        Map<String, String> sources = Map.of(
+                "pkg/Outer.java", "package pkg; public class Outer { public static class In {} }",
+                "pkg/Holder.java", "package pkg; import java.util.List;"
+                        + " public class Holder { List<Outer.In> items; void f() { items.get(0); } }");
+
+        JsonNode get = DumpRun.one(DumpRun.of(dir, sources).rows("calls"), "name", "get");
+
+        assertEquals("pkg.Outer.In", get.path("recv").path("typeArgs").get(0).asText());
+    }
+
+    @Test
+    void aNestedArgumentOfAnImportedOuterIsNamedByItsDottedFqnToo() throws Exception {
+        Map<String, String> sources = Map.of(
+                "pkg/Outer.java", "package pkg; public class Outer { public static class In {} }",
+                "app/Holder.java", "package app; import java.util.List; import pkg.Outer;"
+                        + " public class Holder { List<Outer.In> items; void f() { items.get(0); } }");
+
+        JsonNode get = DumpRun.one(DumpRun.of(dir, sources).rows("calls"), "name", "get");
+
+        assertEquals("pkg.Outer.In", get.path("recv").path("typeArgs").get(0).asText());
+    }
+
+    @Test
     void fieldTypeKeepsItsNestedGenericArguments() throws Exception {
         JsonNode field = DumpRun.one(DumpRun.of(dir, SOURCES).rows("members"), "name", "byKey");
 

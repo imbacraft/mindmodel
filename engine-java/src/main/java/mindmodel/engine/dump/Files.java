@@ -87,7 +87,9 @@ public final class Files {
         for (String path : rows) {
             List<Import> header = header(root, path);
             List<Import> unit = written.get(path);
-            if (header != null) {
+            // A header with no imports where Spoon found some is the reader's miss, not the file's: Spoon's list stands.
+            boolean headerMissed = header != null && header.isEmpty() && unit != null && !unit.isEmpty();
+            if (header != null && !headerMissed) {
                 out.put(path, new Imports(header, unit != null && unit.equals(header) ? "spoon" : "header"));
             }
             else if (unit != null) out.put(path, new Imports(unit, "spoon"));
@@ -136,16 +138,26 @@ public final class Files {
 
     /**
      * The header lines only: `package`, then `import` until the first declaration. Read without regular expressions and
-     * never past the header, so nothing here can turn into a second reader of Java bodies.
+     * never past the header, so nothing here can turn into a second reader of Java bodies. A byte-order mark and every
+     * block comment (a banner, a license) are skipped whole, so prose inside one is never read as an import.
      */
     private static List<Import> header(Path root, String path) {
         try (var reader = java.nio.file.Files.newBufferedReader(
                 root.resolve(path), java.nio.charset.StandardCharsets.UTF_8)) {
             List<Import> out = new ArrayList<>();
             String line;
+            boolean inBlockComment = false;
             while ((line = reader.readLine()) != null) {
-                String text = line.trim();
-                if (text.isEmpty() || text.startsWith("//") || text.startsWith("/*") || text.startsWith("*")) continue;
+                String text = line.replace("﻿", "").trim();
+                if (inBlockComment) {
+                    inBlockComment = !text.contains("*/");
+                    continue;
+                }
+                if (text.startsWith("/*")) {
+                    inBlockComment = !text.contains("*/");
+                    continue;
+                }
+                if (text.isEmpty() || text.startsWith("//")) continue;
                 if (text.startsWith("package ") || text.startsWith("package\t")) continue;
                 if (!text.startsWith("import ")) break; // the first declaration ends the header
                 String rest = text.substring("import ".length()).trim();
