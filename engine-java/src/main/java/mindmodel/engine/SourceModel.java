@@ -26,11 +26,14 @@ public final class SourceModel {
     private final Path root;
     private final List<String> files;
     private final Launcher launcher;
+    /** The generated-source roots, as given: in the model for resolution, and never dumped. */
+    private final List<String> generatedDirs;
 
-    private SourceModel(Path root, List<String> files, Launcher launcher) {
+    private SourceModel(Path root, List<String> files, Launcher launcher, List<String> generatedDirs) {
         this.root = root;
         this.files = files;
         this.launcher = launcher;
+        this.generatedDirs = generatedDirs;
     }
 
     /** Normalises the file list to project-relative POSIX paths and drops anything outside the root. */
@@ -64,13 +67,16 @@ public final class SourceModel {
     }
 
     /**
-     * The model with the project's own dependencies on the classpath. `noClasspath` stays true: a jar that is missing or
-     * unreadable degrades to the name-only answer this engine has always given, never to a failed dump. Extra source
-     * directories (annotation-processor output) are read as input, after the project's own files, so a duplicate
-     * declaration keeps the project's.
+     * The model with the project's own dependencies on the classpath. `noClasspath` stays true: a jar that is missing
+     * or unreadable degrades to the name-only answer this engine has always given, never to a failed dump.
+     *
+     * <p>Extra source directories (annotation-processor output) are read after the project's own files, so a duplicate
+     * declaration keeps the project's. They are in the model because the project calls into them — a generated
+     * mapper, a contract-first API interface — and no row about them is dumped or cited: the map writes only the
+     * project's own code.
      */
-    public static SourceModel build(Path root, List<String> relFiles, int compliance,
-            List<String> classpath, List<String> extraSourceDirs) {
+    public static SourceModel build(Path root, List<String> relFiles, int compliance, List<String> classpath,
+            List<String> generatedDirs) {
         Path realRoot = realPath(root);
         Launcher launcher = new Launcher();
         Environment env = launcher.getEnvironment();
@@ -84,32 +90,49 @@ public final class SourceModel {
         env.setLevel("OFF");
         if (!classpath.isEmpty()) env.setSourceClasspath(classpath.toArray(new String[0]));
         for (String rel : relFiles) launcher.addInputResource(realRoot.resolve(rel).toString());
-        for (String dir : extraSourceDirs) {
-            Path p = realRoot.resolve(dir);
-            if (Files.isDirectory(p)) launcher.addInputResource(p.toString());
+        List<String> roots = new ArrayList<>();
+        for (String dir : generatedDirs) {
+            Path at = realRoot.resolve(dir);
+            if (!Files.isDirectory(at)) continue;
+            launcher.addInputResource(at.toString());
+            roots.add(realPath(at).toString());
         }
         launcher.buildModel();
-        return new SourceModel(realRoot, List.copyOf(relFiles), launcher);
+        return new SourceModel(realRoot, List.copyOf(relFiles), launcher, List.copyOf(roots));
     }
 
-    /** Every source path Spoon read, project files and generated directories alike. */
-    public List<String> inputFiles() {
-        List<String> out = new ArrayList<>();
-        for (var unit : launcher.getFactory().CompilationUnit().getMap().keySet()) {
-            Path p = realPath(Path.of(unit));
-            if (!p.startsWith(root)) continue;
-            out.add(root.relativize(p).toString().replace('\\', '/'));
-        }
-        java.util.Collections.sort(out);
+    /** The generated roots this model read, so a second model of the same checkout sees the same sources. */
+    public List<String> generatedDirs() {
+        return generatedDirs;
+    }
+
+    /** True when Spoon read this element from a generated source: in the model, never a row in the dump. */
+    public boolean isGenerated(spoon.reflect.declaration.CtElement element) {
+        if (element == null || element.getPosition() == null || !element.getPosition().isValidPosition())
+            return false;
+        java.io.File file = element.getPosition().getFile();
+        return file != null && isGeneratedFile(file.toPath());
+    }
+
+    /** True when a file was read from a generated root rather than as project source. */
+    public boolean isGeneratedFile(Path file) {
+        if (generatedDirs.isEmpty() || file == null) return false;
+        String at = realPath(file).toString();
+        for (String dir : generatedDirs) if (at.startsWith(dir + java.io.File.separator) || at.equals(dir)) return true;
+        return false;
+    }
+
+    /** The generated files Spoon read: what the dump says it looked at and wrote nothing about. */
+    public int generatedFiles() {
+        if (generatedDirs.isEmpty()) return 0;
+        int out = 0;
+        for (String unit : launcher.getFactory().CompilationUnit().getMap().keySet())
+            if (isGeneratedFile(Path.of(unit))) out++;
         return out;
     }
 
     public Path root() {
         return root;
-    }
-
-    public List<String> files() {
-        return files;
     }
 
     public List<CtType<?>> allTypes() {

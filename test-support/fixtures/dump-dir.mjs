@@ -40,20 +40,30 @@ const dumps = new Map();
 
 /**
  * `layers` are fixture dir names under test-support/fixtures, applied in order (a later layer overwrites a file of the
- * same path). Returns the open dump, the model built from it (which carries the dump, so the extractors can query it)
- * and the file → package/imports map.
+ * same path). `generated` names directories inside the fixture that an annotation processor would have written: their
+ * files are not in the file list, and the dump reads them as signatures only. Returns the open dump, the model built
+ * from it (which carries the dump, so the extractors can query it) and the file → package/imports map.
  */
-export function dumpOfLayers(layers) {
-  const key = layers.join('|');
+export function dumpOfLayers(layers, { generated = [] } = {}) {
+  const key = `${layers.join('|')}#${generated.join('|')}`;
   if (dumps.has(key)) return dumps.get(key);
   // A real path, not the /var symlink: the dump relativises its file paths against the root it was given.
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mindmodel-fixture-'));
   for (const layer of layers) copyTree(path.join(here, layer), dir);
   const list = path.join(dir, 'files.txt');
-  const files = javaFiles(dir);
+  // Build output is never an input: a scan's file list comes from the sources, and a generated root is named apart.
+  const files = javaFiles(dir)
+    .filter((f) => !/(^|\/)(target|build)\//.test(f))
+    .filter((f) => !generated.some((g) => f.startsWith(`${g}/`)));
   fs.writeFileSync(list, files.join('\n') + (files.length ? '\n' : ''));
   const out = path.join(dir, 'dump');
-  const args = ['-jar', JAR, 'dump', '--contract', String(CONTRACT), dir, list, out];
+  const args = ['-jar', JAR, 'dump', '--contract', String(CONTRACT)];
+  if (generated.length) {
+    const roots = path.join(dir, 'generated.txt');
+    fs.writeFileSync(roots, generated.join('\n') + '\n');
+    args.push('--generated', roots);
+  }
+  args.push(dir, list, out);
   execFileSync('java', args, { stdio: ['ignore', 'ignore', 'pipe'] });
   const db = open(out);
   const sources = new Map(

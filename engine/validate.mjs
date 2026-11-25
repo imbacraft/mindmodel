@@ -626,7 +626,7 @@ export function validate(map, root, declared = declaredFromDump(root)) {
       continue;
     }
     // Build output is never a citation's target: it is rewritten by every build, and a citation into it would point at
-    // code the project does not own (the scan reads generated sources for their types only).
+    // code the project does not own (a generated source contributes no dump row at all, so nothing real is there).
     if (/(^|\/)(target|build)\//.test(pc.file)) {
       err(`${where}: "${c}" cites build output; cite the source behind it`);
       continue;

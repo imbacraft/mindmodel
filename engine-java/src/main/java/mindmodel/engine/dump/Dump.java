@@ -22,7 +22,7 @@ import mindmodel.engine.SourceModel;
  */
 public final class Dump {
 
-    public static final int CONTRACT = 5;
+    public static final int CONTRACT = 6;
     public static final String ENGINE = "spoon-11.5.0";
 
     private Dump() {
@@ -58,27 +58,31 @@ public final class Dump {
         }
         List<Row> rows = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (CtType<?> t : model.allTypes()) collect(t, rows, seen, root);
+        for (CtType<?> t : model.allTypes()) collect(model, t, rows, seen, root);
         // A file whose type came out as a bare shell is read again in its own model: the shell is a name and nothing
         // else, so the declaration has to be read where no static import has laid the shell first.
         List<String> unread = recover(root, model, inputs, compliance, rows, seen);
         rows.sort(ORDER);
         List<CtType<?>> types = new ArrayList<>();
         for (Row r : rows) types.add(r.type());
+        // The generated sources are in the model for resolution only: a reader of call targets must know their
+        // members, but not one row is written for them.
+        List<CtType<?>> known = new ArrayList<>(types);
+        for (CtType<?> t : model.allTypes()) if (model.isGenerated(t) && declared(t)) known.add(t);
         java.util.Map<String, List<Lombok.Item>> synth = Lombok.synthesize(types, root);
         Types.write(types, root, outDir.resolve("types.ndjson"));
         // One walk per body: the call rows carry the ids the other sections name, so calls are written first.
         CallIds ids = new CallIds();
         Refs refs = new Refs(ids);
-        Sites.Written written = Sites.write(types, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
+        Sites.Written written = Sites.write(types, known, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
         Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns());
         FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
         // The library types the classpath let Spoon read: shallow rows, no positions, never cited (LibraryStubs).
-        int libraries = mindmodel.engine.dump.LibraryStubs.write(types, outDir.resolve("library.ndjson"));
+        int libraries = mindmodel.engine.dump.LibraryStubs.write(types, known, outDir.resolve("library.ndjson"));
         int failed = Files.write(inputs, types, model.packages(), problems(model, root, unread), root,
                 outDir.resolve("files.ndjson"));
-        meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"), classpath, generatedDirs, libraries,
-                dropped);
+        meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"), classpath, generatedDirs,
+                model.generatedFiles(), libraries, dropped);
     }
 
     /**
@@ -96,19 +100,27 @@ public final class Dump {
         java.util.Set<String> skip = new java.util.HashSet<>(model.filesImporting(model.unreadNames()));
         List<String> rest = new ArrayList<>(inputs);
         rest.removeAll(skip);
-        SourceModel own = SourceModel.build(root, rest, compliance);
-        for (CtType<?> t : own.allTypes()) collect(t, rows, seen, root);
+        SourceModel own = SourceModel.build(root, rest, compliance, List.of(), model.generatedDirs());
+        for (CtType<?> t : own.allTypes()) collect(own, t, rows, seen, root);
         return own.unreadFiles();
     }
 
-    /** A type and its nested types; anonymous and local classes are not types of their own (D2 keeps their calls). */
-    private static void collect(CtType<?> t, List<Row> rows, java.util.Set<String> seen, Path root) {
+    /**
+     * A type and its nested types; anonymous and local classes are not types of their own (D2 keeps their calls). A
+     * generated type is never one of them: it is in the model for resolution, and the dump writes nothing for it.
+     */
+    private static void collect(SourceModel model, CtType<?> t, List<Row> rows, java.util.Set<String> seen, Path root) {
         // A type Spoon resolved but never read has no position: it is a library or a shadow, not a declaration here.
         if (t.getPosition() == null || !t.getPosition().isValidPosition()) return;
-        if (t.isAnonymous()) return;
-        if (t.getDeclaringType() == null && t.getParent(CtExecutable.class) != null) return;
+        if (!declared(t) || model.isGenerated(t)) return;
         if (seen.add(Names.qualified(t))) rows.add(new Row(t, Positions.of(t, root)));
-        for (CtType<?> nested : t.getNestedTypes()) collect(nested, rows, seen, root);
+        for (CtType<?> nested : t.getNestedTypes()) collect(model, nested, rows, seen, root);
+    }
+
+    /** A type the map may name: not anonymous, not a class declared inside a method body. */
+    private static boolean declared(CtType<?> t) {
+        if (t.isAnonymous()) return false;
+        return !(t.getDeclaringType() == null && t.getParent(CtExecutable.class) != null);
     }
 
     /** Parse errors by project-relative file, so the dump names what it could not read. */
@@ -123,7 +135,7 @@ public final class Dump {
             String message = problem.getMessage();
             if (!message.startsWith("Syntax error")) continue;
             Path file = Path.of(new String(name)).toAbsolutePath().normalize();
-            if (!file.startsWith(base)) continue;
+            if (!file.startsWith(base) || model.isGeneratedFile(file)) continue;
             String rel = base.relativize(file).toString().replace('\\', '/');
             out.computeIfAbsent(rel, k -> new ArrayList<>()).add(problem.getMessage());
         }
@@ -133,8 +145,8 @@ public final class Dump {
     }
 
     private static void meta(Path root, List<String> inputs, List<CtType<?>> types, int failed, int compliance,
-            Path out, List<String> classpath, List<String> generatedDirs, int libraries, String dropped)
-            throws IOException {
+            Path out, List<String> classpath, List<String> generatedDirs, int generatedFiles, int libraries,
+            String dropped) throws IOException {
         int fields = 0;
         int methods = 0;
         for (CtType<?> t : types) {
@@ -153,6 +165,8 @@ public final class Dump {
             g.writeNumberField("entries", classpath.size());
             g.writeStringField("sha256", jarDigest(classpath));
             g.writeNumberField("generatedDirs", generatedDirs.size());
+            // Generated files in the model: read so a project call into one resolves, written as nothing.
+            g.writeNumberField("generatedFiles", generatedFiles);
             g.writeNumberField("libraryTypes", libraries);
             if (dropped != null) g.writeStringField("dropped", dropped);
             g.writeEndObject();

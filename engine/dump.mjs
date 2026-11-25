@@ -5,7 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { declaredId, overrideIds, targetIds, uniqueImplOf } from './model/targets.mjs';
 
-export const CONTRACT = 5;
+export const CONTRACT = 6;
 
 function rows(file) {
   return fs
@@ -27,11 +27,11 @@ export function open(dir) {
   if (!fs.existsSync(metaFile)) throw new Error(`no dump at ${dir}: meta.json missing`);
   const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
   if (meta.contract !== CONTRACT) throw new Error(`dump contract ${meta.contract}, this loader speaks ${CONTRACT}`);
-  // Build output is never the project's code: a type or member read from `target/` or `build/` is dropped here, so no
-  // extractor and no citation can reach it (the generated-source directories are inputs for type resolution only).
-  const isGenerated = (row) => /(^|\/)(target|build)\//.test(row.pos?.file ?? '');
-  const types = rows(path.join(dir, 'types.ndjson')).filter((t) => !t.generated && !isGenerated(t));
-  const members = rows(path.join(dir, 'members.ndjson')).filter((m) => !isGenerated(m));
+  // Contract 6: every row is the project's own code. An annotation processor's output is in the engine's model for
+  // resolution only (so a project call into a generated mapper is typed), and it carries no row here — the loader keeps
+  // no filter because there is nothing to filter.
+  const types = rows(path.join(dir, 'types.ndjson'));
+  const members = rows(path.join(dir, 'members.ndjson'));
   // The library types the classpath let Spoon read: shallow rows with no positions, used for holders and signatures.
   const libraryRows = fs.existsSync(path.join(dir, 'library.ndjson')) ? rows(path.join(dir, 'library.ndjson')) : [];
   const library = new Map(libraryRows.map((r) => [r.fqn, r]));

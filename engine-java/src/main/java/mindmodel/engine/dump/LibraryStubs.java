@@ -39,9 +39,11 @@ public final class LibraryStubs {
     }
 
     /** Writes the section. Returns how many rows it holds (resolved and unreadable together). */
-    public static int write(List<CtType<?>> projectTypes, Path out) throws IOException {
+    public static int write(List<CtType<?>> projectTypes, java.util.Collection<CtType<?>> known, Path out)
+            throws IOException {
         Set<String> declared = new java.util.HashSet<>();
-        for (CtType<?> t : projectTypes) declared.add(Names.qualified(t));
+        // A generated source's types are declared here as much as any: naming one is not naming a library.
+        for (CtType<?> t : known) declared.add(Names.qualified(t));
         // Every name the project writes down, sorted so the section never depends on Spoon's iteration order.
         TreeMap<String, CtTypeReference<?>> wanted = new TreeMap<>();
         for (CtType<?> t : projectTypes)

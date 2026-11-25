@@ -62,9 +62,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   const resolveIn = resolver(sources, types, known);
 
   for (const row of dump.types.values()) {
-    // A type read from an annotation processor's output is not the project's code: Spoon resolved it so that a field
-    // or a return type reads correctly, and no fact or citation may come from it (the dump marks it `generated`).
-    if (row.generated) continue;
+    // Every row here is the project's own code: an annotation processor's output never becomes one (contract 6).
     const file = row.pos?.file ?? '';
     types.set(row.fqn, {
       kind: row.kind,

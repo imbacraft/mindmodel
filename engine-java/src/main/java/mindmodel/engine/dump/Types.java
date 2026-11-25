@@ -46,9 +46,6 @@ public final class Types {
         g.writeEndArray();
         Anns.write(g, t.getAnnotations());
         Positions.Pos pos = Positions.of(t, root);
-        // An annotation processor's output, read for its types only: stale the moment the sources change, and never
-        // something a map may cite (validate.mjs refuses any citation into target/ or build/).
-        if (pos != null && Generated.is(pos.file())) g.writeStringField("generated", "stale-possible");
         Ndjson.pos(g, pos);
     }
 

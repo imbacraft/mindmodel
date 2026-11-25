@@ -1,7 +1,7 @@
 {
-  "version": "0.6.3",
+  "version": "0.6.5",
   "java": 17,
-  "bytes": 15631193,
-  "sha256": "4a33662fede0ace0c1e6a7349a20b44fd78030ded1e6098492a0df21270086e7",
-  "url": "https://github.com/imbacraft/mindmodel/releases/download/engine-v0.6.3/mindmodel-engine.jar"
+  "bytes": 15631015,
+  "sha256": "27fb917654cf9df2a2a78bf96bd76614b50acb427ace558fdd5f8f986503b3be",
+  "url": "https://github.com/imbacraft/mindmodel/releases/download/engine-v0.6.5/mindmodel-engine.jar"
 }

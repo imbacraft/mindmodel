@@ -207,10 +207,13 @@ public final class Sites {
     /**
      * Writes calls.ndjson and hands the rest of each body to the sections that read it: the returns to the member rows,
      * the field accesses to fields.ndjson. One walk per body feeds all three.
+     *
+     * <p>`types` are the dumped ones; `known` adds the generated sources' signatures, which the index needs so a call
+     * into a generated mapper is typed like any other, and which are never walked.
      */
-    static Written write(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth, Path root,
-            Path out, CallIds ids, Refs refs) throws IOException {
-        Index index = index(types, synth);
+    static Written write(List<CtType<?>> types, List<CtType<?>> known, java.util.Map<String, List<Lombok.Item>> synth,
+            Path root, Path out, CallIds ids, Refs refs) throws IOException {
+        Index index = index(known, synth);
         // What Lombok writes, in the two shapes a chain needs: a member's return type, and the builder types it invents.
         java.util.Map<String, String> generatedTypes = new java.util.HashMap<>();
         java.util.Set<String> builders = new java.util.HashSet<>();
