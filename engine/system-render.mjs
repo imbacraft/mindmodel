@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseCite, resolveCites, checkSchema } from './validate.mjs';
+import { inlineBase } from './base.mjs';
 
 // "How it talks" as a table: per service, what it calls, what it publishes (and who listens), what it listens to.
 export function talks(map, sys) {
@@ -147,8 +148,7 @@ export function validateSystem(map, sys, root) {
 export function renderSystemPage(map, sys, root, web = null) {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const data = JSON.stringify({ ...map, talks: talks(map, sys), unresolved: unresolved(sys) }).replace(/</g, '\\u003c');
-  return fs
-    .readFileSync(path.join(here, '../template/system.html'), 'utf8')
+  return inlineBase(fs.readFileSync(path.join(here, '../template/system.html'), 'utf8'))
     .replace('/*__MINDMODEL_DATA__*/', () => data)
     .replace('__MINDMODEL_ROOT__', () => (web ?? root).replace(/"/g, '\\"'));
 }

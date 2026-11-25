@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validate } from './validate.mjs';
+import { inlineBase } from './base.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -62,7 +63,7 @@ function derivedOf(facts) {
 // The page for a map that has already passed validate(). `web` replaces the local root in citation links; `facts`
 // adds the provenance footer (the page says what it was built from).
 export function renderPage(map, root, web = null, facts = null) {
-  const template = fs.readFileSync(path.join(here, '../template/template.html'), 'utf8');
+  const template = inlineBase(fs.readFileSync(path.join(here, '../template/template.html'), 'utf8'));
   // '<' is escaped so map text can never close the <script> tag it lives in.
   const data = JSON.stringify(map).replace(/</g, '\\u003c');
   const derived = JSON.stringify(derivedOf(factsForMap(map, facts))).replace(/</g, '\\u003c');
