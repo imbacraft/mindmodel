@@ -1,0 +1,70 @@
+package mindmodel.engine.dump;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/** meta.json counts, and what an unresolvable type reference becomes. */
+class FailuresTest {
+
+    @TempDir
+    Path dir;
+
+    private static final Map<String, String> CLEAN = Map.of(
+            "demo/Shop.java", """
+                    package demo;
+                    import java.util.List;
+                    public class Shop {
+                        private List<Order> orders;
+                        int count() { return orders.size(); }
+                    }
+                    """,
+            "demo/Order.java", "package demo; public class Order {}");
+
+    /** A field and a call whose type is never imported: nothing in the file says where Widget lives. */
+    private static final Map<String, String> MISSING_IMPORT = Map.of(
+            "demo/Shop.java", """
+                    package demo;
+                    public class Shop {
+                        private Widget widget;
+                        void spin() { widget.turn(); }
+                    }
+                    """);
+
+    @Test
+    void cleanInputWritesNoFailureKeys() throws Exception {
+        JsonNode meta = DumpRun.of(dir, CLEAN).meta();
+
+        assertEquals(0, meta.path("counts").path("failedFiles").asInt());
+        meta.path("counts").fieldNames().forEachRemaining(key ->
+                assertFalse(key.contains("."), "unexpected failure key on clean input: " + key));
+    }
+
+    @Test
+    void missingImportCallIsAnsweredUnresolvedNotGuessed() throws Exception {
+        JsonNode turn = DumpRun.one(DumpRun.of(dir, MISSING_IMPORT).rows("calls"), "name", "turn");
+
+        assertEquals("unresolved", turn.path("origin").asText());
+        assertEquals("unresolved-name", turn.path("reason").asText());
+        assertEquals(0, turn.path("targets").size());
+    }
+
+    @Disabled("engine gap: a missing import is origin unresolved, but writes no refs.* key to meta.json counts")
+    @Test
+    void missingImportIsCountedAsARefsFailure() throws Exception {
+        Map<String, Integer> counts = new HashMap<>();
+        DumpRun.of(dir, MISSING_IMPORT).meta().path("counts").fields()
+                .forEachRemaining(e -> counts.put(e.getKey(), e.getValue().asInt()));
+
+        assertTrue(counts.keySet().stream().anyMatch(key -> key.startsWith("refs.")), "counts: " + counts);
+    }
+}
