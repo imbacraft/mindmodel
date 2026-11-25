@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { open as openDump } from './dump.mjs';
+import { startsAt } from './model/from-dump-model.mjs';
 import { fileURLToPath } from 'node:url';
 import { gitWindow, activityFor } from './activity.mjs';
 
@@ -71,20 +72,6 @@ export function checkSchema(v, s, defs, at, err) {
   for (const v of [{}, null, 'x']) checkSchema(v, u, {}, '$', (m) => t.push(m));
   assert.deepStrictEqual(t, ['$: expected object or null, got string']);
 }
-
-const BUDGET = {
-  actors: 7,
-  externals: 7,
-  concepts: 6,
-  regions: [2, 8],
-  lanes: [2, 5],
-  flowSteps: 7,
-  rules: 5,
-  stories: [1, 5],
-  storySteps: 10,
-  parts: 7,
-  runSteps: 3,
-};
 
 // P8 size tiers: the core ceiling scales with the app, because a 40-endpoint tool and a 900-endpoint platform cannot
 // say the same thing in the same number of words. Regions and state keep a flat cap: that is where overflow lives.
@@ -404,17 +391,17 @@ function declaredFromDump(root) {
       if (row.pos?.file)
         slot(row.pos.file).types.push({
           name: String(row.fqn).split('.').pop(),
-          start: row.pos.line,
+          start: startsAt(row, row.pos.line),
           end: row.pos.endLine ?? row.pos.line,
-          nameLine: row.pos.line,
+          nameLine: startsAt(row, row.pos.line),
         });
     for (const m of dump.members.values())
       if (m.kind === 'method' && m.pos?.file)
         slot(m.pos.file).methods.push({
           name: m.name,
-          start: m.pos.line,
+          start: startsAt(m, m.pos.line),
           end: m.pos.endLine ?? m.pos.line,
-          nameLine: m.pos.line,
+          nameLine: startsAt(m, m.pos.line),
           arity: Array.isArray(m.params) ? m.params.length : null,
         });
     return byFile;
@@ -442,39 +429,9 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     warnings = [];
   const err = (m) => errors.push(m),
     warn = (m) => warnings.push(m);
-  for (const k of [
-    'purpose',
-    'context',
-    'coreSentence',
-    'concepts',
-    'state',
-    'regionSentence',
-    'regions',
-    'runtime',
-    'background',
-    'rules',
-    'stories',
-  ])
-    if (!map[k]) err(`missing top-level "${k}"`);
-  if (errors.length) return { errors, warnings };
+  // The schema holds the required fields and every budget ceiling and floor; the checks below are what it cannot say.
   checkSchema(map, SCHEMA, SCHEMA.$defs ?? {}, '$', err);
   if (errors.length) return { errors, warnings };
-
-  const max = (arr, n, what) => {
-    if ((arr?.length ?? 0) > n) err(`${what}: ${arr.length} > budget ${n}`);
-  };
-  const range = (arr, [lo, hi], what) => {
-    const n = arr?.length ?? 0;
-    if (n < lo || n > hi) err(`${what}: ${n} outside budget ${lo}-${hi}`);
-  };
-  max(map.context.actors, BUDGET.actors, 'actors');
-  max(map.context.externals, BUDGET.externals, 'externals');
-  max(map.concepts, BUDGET.concepts, 'concepts');
-  range(map.regions, BUDGET.regions, 'regions');
-  range(map.runtime.lanes, BUDGET.lanes, 'request lanes');
-  max(map.runtime.steps, BUDGET.flowSteps, 'request steps');
-  max(map.rules, BUDGET.rules, 'rules');
-  range(map.stories, BUDGET.stories, 'stories');
 
   const conceptIds = new Set(map.concepts.map((c) => c.id));
   const regionIds = new Set(map.regions.map((r) => r.id));
@@ -516,16 +473,13 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     if (r.activity && !(r.activity.commits >= 0 && r.activity.commits <= r.activity.of))
       err(`region ${r.id}: activity ${r.activity.commits} of ${r.activity.of} is impossible`);
     for (const o of r.owns ?? []) needConcept(o, `region ${r.id} owns`);
-    max(r.parts, BUDGET.parts, `region ${r.id} parts`);
   }
   map.runtime.steps.forEach((s, i) => {
     needRegion(s.region, `request step ${i + 1}`);
     for (const lane of [s.from, s.to]) if (!laneIds.has(lane)) err(`request step ${i + 1}: unknown lane "${lane}"`);
-    if ((s.label ?? '').length > 56) err(`request step ${i + 1}: label longer than 56 chars`);
   });
   const bg = map.background?.items ?? [];
   if (!bg.length && !map.background?.intro) err('background: no items and no intro saying nothing runs on its own');
-  if (bg.length > 10) err(`background: ${bg.length} > budget 10`);
   bg.forEach((b) => {
     needRegion(b.region, `background "${b.name}"`);
     if (!b.cites?.length) err(`background "${b.name}": no citation (R7)`);
@@ -540,7 +494,6 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   }
   for (const id of conceptIds)
     if (owners.filter((o) => o.concept === id).length !== 1) err(`state: concept "${id}" needs exactly one owner row`);
-  max(map.purpose.boot?.run, BUDGET.runSteps, 'boot run steps');
 
   const act = map.regions.filter((r) => r.activity);
   if (act.length > 1 && act.every((r) => r.activity.commits === 0))
@@ -552,7 +505,6 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   // R14: each story touches >=2 regions; regions no flow runs through are reported.
   const covered = new Set();
   for (const st of map.stories) {
-    max(st.steps, BUDGET.storySteps, `story ${st.id} steps`);
     const touched = new Set(st.steps.map((s) => s.region));
     st.steps.forEach((s) => needRegion(s.region, `story ${st.id}`));
     // A caution is a rare exception on the step it belongs to (rule 3.9), never a running commentary.

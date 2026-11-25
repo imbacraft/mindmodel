@@ -90,17 +90,6 @@ export function validateSystem(map, sys, root) {
   }
   for (const n of known) if (!listed.has(n)) err(`scanned service "${n}" is not placed in any tier`);
   if (map.services.filter((s) => s.tier === 'core').length > 8) err('more than 8 core services');
-  // Budgets from rules/system-rules.md Part 4 (ceilings).
-  const max = (arr, n, what) => {
-    if ((arr?.length ?? 0) > n) err(`${what}: ${arr.length} > budget ${n}`);
-  };
-  max(map.domains, 8, 'domains');
-  max(map.ownership, 8, 'owner rows');
-  max(map.contracts, 8, 'key contracts');
-  max(map.failures, 8, 'failure rows');
-  max(map.rules, 5, 'rules');
-  if (!map.flows?.length || map.flows.length > 4) err(`flows: ${map.flows?.length ?? 0} outside budget 1-4`);
-  for (const f of map.flows ?? []) max(f.hops, 10, `flow ${f.id} hops`);
   for (const m of map.overview.sentence.matchAll(/\[\[([a-z][a-z0-9-]*)\|/g))
     if (!domains.has(m[1])) err(`system sentence: unknown domain "${m[1]}"`);
   const named = new Set([...known, ...sys.rest.map((r) => r.to)]);

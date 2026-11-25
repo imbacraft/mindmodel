@@ -43,7 +43,7 @@ const annOf = (row, line, resolveIn) =>
   }));
 
 /** Where a declaration starts, annotations included: the line every citation and evidence string quotes. */
-const startsAt = (row, line) => {
+export const startsAt = (row, line) => {
   const lines = (row.ann ?? []).map((a) => a.line).filter((n) => Number.isFinite(n) && n > 0);
   return lines.length ? Math.min(line, ...lines) : line;
 };
@@ -57,10 +57,6 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     constants = new Map(),
     external = new Set(),
     degraded = new Set();
-  // Built before the walk and read during it: it answers from the map as it fills, and only names written in a body
-  // or an annotation ever reach it.
-  const resolveIn = resolver(sources, types, known);
-
   for (const row of dump.types.values()) {
     // Every row here is the project's own code: an annotation processor's output never becomes one (contract 6).
     const file = row.pos?.file ?? '';
@@ -80,7 +76,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       modifiers: row.modifiers ?? [],
       // An abstract class serves nothing by itself: its mappings run in its concrete subclasses.
       abstract: (row.modifiers ?? []).includes('abstract'),
-      ann: annOf(row, row.pos?.line ?? 1, (name) => resolveIn(file, name)),
+      ann: [],
       supers: (row.supertypes ?? []).map((s) => ({ kind: s.kind, text: s.text, fqn: s.fqn ?? null })),
       fields: [],
       methods: [],
@@ -88,6 +84,13 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     });
     if (!byFile.has(file)) byFile.set(file, []);
     byFile.get(file).push(row.fqn);
+  }
+
+  // Annotations name types, so they resolve once every type is registered.
+  const resolveIn = resolver(sources, types, known);
+  for (const row of dump.types.values()) {
+    const t = types.get(row.fqn);
+    t.ann = annOf(row, row.pos?.line ?? 1, (name) => resolveIn(t.file, name));
   }
 
   // A package belongs to the outermost type of a nested chain, which is registered by then in source order.
@@ -257,6 +260,9 @@ function howOf(row) {
 /** Names as written in one file, resolved from that file's imports and its own package. Only bodies need this. */
 function resolver(sources, types, known = new Set()) {
   const cache = new Map();
+  // Built once from every registered type: a simple name nested in two types is ambiguous and maps to null.
+  const nested = new Map();
+  for (const [fqn, t] of types) if (t.enclosing) nested.set(simpleOf(fqn), nested.has(simpleOf(fqn)) ? null : fqn);
   const forFile = (file) => {
     if (cache.has(file)) return cache.get(file);
     const source = sources.get(file) ?? { pkg: '', imports: [] };
@@ -264,9 +270,6 @@ function resolver(sources, types, known = new Set()) {
       (source.imports ?? []).filter((i) => !i.wildcard && !i.isStatic).map((i) => [simpleOf(i.name), i.name]),
     );
     const wildcards = (source.imports ?? []).filter((i) => i.wildcard && !i.isStatic).map((i) => i.name);
-    const nested = new Map();
-    for (const fqn of types.keys())
-      if (types.get(fqn)?.enclosing) nested.set(simpleOf(fqn), nested.has(simpleOf(fqn)) ? null : fqn);
     const resolve = (name) => {
       const text = typeNameOf(name);
       if (!text) return null;

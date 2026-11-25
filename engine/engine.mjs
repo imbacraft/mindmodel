@@ -42,20 +42,29 @@ export function matches(file, held = lock()) {
   return sha256(file) === held.sha256;
 }
 
+let located; // undefined until asked; then `{ path, source }` or null
+
 /**
- * The jar to run, or null. A developer's own jar wins, then the verified cached copy, then a checkout's build; a cached
- * copy whose digest disagrees is removed rather than used.
+ * The jar to run and where it came from, or null: a developer's own jar, then the verified cached copy, then a
+ * checkout's build. A cached copy whose digest disagrees is removed rather than used. Answered once per process, so a
+ * 15 MB digest is not read twice.
  */
-export function jarPath() {
+export function locate() {
+  if (located !== undefined) return located;
   const fromEnv = process.env.MINDMODEL_ENGINE_JAR;
-  if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  if (fromEnv && fs.existsSync(fromEnv)) return (located = { path: fromEnv, source: 'env' });
   const held = lock();
   const cached = cacheJar(held.version);
-  if (matches(cached, held)) return cached;
+  if (matches(cached, held)) return (located = { path: cached, source: 'cache' });
   if (fs.existsSync(cached)) fs.rmSync(cached, { force: true });
   const built = path.join(REPO, 'engine-java', 'target', 'mindmodel-engine.jar');
-  if (fs.existsSync(built)) return built;
-  return null;
+  if (fs.existsSync(built)) return (located = { path: built, source: 'build' });
+  return (located = null);
+}
+
+/** The jar to run, or null. See `locate`. */
+export function jarPath() {
+  return locate()?.path ?? null;
 }
 
 /**
@@ -63,13 +72,10 @@ export function jarPath() {
  * preflight prints and the caller acts on — a run never starts half-equipped.
  */
 export async function ensure({ download = true, log = () => {} } = {}) {
+  const found = locate();
+  if (found) return { ok: true, ...found };
   const held = lock();
   const cached = cacheJar(held.version);
-  if (matches(cached, held)) return { ok: true, path: cached, source: 'cache' };
-  const fromEnv = process.env.MINDMODEL_ENGINE_JAR;
-  if (fromEnv && fs.existsSync(fromEnv)) return { ok: true, path: fromEnv, source: 'env' };
-  const built = path.join(REPO, 'engine-java', 'target', 'mindmodel-engine.jar');
-  if (fs.existsSync(built)) return { ok: true, path: built, source: 'build' };
   if (!download)
     return {
       ok: false,
@@ -95,5 +101,6 @@ export async function ensure({ download = true, log = () => {} } = {}) {
   // One version at a time: a stale engine from an older release is what a wrong scan would come from.
   for (const other of fs.readdirSync(path.dirname(dir)))
     if (other !== held.version) fs.rmSync(path.join(path.dirname(dir), other), { recursive: true, force: true });
-  return { ok: true, path: cached, source: 'download' };
+  located = { path: cached, source: 'download' };
+  return { ok: true, ...located };
 }

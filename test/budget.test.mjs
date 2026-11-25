@@ -12,10 +12,8 @@ import { budgetLine } from '../engine/scan.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const schema = JSON.parse(fs.readFileSync(path.join(REPO, 'schema', 'mindmodel.schema.json'), 'utf8'));
-const validateSource = fs.readFileSync(path.join(REPO, 'engine', 'validate.mjs'), 'utf8');
 const rules = fs.readFileSync(path.join(REPO, 'rules', 'core.md'), 'utf8');
 
-const budget = (name) => +new RegExp(`${name}: (\\d+)`).exec(validateSource)?.[1];
 // The tier boundaries, in one place: 50/150/400 endpoints and the four ceilings.
 const TIER_ENDPOINTS = [50, 150, 400, 401];
 
@@ -23,10 +21,6 @@ test('state.owners admits one row per concept the schema and validator allow', (
   const concepts = schema.properties.concepts.maxItems;
   const owners = schema.properties.state.properties.owners.maxItems;
   assert.ok(owners >= concepts, `owners cap ${owners} must be at least the concept cap ${concepts}`);
-});
-
-test('the schema concept cap and the validator budget are the same number', () => {
-  assert.equal(schema.properties.concepts.maxItems, budget('concepts'), 'schema and BUDGET disagree on concepts');
 });
 
 test('tiers: the ceiling scales at 50, 150 and 400 endpoints', () => {

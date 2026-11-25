@@ -246,6 +246,23 @@ const empty = (reason, extra = {}) => ({
 });
 
 /**
+ * Whether the Maven classpath is read for this checkout, decided once for `resolve` and `preflightLines`: `{ skip }`
+ * with the reason, or the build's `{ all, poms, artifacts }`. Gradle is named, never read.
+ */
+function classpathPlan(root, { env, files }) {
+  const mode = env.MINDMODEL_CLASSPATH ?? 'auto';
+  if (mode === 'off') return { skip: 'MINDMODEL_CLASSPATH=off' };
+  const all = files?.length ? files : walk(root);
+  const { poms, artifacts } = mavenModules(root, all);
+  if (!poms.length) {
+    const gradle = all.some((f) => /(^|\/)build\.gradle(\.kts)?$/.test(f));
+    return { skip: gradle ? 'Gradle build, classpath not implemented' : 'no pom.xml or build.gradle at the root' };
+  }
+  if (mode === 'gradle') return { skip: 'MINDMODEL_CLASSPATH=gradle, classpath not implemented' };
+  return { all, poms, artifacts };
+}
+
+/**
  * Resolves the classpath for one checkout. Never throws and never blocks: the answer is either jars (mode
  * `maven-offline`), or `none` with a sentence the digest repeats. Every answer is cached — a scan of the same checkout
  * asks Maven once — a jar list while its jars exist, a `none` for `MINDMODEL_CLASSPATH_TTL_MS` (default ten minutes),
@@ -271,13 +288,9 @@ export function resolve(root, { files = [], env = process.env, timeout = TIMEOUT
     return settled;
   };
   let key = '';
-  const mode = env.MINDMODEL_CLASSPATH ?? 'auto';
-  if (mode === 'off') return empty('MINDMODEL_CLASSPATH=off');
-  const all = files.length ? files : walk(root);
-  const { poms, artifacts } = mavenModules(root, all);
-  if (!poms.length && !all.some((f) => /(^|\/)build\.gradle(\.kts)?$/.test(f)))
-    return empty('no pom.xml or build.gradle at the root');
-  if (!poms.length) return empty('Gradle build, classpath not implemented');
+  const plan = classpathPlan(root, { env, files });
+  if (plan.skip) return empty(plan.skip);
+  const { all, poms, artifacts } = plan;
   const m2 = env.MINDMODEL_M2 ?? '';
   // The key is the build files and the repository, not the tool's version: asking Maven which version it is costs a
   // process spawn, and the goal is to ask the machine nothing at all on a warm scan. A Maven upgrade re-reads the same
@@ -339,16 +352,8 @@ export function resolve(root, { files = [], env = process.env, timeout = TIMEOUT
  * nothing would run — its classpath is not implemented, so the answer is `none` either way.
  */
 export function preflightLines(root, { env = process.env, files = null } = {}) {
-  const mode = env.MINDMODEL_CLASSPATH ?? 'auto';
-  if (mode === 'off') return [{ level: 'info', text: 'No classpath: MINDMODEL_CLASSPATH=off. Library types stay unresolved.' }];
-  const all = files ?? walk(root);
-  const { poms } = mavenModules(root, all);
-  const gradle = all.some((f) => /(^|\/)build\.gradle(\.kts)?$/.test(f));
-  if (!poms.length) {
-    const why = gradle ? 'a Gradle build (its classpath is not implemented)' : 'no pom.xml at the root';
-    return [{ level: 'info', text: `No classpath: ${why}. Library types stay unresolved.` }];
-  }
-  if (mode === 'gradle') return [{ level: 'info', text: 'No classpath: gradle classpath not implemented. Library types stay unresolved.' }];
+  const plan = classpathPlan(root, { env, files });
+  if (plan.skip) return [{ level: 'info', text: `No classpath: ${plan.skip}. Library types stay unresolved.` }];
   if (!mavenTool())
     return [{ level: 'info', text: 'No classpath: no mvn on PATH. Library types stay unresolved.' }];
   const lines = [
@@ -357,7 +362,7 @@ export function preflightLines(root, { env = process.env, files = null } = {}) {
       text: 'Dependencies will be read from the local Maven repository (offline, nothing is built, nothing is downloaded).',
     },
   ];
-  const r = risk(root, all);
+  const r = risk(root, plan.all);
   if (r.level === 'confirm')
     lines.push({
       level: 'confirm',

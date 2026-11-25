@@ -47,7 +47,7 @@ public final class Dump {
         String dropped = null;
         try {
             model = SourceModel.build(root, inputs, compliance, classpath, generatedDirs);
-        } catch (Throwable failure) {
+        } catch (Exception | LinkageError failure) {
             // A classpath is an improvement, never a condition: a jar the reader cannot take (a class file from a newer
             // Java, a corrupt entry) is dropped and the dump is rebuilt without it, exactly as it ran before.
             if (classpath.isEmpty()) throw failure;

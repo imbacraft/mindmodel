@@ -373,8 +373,7 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   const hasAnn = (t, simple) =>
     (t.ann ?? []).some((a) => a.name === simple || String(a.fqn ?? '').endsWith(`.${simple}`));
   // A model type in the shape the later passes already read: identity (name, kind, annotations, supertypes, enum
-  // values) and members are the model's. A controller's view names are string returns the model does not resolve as
-  // paths, so `views` stays empty rather than being read out of the source.
+  // values) and members are the model's.
   const asEntry = (t) => {
     return {
       p: t.file,
@@ -428,6 +427,14 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   const entities = appTypes.filter((t) => hasAnn(t, 'Entity')).map(asEntry);
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
   const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
+  // The view names a controller returns: the string values its methods hand back, as the dump wrote them.
+  // shortcut: switch arms that return a view are not read yet, a view named only there counts as dead; upgrade when one shows up.
+  const viewsReturnedBy = (t) =>
+    (t.methods ?? []).filter((m) => !hasAnn(m, 'ResponseBody')).flatMap((m) =>
+      (dump?.returnsOf(m.id) ?? [])
+        .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string')
+        .map((r) => ({ view: r.value.value, line: r.line })),
+    );
   const controllers = appTypes
     .filter(
       (t) =>
@@ -436,7 +443,8 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         hasAnn(t, 'Path') ||
         (hasAnn(t, 'Named') && UI_SCOPES.some((s) => hasAnn(t, s))),
     )
-    .map(asEntry);
+    // A REST or JAX-RS method's string is a response body, not a view name.
+    .map((t) => ({ ...asEntry(t), views: hasAnn(t, 'RestController') || hasAnn(t, 'Path') ? [] : viewsReturnedBy(t) }));
   const repos = appTypes
     .filter((t) => (t.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')))
     .map(asEntry);
@@ -978,18 +986,6 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       .sort((a, b) => a.dir.localeCompare(b.dir)),
     entities: {
       count: entFacts.entities.length,
-      model: entFacts.entities.map((e) => ({
-        name: e.name,
-        file: e.file,
-        line: e.line,
-        table: e.table,
-        relations: e.relations,
-        keys: e.keyFields.slice(0, 12),
-        unique: e.uniqueFields,
-        // Own fields only, for the invariant that a field's line sits inside its type (inherited lines live elsewhere).
-        ownKeys: e.fields.filter((f) => f.owner === e.name && !f.relation).map((f) => `${f.name}:${f.type}:${f.line}`),
-        ownRelations: e.fields.filter((f) => f.owner === e.name && f.relation).map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
-      })),
       enums,
       repositories: repos.map((r) => ({ file: r.p, extends: r.extends })),
       model: entFacts.entities.map((e) => ({
