@@ -7,9 +7,11 @@ import java.util.List;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 
+import spoon.reflect.code.CtAbstractSwitch;
 import spoon.reflect.code.CtAssignment;
 import spoon.reflect.code.CtCase;
 import spoon.reflect.code.CtExpression;
+import spoon.reflect.code.CtLambda;
 import spoon.reflect.code.CtLocalVariable;
 import spoon.reflect.code.CtReturn;
 import spoon.reflect.code.CtStatement;
@@ -147,21 +149,29 @@ final class Returns {
 
     /**
      * The value one arm produces: a `yield`, a `return`, or the assignment to the switch's local. The first of those in
-     * source order; nothing invented when none matches.
+     * source order that belongs to this switch; nothing invented when none matches. A nested switch's yield or return
+     * is that switch's, not this arm's.
      */
     private static CtExpression<?> armValue(CtCase<?> arm, String target) {
+        CtElement sw = arm.getParent();
         for (CtYieldStatement produce : arm.getElements(
                 new spoon.reflect.visitor.filter.TypeFilter<>(CtYieldStatement.class)))
-            if (produce.getParent(CtExecutable.class) == arm.getParent(CtExecutable.class))
-                return produce.getExpression();
+            // A yield answers the nearest switch expression, past any statement switch between them.
+            if (produce.getParent(CtSwitchExpression.class) == sw) return produce.getExpression();
         for (CtReturn<?> ret : arm.getElements(new spoon.reflect.visitor.filter.TypeFilter<>(CtReturn.class)))
-            if (ret.getParent(CtExecutable.class) == arm.getParent(CtExecutable.class))
-                return ret.getReturnedExpression();
+            if (nearestBody(ret) == sw) return ret.getReturnedExpression();
         for (CtStatement statement : arm.getStatements()) {
             if (target == null || !(statement instanceof CtAssignment<?, ?> assignment)) continue;
             if (!(assignment.getAssigned() instanceof CtVariableWrite<?> write)) continue;
             if (String.valueOf(write.getVariable()).equals(target)) return assignment.getAssignment();
         }
+        return null;
+    }
+
+    /** The nearest enclosing switch, lambda or method of an element: the body a `return` in it leaves. */
+    private static CtElement nearestBody(CtElement element) {
+        for (CtElement p = element.getParent(); p != null; p = p.getParent())
+            if (p instanceof CtAbstractSwitch<?> || p instanceof CtLambda<?> || p instanceof CtExecutable<?>) return p;
         return null;
     }
 

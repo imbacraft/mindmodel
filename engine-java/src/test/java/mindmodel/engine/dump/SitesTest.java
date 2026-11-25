@@ -244,4 +244,44 @@ class SitesTest {
         JsonNode compare = DumpRun.one(refs, "name", "compare");
         assertEquals(2, compare.path("argc").asInt());
     }
+
+    /**
+     * `new` of a Lombok constructor reaches the member Lombok wrote, and says so. Spoon also has an implicit default
+     * constructor for these classes; a call with arguments must not be answered by it.
+     */
+    @Test
+    void newOfLombokConstructorTargetsTheSynthesisedMember() throws Exception {
+        Map<String, String> sources = Map.of(
+                "demo/Pair.java", """
+                        package demo;
+                        import lombok.AllArgsConstructor;
+                        @AllArgsConstructor public class Pair { int a; String b; }
+                        """,
+                "demo/Name.java", """
+                        package demo;
+                        import lombok.RequiredArgsConstructor;
+                        @RequiredArgsConstructor public class Name { private final String value; int hits; }
+                        """,
+                "demo/Use.java", """
+                        package demo;
+                        public class Use {
+                            Object run() { return new Pair(1, "x"); }
+                            Object name() { return new Name("n"); }
+                        }
+                        """);
+        List<JsonNode> calls = DumpRun.of(dir, sources).rows("calls");
+
+        JsonNode pair = newAt(calls, "new Pair(1, \"x\")");
+        assertEquals("lombok", pair.path("origin").asText());
+        assertEquals(List.of("demo.Pair#Pair(int,String)"), targetIds(pair));
+        JsonNode name = newAt(calls, "new Name(\"n\")");
+        assertEquals("lombok", name.path("origin").asText());
+        assertEquals(List.of("demo.Name#Name(String)"), targetIds(name));
+    }
+
+    /** The `new` row whose written text is `text`. */
+    private static JsonNode newAt(List<JsonNode> calls, String text) {
+        return calls.stream().filter(c -> text.equals(c.path("recv").path("text").asText())).findFirst()
+                .orElseThrow(() -> new AssertionError("no new row for " + text));
+    }
 }

@@ -85,6 +85,25 @@ class LombokTest {
         }
     }
 
+    /** The compiler writes an enum's values() and valueOf(String): their origin says so, not lombok. */
+    @Test
+    void enumValuesAndValueOfAreCompilerGenerated() throws Exception {
+        Map<String, String> sources = Map.of(
+                "demo/Color.java", "package demo; public enum Color { RED }",
+                "demo/Use.java", "package demo; public class Use { Object f() {"
+                        + " return Color.values().length + Color.valueOf(\"RED\").ordinal(); } }");
+        DumpRun run = DumpRun.of(dir, sources);
+
+        for (String name : List.of("values", "valueOf")) {
+            JsonNode call = DumpRun.one(run.rows("calls"), "name", name);
+            assertEquals("compiler", call.path("origin").asText(), name);
+            assertEquals("demo.Color#" + name + (name.equals("valueOf") ? "(String)" : "()"),
+                    call.path("targets").get(0).path("id").asText(), name);
+        }
+        JsonNode member = DumpRun.one(run.rows("members"), "name", "values");
+        assertEquals("compiler", member.path("generated").asText());
+    }
+
     @Test
     void enumNameAndOrdinalAreInheritedNotGenerated() throws Exception {
         Map<String, String> sources = Map.of(

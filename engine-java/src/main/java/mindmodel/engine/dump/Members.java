@@ -265,7 +265,7 @@ public final class Members {
         }
         Ndjson.modifiers(g, item.modifiers());
         g.writeBooleanField("hasBody", false);
-        g.writeStringField("generated", "lombok");
+        g.writeStringField("generated", item.origin());
         g.writeStringField("generatedBy", item.from());
         g.writeArrayFieldStart("throws");
         g.writeEndArray();

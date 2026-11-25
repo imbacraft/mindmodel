@@ -20,7 +20,8 @@ import spoon.reflect.declaration.ModifierKind;
 
 /**
  * The members Lombok generates, computed from the annotations a person wrote. A generated member keeps the position of
- * the annotated element, so a citation points at real code, and is marked {@code generated: "lombok"}.
+ * the annotated element, so a citation points at real code, and is marked {@code generated: "lombok"}. An enum's
+ * {@code values()} and {@code valueOf(String)} are the compiler's, not Lombok's: they are marked {@code "compiler"}.
  *
  * Covered: {@code @Getter}, {@code @Setter}, {@code @Data}, {@code @Value}, {@code @Builder}, {@code @SuperBuilder},
  * the three constructors, {@code @ToString}, {@code @EqualsAndHashCode} and the logger annotations. Not covered, on
@@ -32,24 +33,36 @@ public final class Lombok {
     /** One generated member, written exactly like a declared one. */
     public record Item(String owner, String kind, String name, String id, String type, String typeFqn,
             List<String> params, Set<ModifierKind> modifiers, Positions.Pos pos, String from) {
+
+        /** Who wrote the member: the compiler for an enum's `values()` and `valueOf`, Lombok for every other. */
+        public String origin() {
+            return "enum".equals(from) ? "compiler" : "lombok";
+        }
     }
 
     /**
      * The generated members, by the keys a call or a chain names them with: `owner#name/argc` and, for a name with one
-     * shape, `owner#name`; fields by `owner#name`; and the builder types the synthesis invents.
+     * shape, `owner#name`; fields by `owner#name`; the builder types the synthesis invents; the generated constructors
+     * by `owner#<init>/argc`, and the owners that have any (Spoon's implicit default constructor is not theirs).
      */
-    public record Index(Map<String, Item> methods, Map<String, Item> fields, Set<String> builders) {
+    public record Index(Map<String, Item> methods, Map<String, Item> fields, Set<String> builders,
+            Map<String, Item> constructors, Set<String> constructed) {
 
         /** Indexes the synthesized members by the type they were synthesized for. */
         public static Index of(Map<String, List<Item>> synth) {
             Map<String, Item> methods = new HashMap<>();
             Map<String, Item> fields = new HashMap<>();
             Set<String> builders = new HashSet<>();
+            Map<String, Item> constructors = new HashMap<>();
+            Set<String> constructed = new HashSet<>();
             for (Map.Entry<String, List<Item>> entry : synth.entrySet()) {
                 Map<String, List<Item>> byName = new HashMap<>();
                 for (Item item : entry.getValue()) {
                     if (item.typeFqn() != null && item.typeFqn().endsWith(".Builder")) builders.add(item.typeFqn());
-                    if ("field".equals(item.kind())) {
+                    if ("constructor".equals(item.kind())) {
+                        constructors.putIfAbsent(constructorKey(item.owner(), item.params().size()), item);
+                        constructed.add(item.owner());
+                    } else if ("field".equals(item.kind())) {
                         fields.put(Names.member(item.owner(), item.name()), item);
                     } else if ("method".equals(item.kind())) {
                         methods.putIfAbsent(Names.member(item.owner(), Names.shape(item.name(), item.params().size())),
@@ -63,13 +76,30 @@ public final class Lombok {
                     if (named.getValue().size() == 1)
                         methods.putIfAbsent(Names.member(entry.getKey(), named.getKey()), named.getValue().get(0));
             }
-            return new Index(methods, fields, builders);
+            return new Index(methods, fields, builders, constructors, constructed);
         }
 
         /** The generated method a call names: by name and argument count, else by name alone; null when none. */
         public Item method(String owner, String name, int argc) {
             Item item = methods.get(Names.member(owner, Names.shape(name, argc)));
             return item != null ? item : methods.get(Names.member(owner, name));
+        }
+
+        /**
+         * The generated constructor of that arity, or null. Two generated constructors of one owner never share an
+         * arity unless they are the same signature, so the arity names the one a `new` reaches.
+         */
+        public Item constructor(String owner, int argc) {
+            return constructors.get(constructorKey(owner, argc));
+        }
+
+        /** True when Lombok writes any constructor for the type. */
+        public boolean constructed(String owner) {
+            return constructed.contains(owner);
+        }
+
+        private static String constructorKey(String owner, int argc) {
+            return Names.member(owner, Names.shape("<init>", argc));
         }
     }
 

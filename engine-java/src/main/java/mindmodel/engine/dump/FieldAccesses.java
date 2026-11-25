@@ -11,6 +11,7 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldAccess;
 import spoon.reflect.code.CtFieldWrite;
+import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtFieldReference;
 
@@ -46,7 +47,7 @@ final class FieldAccesses {
             Refs.Ref value = write ? refs.of(valueOf((CtFieldWrite<?>) access)) : refs.of(access);
             // The field's declared type's arguments: `GenericRepo<T>` is [T], and a reader that binds the parameter
             // knows what the field holds at that site.
-            rows.add(new Row(methodId, Refs.fieldId(ref), isStatic(ref, refs.failures()), write ? "write" : "read",
+            rows.add(new Row(methodId, Refs.fieldId(ref), isStatic(access, ref, refs.failures()), write ? "write" : "read",
                     pos, value, refs.typeArgs(ref == null ? null : ref.getType(), access)));
         }
     }
@@ -79,15 +80,39 @@ final class FieldAccesses {
         return write;
     }
 
-    /** Whether the field is static; a field whose modifiers Spoon cannot read is not static, and the run counts it. */
-    private static boolean isStatic(CtFieldReference<?> ref, Failures failures) {
+    /**
+     * Whether the field is static. A `Type.field` access names a static field only, so a type-named receiver decides it
+     * even where Spoon cannot see the declaration (`System.out`). A field whose modifiers Spoon cannot read is not
+     * static, and the run counts it.
+     */
+    private static boolean isStatic(CtFieldAccess<?> access, CtFieldReference<?> ref, Failures failures) {
         if (ref == null) return false;
+        if (access.getTarget() instanceof CtTypeAccess<?>) return true;
         try {
-            return ref.getModifiers().contains(ModifierKind.STATIC);
+            return ref.getModifiers().contains(ModifierKind.STATIC) || importedStatically(access, ref);
         } catch (RuntimeException e) {
             failures.count("fields.modifiersUnreadable");
             return false;
         }
+    }
+
+    /**
+     * True when the file statically imports the field by name or its owner's members by wildcard, and the access has no
+     * receiver written (`PI` after `import static java.lang.Math.PI;`). Without a receiver, the file's imports are the
+     * only place the field can come from that is not the class's own.
+     */
+    private static boolean importedStatically(CtFieldAccess<?> access, CtFieldReference<?> ref) {
+        if (access.getTarget() != null || ref.getDeclaringType() == null) return false;
+        var position = access.getPosition();
+        if (position == null || position.getCompilationUnit() == null) return false;
+        String owner = Names.qualified(ref.getDeclaringType());
+        String named = "import static " + owner + "." + ref.getSimpleName();
+        String all = "import static " + owner + ".*";
+        for (var imported : position.getCompilationUnit().getImports()) {
+            String text = imported.toString().replaceAll("\\s+", " ").replace(";", "").trim();
+            if (text.equals(named) || text.equals(all)) return true;
+        }
+        return false;
     }
 
     private static void writeRow(JsonGenerator g, Row row) throws IOException {

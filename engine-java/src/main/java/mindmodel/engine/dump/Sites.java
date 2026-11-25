@@ -337,14 +337,13 @@ public final class Sites {
         String fieldType = generatedFieldType(ctx.index(), type, targetText);
         String receiver = receiverOf(ctx, type, call, fieldType);
         List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
-        boolean generated = false;
+        Lombok.Item item = null;
         if (targets.isEmpty()) {
             // Unqualified call: its receiver is the class being written, so a generated sibling is the target.
             String owner = receiver != null ? receiver : Names.qualified(type);
-            Lombok.Item item = ctx.index().generated().method(owner, name, argc);
+            item = ctx.index().generated().method(owner, name, argc);
             if (item != null) {
                 targets = List.of(new Target(item.id(), "declared"));
-                generated = true;
                 receiver = owner;
             }
         }
@@ -357,7 +356,7 @@ public final class Sites {
         g.writeBooleanField("uniqueImpl", uniqueImpl(ref, targets));
         writeArgs(g, ctx, call.getArguments());
         inLambda(g, call);
-        g.writeStringField("origin", callOrigin(ctx, targets, generated, ref, recv));
+        g.writeStringField("origin", callOrigin(ctx, targets, item, ref, recv));
         if (targets.isEmpty()) g.writeStringField("reason", callReason(recv, call.getTarget()));
     }
 
@@ -434,7 +433,9 @@ public final class Sites {
         int argc = call.getArguments().size();
         String receiver = ref == null || ref.getDeclaringType() == null ? null
                 : Names.nameOf(ref.getDeclaringType());
-        List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
+        Lombok.Item made = lombokConstructor(ctx.index(), ref, receiver, argc);
+        List<Target> targets = made != null ? List.of(new Target(made.id(), "declared"))
+                : targets(ref, ctx.index(), receiver, name, argc);
         Recv recv = Recv.of(ctx, type, receiver, false);
         head(g, methodId, ctx.ids().id(call), pos, name);
         g.writeNumberField("argc", argc);
@@ -443,11 +444,21 @@ public final class Sites {
         g.writeBooleanField("uniqueImpl", false);
         writeArgs(g, ctx, call.getArguments());
         inLambda(g, call);
-        g.writeStringField("origin", !targets.isEmpty() ? "java" : recv.declared() || recv.invented() ? "unresolved"
-                : "library");
+        g.writeStringField("origin", made != null ? "lombok" : !targets.isEmpty() ? "java"
+                : recv.declared() || recv.invented() ? "unresolved" : "library");
         if (targets.isEmpty())
             g.writeStringField("reason", recv.invented() ? "unresolved-name"
                     : recv.declared() ? "no-declaration-here" : "library-signature");
+    }
+
+    /**
+     * The Lombok constructor a `new` reaches: the one of its arity, unless the program writes a constructor the call
+     * matches (Spoon has that declaration). Null when Lombok writes no constructor of that arity.
+     */
+    private static Lombok.Item lombokConstructor(Index index, CtExecutableReference<?> ref, String owner, int argc) {
+        if (owner == null || (ref != null && ref.getDeclaration() instanceof CtConstructor<?> c && !c.isImplicit()))
+            return null;
+        return index.generated().constructor(owner, argc);
     }
 
     /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
@@ -535,10 +546,10 @@ public final class Sites {
         if (site.getParent(CtLambda.class) != null) g.writeBooleanField("inLambda", true);
     }
 
-    private static String callOrigin(Ctx ctx, List<Target> targets, boolean generated, CtExecutableReference<?> ref,
-            Recv recv) {
+    private static String callOrigin(Ctx ctx, List<Target> targets, Lombok.Item generated,
+            CtExecutableReference<?> ref, Recv recv) {
         if (!targets.isEmpty()) {
-            if (generated) return "lombok";
+            if (generated != null) return generated.origin();
             return declaredIn(ctx, ref) ? "java" : "arity";
         }
         if (recv.builder()) return "lombok";
@@ -588,7 +599,7 @@ public final class Sites {
             int argc) {
         List<Target> out = new ArrayList<>();
         if (ref == null) return out;
-        if (ref.getDeclaration() instanceof CtConstructor<?> ctor) return constructorTargets(index, ctor);
+        if (ref.getDeclaration() instanceof CtConstructor<?> ctor) return constructorTargets(index, ctor, argc);
         if (!(ref.getDeclaration() instanceof CtMethod<?> method)) return byArity(index, receiver, name, argc);
         CtType<?> owner = method.getDeclaringType();
         if (owner == null || !index.declared().contains(Names.qualified(owner))) return out;
@@ -603,11 +614,17 @@ public final class Sites {
         return out;
     }
 
-    /** A constructor reached by `new` or by a constructor reference: its own declaration, the only one it can be. */
-    private static List<Target> constructorTargets(Index index, CtConstructor<?> ctor) {
+    /**
+     * A constructor reached by `new` or by a constructor reference: its own declaration, the only one it can be. Spoon
+     * invents a default constructor for a class that writes none, and that one answers only a call with no arguments,
+     * and only where Lombok writes no constructor of the class. A record's canonical constructor is never implicit here.
+     */
+    private static List<Target> constructorTargets(Index index, CtConstructor<?> ctor, int argc) {
         CtType<?> owner = ctor.getDeclaringType();
         if (owner == null || !index.declared().contains(Names.qualified(owner))) return List.of();
         if (owner.getPosition() == null || !owner.getPosition().isValidPosition()) return List.of();
+        boolean invented = ctor.isImplicit() && !(owner instanceof CtRecord);
+        if (invented && (argc != 0 || index.generated().constructed(Names.qualified(owner)))) return List.of();
         return List.of(new Target(Names.executableId(owner, ctor), "declared"));
     }
 
