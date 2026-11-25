@@ -34,16 +34,16 @@ public final class Names {
     }
 
     /**
-     * Type text as a person writes it: simple name, generic arguments without spaces, {@code []} kept,
-     * wildcards spelled out. Must agree with {@code model/model.mjs}, which reads the same spelling from source.
+     * The one spelling of a type's text, as Java writes it: simple name as the author wrote it, generic arguments
+     * separated by {@code ", "}, {@code []} kept, wildcards as {@code ? extends B} and {@code ? super B}. Every type
+     * text (params, returns, fields, supertypes, method ids) goes through here. Agrees with {@code model/model.mjs}.
      */
     public static String typeText(CtTypeReference<?> ref) {
         if (ref == null) return "";
         // What the source wrote is the spelling the Node model has always used (`Type` here, `Outer.Type` there,
         // sometimes a fully qualified name). Read it, and fall back to the computed form for inferred references.
         String written = sourceText(ref);
-        // `String...` is the source spelling of an array parameter; the id and the model say `String[]`.
-        if (written != null) return written.replace("...", "[]");
+        if (written != null) return written;
         if (ref instanceof CtWildcardReference wildcard) return wildcardText(wildcard);
         // A nested type is written with its enclosing name, exactly as a person writes it in source: Outer.Inner.
         String name = ref.getDeclaringType() == null ? ref.getSimpleName()
@@ -53,10 +53,13 @@ public final class Names {
         if (args.isEmpty()) return name;
         List<String> parts = new ArrayList<>();
         for (CtTypeReference<?> a : args) parts.add(typeText(a));
-        return name + "<" + String.join(",", parts) + ">";
+        return name + "<" + String.join(", ", parts) + ">";
     }
 
-    /** The type exactly as written, whitespace removed; null when Spoon inferred it rather than read it. */
+    /**
+     * The type as written, in the formatter's spelling; null when Spoon inferred it rather than read it. The source is
+     * re-spaced, not stripped: `Map<K,V>`, `Map<K, V>` and `Map< K , V >` all become `Map<K, V>`.
+     */
     private static String sourceText(CtTypeReference<?> ref) {
         spoon.reflect.cu.SourcePosition p = ref.getPosition();
         if (p == null || !p.isValidPosition() || p.getCompilationUnit() == null) return null;
@@ -64,13 +67,32 @@ public final class Names {
         int start = p.getSourceStart();
         int end = p.getSourceEnd();
         if (source == null || start < 0 || end < start || end >= source.length()) return null;
-        String text = source.substring(start, end + 1).replaceAll("\\s+", "");
+        String text = spaced(source.substring(start, end + 1));
         return text.isEmpty() ? null : text;
+    }
+
+    /**
+     * Java's spacing for a written type: one space after each comma and around {@code ? extends} and {@code ? super},
+     * none elsewhere.
+     */
+    static String spaced(String written) {
+        return written.trim()
+                .replaceAll("\\s+", " ")
+                .replaceAll("\\s*\\.\\.\\.", "[]")       // `String...` is the array the parameter is
+                .replaceAll("\\s*\\.\\s*", ".")            // `Outer . Inner`
+                .replaceAll("\\s*([<>\\[\\],])\\s*", "$1")
+                .replace(",", ", ")
+                .replaceAll("\\?\\s*(extends|super)\\s+", "? $1 ");
+    }
+
+    /** A wildcard as Java spells it: {@code ?}, {@code ? extends Order}, {@code ? super T}. */
+    public static String wildcard(boolean upper, String bound) {
+        return bound == null ? "?" : (upper ? "? extends " : "? super ") + bound;
     }
 
     private static String wildcardText(CtWildcardReference wildcard) {
         CtTypeReference<?> bound = wildcard.getBoundingType();
         if (bound == null || "Object".equals(bound.getSimpleName())) return "?";
-        return (wildcard.isUpper() ? "? extends " : "? super ") + typeText(bound);
+        return wildcard(wildcard.isUpper(), typeText(bound));
     }
 }

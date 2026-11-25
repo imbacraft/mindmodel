@@ -9,7 +9,6 @@ import java.util.HashMap;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,13 +57,21 @@ class FailuresTest {
         assertEquals(0, turn.path("targets").size());
     }
 
-    @Disabled("engine gap: a missing import is origin unresolved, but writes no refs.* key to meta.json counts")
+    /** The field's type and the call's receiver are both Widget, both unresolved: two refs.typeUnresolved. */
     @Test
     void missingImportIsCountedAsARefsFailure() throws Exception {
         Map<String, Integer> counts = new HashMap<>();
         DumpRun.of(dir, MISSING_IMPORT).meta().path("counts").fields()
                 .forEachRemaining(e -> counts.put(e.getKey(), e.getValue().asInt()));
 
-        assertTrue(counts.keySet().stream().anyMatch(key -> key.startsWith("refs.")), "counts: " + counts);
+        assertEquals(2, counts.getOrDefault("refs.typeUnresolved", 0), "counts: " + counts);
+    }
+
+    @Test
+    void missingImportFieldKeepsItsWrittenNameAndInventsNoTypeFqn() throws Exception {
+        JsonNode widget = DumpRun.one(DumpRun.of(dir, MISSING_IMPORT).rows("members"), "name", "widget");
+
+        assertEquals("Widget", widget.path("type").asText());
+        assertTrue(widget.path("typeFqn").isNull(), "typeFqn: " + widget.path("typeFqn"));
     }
 }

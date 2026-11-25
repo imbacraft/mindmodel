@@ -218,12 +218,13 @@ final class Refs {
     /** One type argument as written: `Voucher`, `T`, `? extends Number`. */
     static String typeName(CtTypeReference<?> type) {
         if (type == null) return "?";
-        if (type instanceof CtTypeParameterReference parameter) return parameter.getSimpleName();
+        // A wildcard is a type parameter reference too in Spoon, so it is named before the parameter test can take it.
         if (type instanceof spoon.reflect.reference.CtWildcardReference wildcard) {
             CtTypeReference<?> bound = wildcard.getBoundingType();
             if (bound == null || "Object".equals(bound.getSimpleName())) return "?";
-            return (wildcard.isUpper() ? "? extends " : "? super ") + Names.qualified(bound);
+            return Names.wildcard(wildcard.isUpper(), Names.qualified(bound));
         }
+        if (type instanceof CtTypeParameterReference parameter) return parameter.getSimpleName();
         String qualified = Names.qualified(type);
         return qualified == null || qualified.isEmpty() ? "?" : qualified;
     }

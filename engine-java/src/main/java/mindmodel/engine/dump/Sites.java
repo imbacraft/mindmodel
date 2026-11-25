@@ -378,6 +378,8 @@ public final class Sites {
         boolean builderReceiver = chains.isBuilder(receiverName);
         boolean invented = receiverName != null && fieldType == null && !receiverDeclared && !builderReceiver
                 && samePackage(receiverName, type);
+        // A receiver type Spoon invented (a missing import) is an unresolved type, and the run says how many it met.
+        if (invented) refs.failures().count("refs.typeUnresolved");
         // `arity` is a member lookup by name and count inside a project type, not a compiler answer: it says so.
         boolean compiler = ref != null && ref.getDeclaration() instanceof CtMethod<?> declaredMethod
                 && declaredMethod.getDeclaringType() != null

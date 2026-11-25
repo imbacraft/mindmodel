@@ -38,8 +38,11 @@ public final class Dump {
             .thenComparingInt(r -> r.pos == null ? 0 : r.pos.col())
             .thenComparing(r -> Names.qualified(r.type));
 
-    public static void run(Path root, Path listPath, Path outDir, int compliance, List<String> classpath,
+    public static void run(Path given, Path listPath, Path outDir, int compliance, List<String> classpath,
             List<String> generatedDirs) throws IOException {
+        // Spoon reports canonical paths (macOS /var is /private/var): every relativised or prefix-checked path below
+        // is measured against the canonical root, or it comes out as ../../ paths.
+        Path root = SourceModel.realPath(given);
         java.nio.file.Files.createDirectories(outDir);
         List<String> inputs = SourceModel.relativeFiles(root,
                 java.nio.file.Files.readAllLines(listPath, StandardCharsets.UTF_8));
@@ -76,7 +79,7 @@ public final class Dump {
         Failures failures = new Failures();
         Refs refs = new Refs(ids, failures);
         Sites.Written written = Sites.write(types, known, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
-        Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns());
+        Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns(), failures);
         FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
         // The library types the classpath let Spoon read: shallow rows, no positions, never cited (LibraryStubs).
         int libraries = mindmodel.engine.dump.LibraryStubs.write(types, known, outDir.resolve("library.ndjson"));

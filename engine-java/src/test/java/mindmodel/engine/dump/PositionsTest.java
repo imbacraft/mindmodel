@@ -3,6 +3,7 @@ package mindmodel.engine.dump;
 import static mindmodel.engine.dump.DumpRun.lineOf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -72,11 +73,18 @@ class PositionsTest {
     }
 
     @Test
-    void positionFileIsProjectRelativeForACanonicalCheckout() throws Exception {
-        // shortcut: a root reached through a symlink (macOS /var) gets ../ paths from Positions, so this uses the real
-        // path; upgrade when Positions relativises against the canonical root.
-        Path canonical = dir.toRealPath();
-        JsonNode outer = DumpRun.one(DumpRun.of(canonical, SOURCES).rows("types"), "fqn", "demo.Outer");
+    void positionFileIsProjectRelativeForAnyCheckout() throws Exception {
+        JsonNode outer = DumpRun.one(DumpRun.of(dir, SOURCES).rows("types"), "fqn", "demo.Outer");
+
+        assertEquals("demo/Outer.java", outer.path("pos").path("file").asText());
+    }
+
+    @Test
+    void positionFileIsProjectRelativeWhenTheRootIsReachedThroughASymlink() throws Exception {
+        // Spoon reports the real path; the root given is the link. Both must meet at the real root.
+        Path real = Files.createDirectories(dir.resolve("real"));
+        Path link = Files.createSymbolicLink(dir.resolve("link"), real);
+        JsonNode outer = DumpRun.one(DumpRun.of(link, SOURCES).rows("types"), "fqn", "demo.Outer");
 
         assertEquals("demo/Outer.java", outer.path("pos").path("file").asText());
     }

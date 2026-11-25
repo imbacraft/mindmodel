@@ -1,7 +1,9 @@
 package mindmodel.engine.dump;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -46,14 +48,14 @@ class RefsTypesTest {
         JsonNode store = repo.path("supertypes").get(1);
         assertEquals("interface", store.path("kind").asText());
         assertEquals("demo.Store", store.path("fqn").asText());
-        assertEquals("Store<Order,String>", store.path("text").asText());
+        assertEquals("Store<Order, String>", store.path("text").asText());
     }
 
     @Test
     void fieldTypeKeepsItsNestedGenericArguments() throws Exception {
         JsonNode field = DumpRun.one(DumpRun.of(dir, SOURCES).rows("members"), "name", "byKey");
 
-        assertEquals("Map<String,List<Order>>", field.path("type").asText());
+        assertEquals("Map<String, List<Order>>", field.path("type").asText());
         assertEquals("java.util.Map", field.path("typeFqn").asText());
     }
 
@@ -61,10 +63,40 @@ class RefsTypesTest {
     void parameterTypesKeepTheirGenericArgumentsAndTheMethodIdSpellsThemTheSameWay() throws Exception {
         JsonNode find = DumpRun.one(DumpRun.of(dir, SOURCES).rows("members"), "name", "find");
 
-        assertEquals("Map<String,Order>", find.path("params").get(0).path("type").asText());
+        assertEquals("Map<String, Order>", find.path("params").get(0).path("type").asText());
         assertEquals("List<Order>", find.path("params").get(1).path("type").asText());
         assertEquals("List<Order>", find.path("returns").asText());
-        assertEquals("demo.Repo#find(Map<String,Order>,List<Order>)", find.path("id").asText());
+        assertEquals("demo.Repo#find(Map<String, Order>,List<Order>)", find.path("id").asText());
+    }
+
+    /** Wildcards are spelled as Java writes them, in every type text and in a receiver's type arguments. */
+    @Test
+    void wildcardsKeepTheirSpaceInParamsMethodIdsAndTypeArguments() throws Exception {
+        Map<String, String> wild = Map.of(
+                "demo/Wild.java", """
+                        package demo;
+                        import java.util.List;
+                        import java.util.Map;
+                        public class Wild {
+                            private List<? extends Order> fed;
+                            void take(List<? extends Order> xs, Map<? super Order, ?> m) {
+                                fed.size();
+                                xs.isEmpty();
+                            }
+                        }
+                        """,
+                "demo/Order.java", "package demo; public class Order {}");
+        DumpRun run = DumpRun.of(dir, wild);
+
+        JsonNode take = DumpRun.one(run.rows("members"), "name", "take");
+        assertEquals("List<? extends Order>", take.path("params").get(0).path("type").asText());
+        assertEquals("Map<? super Order, ?>", take.path("params").get(1).path("type").asText());
+        assertEquals("demo.Wild#take(List<? extends Order>,Map<? super Order, ?>)", take.path("id").asText());
+        assertEquals("List<? extends Order>",
+                DumpRun.one(run.rows("members"), "name", "fed").path("type").asText());
+        assertEquals("? extends demo.Order",
+                DumpRun.one(run.rows("calls"), "name", "isEmpty").path("recv").path("typeArgs").get(0).asText());
+        assertFalse(Files.readString(run.out.resolve("members.ndjson")).contains("?extends"));
     }
 
     @Test

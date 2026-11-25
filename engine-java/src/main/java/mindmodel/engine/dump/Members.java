@@ -47,7 +47,8 @@ public final class Members {
     }
 
     public static void write(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth, Path root,
-            Path out, java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns) throws IOException {
+            Path out, java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns, Failures failures)
+            throws IOException {
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> t : types) {
                 java.util.Set<String> declaredIds = new java.util.HashSet<>();
@@ -67,7 +68,7 @@ public final class Members {
                 for (CtTypeMember member : t.getTypeMembers()) {
                     if (member instanceof CtEnumValue<?> value && !constants.add(value.getSimpleName())) continue;
                     if (member instanceof CtEnumValue<?> value) w.row(g -> enumConstant(g, t, value, root));
-                    else if (member instanceof CtField<?> field) w.row(g -> field(g, t, field, root));
+                    else if (member instanceof CtField<?> field) w.row(g -> field(g, t, field, root, failures));
                     else if (member instanceof CtConstructor<?> ctor) {
                         // A record's canonical constructor is written from its components below: Spoon 11.5 hands it
                         // back in another order, and leaves it out entirely for a nested record.
@@ -112,17 +113,33 @@ public final class Members {
         }
     }
 
-    private static void field(JsonGenerator g, CtType<?> owner, CtField<?> f, Path root) throws IOException {
+    private static void field(JsonGenerator g, CtType<?> owner, CtField<?> f, Path root, Failures failures)
+            throws IOException {
         g.writeStringField("kind", "field");
         g.writeStringField("owner", Names.qualified(owner));
         g.writeStringField("name", f.getSimpleName());
         g.writeStringField("type", Names.typeText(f.getType()));
         // The type as the compiler names it: a declaration's field type is a fact, not something Node resolves.
-        g.writeStringField("typeFqn", f.getType() == null ? null : f.getType().getQualifiedName());
+        // An invented one (a missing import) is written as its simple name only, and counted.
+        boolean invented = invented(f.getType(), owner);
+        if (invented) failures.count("refs.typeUnresolved");
+        g.writeStringField("typeFqn", f.getType() == null || invented ? null : f.getType().getQualifiedName());
         modifiers(g, f.getModifiers());
         Anns.write(g, f.getAnnotations());
         Ndjson.pos(g, Positions.of(f, root));
         writeConstant(g, f);
+    }
+
+    /**
+     * A type Spoon named without any declaration for it, in the package of the file that wrote it: a missing import is
+     * exactly this, since Spoon assumes the author meant the file's own package. Arrays are judged by their element.
+     */
+    static boolean invented(CtTypeReference<?> type, CtType<?> written) {
+        CtTypeReference<?> base = type;
+        while (base instanceof spoon.reflect.reference.CtArrayTypeReference<?> array) base = array.getComponentType();
+        if (base == null || base.isPrimitive() || base.getTypeDeclaration() != null) return false;
+        String pkg = written.getPackage() == null ? "" : written.getPackage().getQualifiedName();
+        return base.getPackage() != null && base.getPackage().getQualifiedName().equals(pkg);
     }
 
     private static void enumConstant(JsonGenerator g, CtType<?> owner, CtEnumValue<?> v, Path root) throws IOException {
