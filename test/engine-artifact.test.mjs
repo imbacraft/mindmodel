@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { cacheJar, lock, matches, sha256 } from '../engine/engine.mjs';
+import { cacheJar, lock, matches, sha256 } from '../engine/io/engine-jar.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT = path.join(REPO, 'engine-java', 'target', 'mindmodel-engine.jar');
@@ -47,7 +47,7 @@ test('a populated cache does not break importing the engine', { skip: !fs.exists
   const target = path.join(cache, 'mindmodel', 'engine', lock().version);
   fs.mkdirSync(target, { recursive: true });
   fs.copyFileSync(BUILT, path.join(target, 'mindmodel-engine.jar'));
-  const engineUrl = pathToFileURL(path.join(REPO, 'engine', 'engine.mjs')).href;
+  const engineUrl = pathToFileURL(path.join(REPO, 'engine', 'io', 'engine-jar.mjs')).href;
   const out = execFileSync(process.execPath, ['-e', `import(${JSON.stringify(engineUrl)})`], {
     encoding: 'utf8',
     env: { ...process.env, XDG_CACHE_HOME: cache, MINDMODEL_ENGINE_JAR: '' },

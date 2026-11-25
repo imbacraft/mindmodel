@@ -1,20 +1,14 @@
 // Runs the Java engine's dump for a checkout: the only place Node knows Spoon exists. One dump per scan, written under
 // the project's own mindmodel/.work (the same place facts go), and reused when the jar and the files have not changed.
+// The classpath arrives as data and its hash as a string: this module does not know how Maven is read.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { jarPath } from './engine.mjs';
-import { summaryHash } from './classpath.mjs';
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.dirname(HERE);
-
-// Where that jar is (env, cache, or this checkout's build) is engine.mjs's question, not this module's.
-export { jarPath };
+import { jarPath } from './engine-jar.mjs';
+import { git } from './git.mjs';
 
 // Spoon 11.5 accepts a compliance level up to 26 (JDK 25); 11.2.1 died above 21. A project on a newer JDK therefore
 // gets the highest level this engine understands, and `capped` says so in the facts rather than pretending the source
@@ -55,18 +49,17 @@ function contentHash(file) {
  * mtimes, which change on checkout, made every branch switch a cold dump for no reason. Null outside a git repo.
  */
 function gitState(root, files) {
-  const git = (args) =>
-    spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
-  const listed = git(['ls-files', '-s', '-z', '--', '*.java']);
-  if (listed.status !== 0) return null;
+  const call = (args) => git(root, args, { trim: false, timeout: 30_000 }).out;
+  const listed = call(['ls-files', '-s', '-z', '--', '*.java']);
+  if (listed === null) return null;
   const blobs = new Map();
-  for (const row of listed.stdout.split('\0')) {
+  for (const row of listed.split('\0')) {
     const m = /^\d+ ([0-9a-f]{40}) \d\t(.+)$/.exec(row);
     if (m) blobs.set(m[2], m[1]);
   }
-  const status = git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '*.java']);
+  const status = call(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '*.java']);
   const dirty = new Set();
-  for (const row of (status.stdout ?? '').split('\0')) {
+  for (const row of (status ?? '').split('\0')) {
     if (!row) continue;
     // `XY path` in the porcelain format; a rename carries the old path in the next field, which is not read here.
     const rel = row.slice(3);
@@ -77,9 +70,10 @@ function gitState(root, files) {
 
 /**
  * A fingerprint of the inputs: the jar, every Java file's content identity, and the classpath summary with the
- * generated sources' own files. Stable across a branch switch (`gitState`), because every input is a content id.
+ * generated sources' own files (`classpathHash`, from io/classpath.mjs's summaryHash). Stable across a branch switch
+ * (`gitState`), because every input is a content id.
  */
-export function fingerprint(root, files, classpath = null) {
+export function fingerprint(root, files, classpathHash = null) {
   const h = crypto.createHash('sha256');
   const jar = jarPath();
   if (fs.existsSync(jar)) h.update(fs.statSync(jar).mtimeMs + ':' + fs.statSync(jar).size + '\n');
@@ -94,20 +88,21 @@ export function fingerprint(root, files, classpath = null) {
     // Not tracked (or tracked and edited here): the bytes are the identity, and they read the same on any branch.
     h.update(`${rel}:sha:${contentHash(full)}\n`);
   }
-  if (classpath) h.update(`classpath:${summaryHash(classpath, root)}\n`);
+  if (classpathHash) h.update(`classpath:${classpathHash}\n`);
   return h.digest('hex').slice(0, 16);
 }
 
 /**
  * Dumps the checkout and returns the directory, or `{ ok: false, reason }` when the engine cannot run. A warm directory
- * whose fingerprint matches is reused as is.
+ * whose fingerprint matches is reused as is. `classpath` is the resolved jars and generated sources; `classpathHash`
+ * is their summary hash, which the caller computes.
  */
-export function dumpFor(root, files, { outDir, force = false, classpath = null } = {}) {
+export function dumpFor(root, files, { outDir, force = false, classpath = null, classpathHash = null } = {}) {
   const jar = jarPath();
   if (!jar || !fs.existsSync(jar)) return { ok: false, reason: `engine jar not found: ${jar}` };
   const dir = outDir ?? path.join(root, 'mindmodel', '.work', 'dump');
   const stamp = path.join(dir, 'fingerprint');
-  const want = fingerprint(root, files, classpath);
+  const want = fingerprint(root, files, classpathHash);
   if (!force && fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8').trim() === want) return { ok: true, dir };
   // Written beside the target and swapped in: two scans of the same checkout never hand a reader half a dump.
   const staging = `${dir}.${process.pid}.tmp`;

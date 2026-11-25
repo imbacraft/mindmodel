@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import { open as openDump } from './dump.mjs';
 import { startsAt } from './model/from-dump-model.mjs';
 import { fileURLToPath } from 'node:url';
-import { gitWindow, activityFor } from './activity.mjs';
+import { gitWindow, activityFor } from './io/activity.mjs';
 import { formatCite, parseCite } from './core/cite.mjs';
 import { checkSchema } from './core/schema.mjs';
 import { budgetFor, budgetWarnings, isThin } from './budget.mjs';

@@ -13,7 +13,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
-import { readBuild } from './evidence/build.mjs';
+import { readBuild } from './build.mjs';
 
 const TIMEOUT = 120_000;
 
@@ -268,9 +268,13 @@ function classpathPlan(root, { env, files }) {
  * asks Maven once — a jar list while its jars exist, a `none` for `MINDMODEL_CLASSPATH_TTL_MS` (default ten minutes),
  * because the user may fetch the dependencies between two scans.
  *
- * Options: `files` (the walk's relative paths), `env`, `timeout`, `cache`, `log` (a sink for the tool's own output).
+ * Options: `files` (the walk's relative paths), `env`, `timeout`, `cache`, `log` (a sink for the tool's own output),
+ * `which` (the tool lookup, `mavenTool` by default: a test passes its own).
  */
-export function resolve(root, { files = [], env = process.env, timeout = TIMEOUT, cache = true, log = null } = {}) {
+export function resolve(
+  root,
+  { files = [], env = process.env, timeout = TIMEOUT, cache = true, log = null, which = mavenTool } = {},
+) {
   const started = Date.now();
   const ttl = Number(env.MINDMODEL_CLASSPATH_TTL_MS ?? 600_000);
   const cachePath = path.join(root, 'mindmodel', '.work', 'classpath.json');
@@ -312,7 +316,7 @@ export function resolve(root, { files = [], env = process.env, timeout = TIMEOUT
       // A broken cache is no cache.
     }
   }
-  const tool = mavenTool();
+  const tool = which();
   if (!tool) return empty('no mvn on PATH');
   // Nothing is written into the tree: Maven's own output goes to its log, and the answer to `.work/`.
   const args = ['-o', '-B', '-fae', 'dependency:build-classpath', '-Dmdep.includeScope=compile'];
@@ -351,10 +355,10 @@ export function resolve(root, { files = [], env = process.env, timeout = TIMEOUT
  * case that asks first (a Maven build that would execute project code). Gradle is never a `confirm` here because
  * nothing would run — its classpath is not implemented, so the answer is `none` either way.
  */
-export function preflightLines(root, { env = process.env, files = null } = {}) {
+export function preflightLines(root, { env = process.env, files = null, which = mavenTool } = {}) {
   const plan = classpathPlan(root, { env, files });
   if (plan.skip) return [{ level: 'info', text: `No classpath: ${plan.skip}. Library types stay unresolved.` }];
-  if (!mavenTool())
+  if (!which())
     return [{ level: 'info', text: 'No classpath: no mvn on PATH. Library types stay unresolved.' }];
   const lines = [
     {

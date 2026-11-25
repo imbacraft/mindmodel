@@ -1,20 +1,14 @@
 #!/usr/bin/env node
 // Pre-flight for /mindmodel: is the code about to be mapped a clean, current state, and can the engine run here? It
-// never touches the network for the project's code; its one fetch is the engine jar, once per version (see engine.mjs).
+// never touches the network for the project's code; its one fetch is the engine jar, once per version
+// (io/engine-jar.mjs).
 // Usage: node preflight.mjs <projectRoot>   Prints JSON: { ok, node, git, warnings[] }. ok=false means: ask the user before continuing.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { ensure } from './engine.mjs';
-import { preflightLines as classpathLines } from './classpath.mjs';
-
-const git = (root, args) => {
-  try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return null;
-  }
-};
+import { ensure } from './io/engine-jar.mjs';
+import { git } from './io/git.mjs';
+import { javaVersionText } from './io/java.mjs';
+import { preflightLines as classpathLines } from './io/classpath.mjs';
 
 // "## main...origin/main [ahead 1, behind 3]" → { branch, upstream, ahead, behind }
 export function parseBranchLine(line) {
@@ -32,8 +26,7 @@ export function parseBranchLine(line) {
 // The Java runtime the Spoon engine runs on, from `java -version` (which prints to stderr). macOS's /usr/bin/java is a
 // stub that follows JAVA_HOME, so the answer can differ per environment and both are tried.
 export function javaMajor(env = process.env) {
-  const r = spawnSync('java', ['-version'], { encoding: 'utf8', env });
-  const m = /version "(?:1\.)?(\d+)/.exec(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+  const m = /version "(?:1\.)?(\d+)/.exec(javaVersionText(env));
   return m ? +m[1] : null;
 }
 
@@ -57,7 +50,7 @@ function preflightInner(root) {
   // `confirm` is a Maven build that would execute project code (extensions, .mvn/jvm.config, .mvn/maven.config).
   warnings.push(...classpathLines(root));
 
-  const isRepo = git(root, ['rev-parse', '--is-inside-work-tree']) === 'true';
+  const isRepo = git(root, ['rev-parse', '--is-inside-work-tree']).out === 'true';
   if (!isRepo) {
     warnings.push({
       level: 'info',
@@ -66,14 +59,14 @@ function preflightInner(root) {
     return { ok: !warnings.some((w) => w.level !== 'info'), node: process.versions.node, git: null, warnings };
   }
 
-  const status = git(root, ['status', '--porcelain=v1', '-b']) ?? '';
+  const status = git(root, ['status', '--porcelain=v1', '-b']).out ?? '';
   const [branchLine, ...changes] = status.split('\n');
   const b = parseBranchLine(branchLine);
-  const head = git(root, ['rev-parse', '--short', 'HEAD']);
-  const detached = b.branch?.startsWith('HEAD') || git(root, ['symbolic-ref', '-q', 'HEAD']) === null;
+  const head = git(root, ['rev-parse', '--short', 'HEAD']).out;
+  const detached = b.branch?.startsWith('HEAD') || git(root, ['symbolic-ref', '-q', 'HEAD']).out === null;
   const defaultBranch =
-    (git(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']) ?? '').replace(/^origin\//, '') || null;
-  const fetchHead = path.join(git(root, ['rev-parse', '--git-dir']) ?? '.git', 'FETCH_HEAD');
+    (git(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).out ?? '').replace(/^origin\//, '') || null;
+  const fetchHead = path.join(git(root, ['rev-parse', '--git-dir']).out ?? '.git', 'FETCH_HEAD');
   const fetchFile = path.isAbsolute(fetchHead) ? fetchHead : path.join(root, fetchHead);
   const lastFetchDays = fs.existsSync(fetchFile)
     ? Math.floor((Date.now() - fs.statSync(fetchFile).mtimeMs) / 864e5)
@@ -116,7 +109,9 @@ function preflightInner(root) {
       const prev = JSON.parse(fs.readFileSync(existing, 'utf8')).project?.commit ?? '';
       const prevSha = prev.split(/\s/)[0];
       const behindBy =
-        prevSha && /^[0-9a-f]{6,}$/.test(prevSha) ? git(root, ['rev-list', '--count', `${prevSha}..HEAD`]) : null;
+        prevSha && /^[0-9a-f]{6,}$/.test(prevSha)
+          ? git(root, ['rev-list', '--count', `${prevSha}..HEAD`]).out
+          : null;
       const since = `${prev || 'an unknown commit'}${behindBy != null ? `, ${behindBy} commit(s) ago` : ''}`;
       warnings.push({
         level: 'info',

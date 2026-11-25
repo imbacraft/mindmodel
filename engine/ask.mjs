@@ -9,9 +9,7 @@ import { targetIds } from './model/targets.mjs';
 
 const LIMIT = 40;
 const pos = (p) => (p ? `${p.file}:${p.line}` : '?');
-const [dir, command, ...rest] = process.argv.slice(2);
-const usage = () => {
-  console.error(`usage: node ask.mjs <dump-dir> <command> [args]
+const USAGE = `usage: node ask.mjs <dump-dir> <command> [args]
   type <fqn>                 kind, position, supertypes
   method <id|fqn#name>       signature, position, annotations
   calls <id>                 call sites inside that method
@@ -19,18 +17,10 @@ const usage = () => {
   impls <fqn>                project subtypes of a type
   ann <fqn|id> <name>        annotation arguments as values
   constant <fqn> <name>      the literal value of a final field
-  grep <text> [--kind K]     names containing text (types and members)`);
-  process.exit(2);
-};
-const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (!isMain) {
-  // Imported by a test that only loads the module (self-checks live in test/, never on import): nothing to answer.
-} else if (!dir || !command) {
-  usage();
-} else {
+  grep <text> [--kind K]     names containing text (types and members)`;
 
-
-  const d = open(dir);
+/** The answer to one question over an open dump, as text; null for a command this tool does not know. */
+export function answer(d, command, rest) {
   const arg = (i) => rest[i] ?? '';
   const out = [];
   const push = (...lines) => out.push(...lines);
@@ -85,7 +75,18 @@ if (!isMain) {
       break;
     }
     default:
-      usage();
+      return null;
   }
-  console.log(out.join('\n'));
+  return out.join('\n');
+}
+
+// Only the entry point reads argv or opens a dump: importing this module (a test does) has no side effects.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [dir, command, ...rest] = process.argv.slice(2);
+  const text = dir && command ? answer(open(dir), command, rest) : null;
+  if (text === null) {
+    console.error(USAGE);
+    process.exit(2);
+  }
+  console.log(text);
 }

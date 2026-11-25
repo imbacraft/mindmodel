@@ -14,8 +14,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO = path.dirname(HERE);
+// This file sits in engine/io/, so the checkout is two levels up.
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const LOCK = path.join(REPO, 'engine-java', 'engine.lock');
 
 export function lock() {

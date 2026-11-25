@@ -16,7 +16,7 @@ import { validate } from '../engine/validate.mjs';
 import { checkSchema } from '../engine/core/schema.mjs';
 import { renderPage } from '../engine/render.mjs';
 import { validateSystem, renderSystemPage } from '../engine/system-render.mjs';
-import { git } from '../engine/activity.mjs';
+import { git } from '../engine/io/git.mjs';
 import { STRICT, corpusSkip, dirOf, loadApps, requireCheckout } from './apps.mjs';
 
 // A snapshot is a fact about the engine, not about this machine: a populated ~/.m2 changes receiver typing, so the
@@ -81,7 +81,7 @@ function check(t, name, actual) {
 // not look like a regression; update "commit" in apps.json when the new state is intended.
 function moved(dir, commit) {
   if (!commit) return null;
-  const head = git(dir, ['rev-parse', 'HEAD']);
+  const head = git(dir, ['rev-parse', 'HEAD']).out;
   if (!head) return `cannot read HEAD in ${dir}`;
   return head === commit ? null : `app at ${head.slice(0, 8)}, snapshots pinned to ${commit.slice(0, 8)}`;
 }

@@ -3,15 +3,17 @@
 // Usage: node scan.mjs <projectRoot> [outFile]   (default out: <root>/mindmodel/.work/facts.json)
 // Never copies config values (only keys) so secrets cannot leak into facts or the map.
 import fs from 'node:fs';
-import { retuneHeap } from './heap.mjs';
+import { retuneHeap } from './io/heap.mjs';
 import path from 'node:path';
 import { javaFacts } from './extract/lifecycle.mjs';
-import { bootEntries, bootFacts, deployables } from './extract/boot.mjs';
-import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
+import { bootEntries, bootFacts, deployables, mainIndex } from './extract/boot.mjs';
+import { activityByFile, forgetActivity, gitWindow } from './io/activity.mjs';
+import { git } from './io/git.mjs';
 import { bindingRates } from './model/calls.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
-import { dumpFor } from './run.mjs';
-import { resolve as resolveClasspath, tildify } from './classpath.mjs';
+import { dumpFor } from './io/dump-run.mjs';
+import { resolve as resolveClasspath, summaryHash, tildify } from './io/classpath.mjs';
+import { readBuild } from './io/build.mjs';
 import { open as openDump } from './dump.mjs';
 import { simple } from './core/names.mjs';
 import { annotationOn, hasAnnotation } from './core/annotations.mjs';
@@ -49,10 +51,11 @@ import { extractOutside } from './extract/outside.mjs';
 import { extractState } from './extract/state.mjs';
 import { extractTransactions } from './extract/transactions.mjs';
 import { coverage } from './checks/coverage.mjs';
-import { coordinatesOf, readBuild } from './evidence/build.mjs';
-import { budgetLine, summarize } from './digest/facts-md.mjs';
+import { coordinatesOf } from './evidence/build.mjs';
+import { budgetLine } from './budget.mjs';
+import { summarize } from './digest/facts-md.mjs';
 
-// The digest moved to digest/facts-md.mjs; the names stay importable from here.
+// The digest moved to digest/facts-md.mjs and the budget to budget.mjs; the names stay importable from here.
 export { budgetLine, summarize };
 
 // The shipped catalogs are read once per process; a project catalog is merged here when it lands.
@@ -377,7 +380,7 @@ function memoizedReader() {
   };
 }
 
-/** The checkout's files, the Java files the dump reads, and the one app among the deployables. */
+/** The checkout's files, the Java files the dump reads, and the build files. */
 function inventory(root) {
   const files = walk(root);
   const R = (p) => relPosix(root, p);
@@ -389,28 +392,30 @@ function inventory(root) {
   }
   // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
   const javaAll = files.filter((f) => f.endsWith('.java') && !isTestCode(f)).map((p) => ({ p: R(p) }));
-  // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
-  const app = deployables({ java: javaAll, files, rel: R, read });
-  const java = javaAll.filter((j) => !app.isExcluded(j.p));
   // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs).
   const buildFiles = readBuild(root, files.map(R));
-  return { root, files, R, read, byExt, javaAll, app, java, buildFiles };
+  return { root, files, R, read, byExt, javaAll, buildFiles };
 }
 
 /**
  * The dump, the classpath and the model built from them: the one base every family queries. The binding rates are
  * written onto the model here, before any family reads it.
  */
-function loadModel({ root, files, R, javaAll, buildFiles }) {
+function loadModel({ root, files, R, read, javaAll, buildFiles }) {
   // The project's own dependency jars, when the machine already has them (offline, nothing built): Spoon then resolves
   // library types, and the library stubs say what their members are. Optional and never blocking.
   const cpStart = Date.now();
   const classpath = resolveClasspath(root, { files: files.map(R) });
   const classpathMs = Date.now() - cpStart;
   const dumpStart = Date.now();
-  const dumpRun = dumpFor(root, javaAll.map((j) => j.p), { classpath });
+  const classpathHash = summaryHash(classpath, root);
+  const dumpRun = dumpFor(root, javaAll.map((j) => j.p), { classpath, classpathHash });
   const dumpMs = Date.now() - dumpStart;
   const dump = dumpRun.ok ? openDump(dumpRun.dir) : null;
+  // A repo can hold several apps: map the primary one only (other deployables are named in Boot). The entry points come
+  // from the dump just run, so the engine runs once per scan.
+  const app = deployables({ java: javaAll, files, rel: R, read, dump: dumpRun.ok ? mainIndex(dumpRun.dir) : null });
+  const java = javaAll.filter((j) => !app.isExcluded(j.p));
   const sources = new Map(
     [...(dump?.files?.entries() ?? [])].map(([p, f]) => [
       p,
@@ -447,6 +452,8 @@ function loadModel({ root, files, R, javaAll, buildFiles }) {
     selected,
     model,
     callStats,
+    app,
+    java,
     // Built once: the method-security and the wildcard-annotation passes both read this index.
     annIndex: annotationIndex(selected),
   };
@@ -933,11 +940,11 @@ function docsOf(files, R, read) {
 
 /** The checkout's git state: HEAD, whether it has uncommitted changes, and the history window activity counts use. */
 function gitInfoOf(root) {
-  const head = git(root, ['rev-parse', '--short', 'HEAD']);
+  const head = git(root, ['rev-parse', '--short', 'HEAD']).out;
   if (!head) return null;
-  const dirty = !!git(root, ['status', '--porcelain', '--untracked-files=no']);
-  const headDate = git(root, ['log', '-1', '--format=%cI']);
-  const total = Number(git(root, ['rev-list', '--count', 'HEAD']));
+  const dirty = !!git(root, ['status', '--porcelain', '--untracked-files=no']).out;
+  const headDate = git(root, ['log', '-1', '--format=%cI']).out;
+  const total = Number(git(root, ['rev-list', '--count', 'HEAD']).out);
   return { head, dirty, headDate, totalCommits: total, window: gitWindow(root, headDate, total) };
 }
 

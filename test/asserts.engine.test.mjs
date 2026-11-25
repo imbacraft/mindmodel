@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { lock, cacheJar, sha256, matches } from '../engine/engine.mjs';
+import { lock, cacheJar, sha256, matches } from '../engine/io/engine-jar.mjs';
 
 test('sha256 hashes the file it reads', () => {
   const sample = path.join(os.tmpdir(), 'mindmodel-sha-check.txt');

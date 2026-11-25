@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { CONTRACT, open } from '../engine/dump.mjs';
 import { buildModelFromDump } from '../engine/model/from-dump-model.mjs';
 import { authSources, tenantSources } from '../engine/extract/security.mjs';
-import { mavenTool, resolve } from '../engine/classpath.mjs';
-import { dumpFor } from '../engine/run.mjs';
+import { mavenTool, resolve, summaryHash } from '../engine/io/classpath.mjs';
+import { dumpFor } from '../engine/io/dump-run.mjs';
 import { scan, summarize } from '../engine/scan.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -194,7 +194,7 @@ test('classpath: a jar in the local repository makes the holder a typed store', 
     assert.equal(cp.mode, 'maven-offline', `resolved offline: ${cp.reason ?? ''}`);
     assert.ok(cp.jars.some((j) => j.includes('holder-1.0.jar')), 'the fixture jar is on the classpath');
 
-    const dump = dumpFor(dir, ['app/src/main/java/shop/ContextFilter.java', 'lib/src/main/java/lib/Shape.java'], { classpath: cp });
+    const dump = dumpFor(dir, ['app/src/main/java/shop/ContextFilter.java', 'lib/src/main/java/lib/Shape.java'], { classpath: cp, classpathHash: summaryHash(cp, dir) });
     assert.ok(dump.ok, dump.reason);
     const db = open(dump.dir);
     // The holder's own type is in the dump as a library row, with its static field: that is what the classpath bought.
@@ -285,7 +285,7 @@ test('classpath: a class the engine cannot read is unresolved, and the dump comp
   try {
     const cp = resolve(dir, { env: { ...process.env, MINDMODEL_M2: m2 } });
     assert.equal(cp.mode, 'maven-offline');
-    const dump = dumpFor(dir, ['app/src/main/java/shop/ContextFilter.java'], { classpath: cp });
+    const dump = dumpFor(dir, ['app/src/main/java/shop/ContextFilter.java'], { classpath: cp, classpathHash: summaryHash(cp, dir) });
     assert.ok(dump.ok, `the dump survives one unreadable class: ${dump.reason ?? ''}`);
     const rows = fs
       .readFileSync(path.join(dump.dir, 'library.ndjson'), 'utf8')
@@ -313,8 +313,8 @@ test('classpath: two dumps of the same inputs are byte-identical, and nothing is
   try {
     const cp = resolve(dir, { env: { ...process.env, MINDMODEL_M2: m2 } });
     const files = ['app/src/main/java/shop/ContextFilter.java'];
-    const a = dumpFor(dir, files, { classpath: cp, force: true, outDir: path.join(dir, 'mindmodel/.work/dump-a') });
-    const b = dumpFor(dir, files, { classpath: cp, force: true, outDir: path.join(dir, 'mindmodel/.work/dump-b') });
+    const a = dumpFor(dir, files, { classpath: cp, classpathHash: summaryHash(cp, dir), force: true, outDir: path.join(dir, 'mindmodel/.work/dump-a') });
+    const b = dumpFor(dir, files, { classpath: cp, classpathHash: summaryHash(cp, dir), force: true, outDir: path.join(dir, 'mindmodel/.work/dump-b') });
     assert.ok(a.ok && b.ok);
     // Every section, and the whole directory: no timestamp, no per-run ordering.
     for (const name of fs.readdirSync(a.dir).filter((f) => f !== 'fingerprint')) {

@@ -10,7 +10,6 @@ import { hasAnnotation } from '../core/annotations.mjs';
 import { isTestCode } from '../core/paths.mjs';
 import { placeholderOf } from '../core/placeholders.mjs';
 import { linesMatching } from '../core/strings.mjs';
-import { dumpFor } from '../run.mjs';
 
 // What makes a `main` an app's entry point: a Spring Boot annotation on its type, or a Spring Boot initialiser it
 // extends (a plain `main` that boots Spring through `SpringApplication` without an annotation). The dump names an
@@ -30,7 +29,7 @@ const linesOf = (file) =>
  * `isMain` member lines), because the scan opens the whole dump a moment later and its calls section is far larger than
  * everything here.
  */
-function mainIndex(dir) {
+export function mainIndex(dir) {
   const types = new Map();
   for (const line of linesOf(path.join(dir, 'types.ndjson'))) {
     const t = JSON.parse(line);
@@ -46,19 +45,6 @@ function mainIndex(dir) {
   }
   for (const list of mains.values()) list.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
   return { typesOf: (file) => types.get(file) ?? [], mainsIn: (file) => mains.get(file) ?? [] };
-}
-
-/**
- * The dump of the checkout these files belong to. `deployables` runs before the scan has a dump to hand over, so it
- * asks `dumpFor` for one — fingerprint-cached, so the scan that follows reuses this run instead of starting a second
- * — and answers from it, or null when the engine cannot run (the scan fails loudly on that, a few lines later).
- */
-function checkoutDump(files, rel, java) {
-  if (!files.length || !java.length) return null;
-  const first = files[0];
-  const root = first.slice(0, first.length - rel(first).length).replace(/[\\/]+$/, '') || path.sep;
-  const run = dumpFor(root, java.map((j) => j.p));
-  return run.ok ? mainIndex(run.dir) : null;
 }
 
 /**
@@ -81,8 +67,12 @@ function patternsIn(node, out = [], key = null) {
   return out;
 }
 
-export function deployables({ java, files, rel, read, dump }) {
-  const d = dump ?? checkoutDump(files, rel, java);
+/**
+ * The app entry points among `java`. `dump` is `mainIndex` of the checkout's dump, which the caller has already run;
+ * null when the engine could not run (the scan fails loudly on that, a few lines later).
+ */
+export function deployables({ java, files, rel, read, dump = null }) {
+  const d = dump;
   const moduleOf = (p) => (p.includes('/src/main/java/') ? p.split('/src/main/java/')[0] : '.');
   const mods = new Set(java.map((j) => moduleOf(j.p)).filter((m) => m !== '.'));
   const deps = (m) => {

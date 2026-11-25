@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { jarPath } from '../engine/engine.mjs';
+import { jarPath } from '../engine/io/engine-jar.mjs';
 import { IGNORED_DIRS, isTestCode } from '../engine/core/paths.mjs';
 const SKIP_EXT =
   /\.(class|jar|war|ear|so|dll|dylib|exe|o|pyc|png|jpe?g|gif|webp|ico|bmp|tiff?|woff2?|ttf|otf|eot|mp[34]|mov|avi|zip|gz|tgz|rar|7z|pdf|psd|map)$/i;

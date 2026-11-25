@@ -1,9 +1,7 @@
-// L1 evidence: what the project says about itself. This module reads Maven POMs and Gradle builds (Groovy and Kotlin
-// DSL, version catalogs) into coordinates a catalog can match, plus the code-generator plugins whose output is not
-// hand-written code. No build is run and nothing is installed: a build file is text, read like any other source.
+// L1 evidence: what the project says about itself. This module parses Maven POMs and Gradle builds (Groovy and Kotlin
+// DSL, version catalogs) from their text into coordinates a catalog can match, plus the code-generator plugins whose
+// output is not hand-written code. Reading the files is io/build.mjs; nothing is built or installed.
 import assert from 'node:assert';
-import fs from 'node:fs';
-import path from 'node:path';
 import { childOf, childrenOf, parseXml, textOf } from './xml.mjs';
 import { resolvePlaceholders } from '../core/placeholders.mjs';
 
@@ -157,7 +155,7 @@ function readPom(text, rel = 'pom.xml') {
 }
 
 // `libs.springframework.boot` -> "org.springframework.boot:spring-boot-starter-web:3.4.0" (version catalogs, TOML).
-function readVersionCatalog(text) {
+export function readVersionCatalog(text) {
   const libs = new Map(),
     versions = new Map();
   let section = '';
@@ -267,28 +265,16 @@ function readPackageJson(text, rel = 'package.json') {
 
 const BUILD_FILE = /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|package\.json)$/;
 
-function isBuildFile(rel) {
+export function isBuildFile(rel) {
   return BUILD_FILE.test(rel) && !/(^|\/)(node_modules|build|target|dist)\//.test(rel);
 }
 
-export function readBuild(root, rels) {
-  const versionCatalog = rels.find((r) => /(^|\/)gradle\/libs\.versions\.toml$/.test(r));
-  const libs = versionCatalog
-    ? readVersionCatalog(fs.readFileSync(path.join(root, versionCatalog), 'utf8'))
-    : new Map();
-  const out = [];
-  for (const rel of rels.filter(isBuildFile)) {
-    const text = fs.readFileSync(path.join(root, rel), 'utf8');
-    const parsed = /pom\.xml$/.test(rel)
-      ? readPom(text, rel)
-      : /package\.json$/.test(rel)
-        ? readPackageJson(text, rel)
-        : /settings\.gradle/.test(rel)
-          ? readGradleSettings(text, rel)
-          : readGradleBuild(text, rel, libs);
-    if (parsed) out.push(parsed);
-  }
-  return out;
+/** One build file, parsed from its text (io/build.mjs reads the text). `libs` is the version catalog's map. */
+export function buildFileOf(rel, text, libs = new Map()) {
+  if (/pom\.xml$/.test(rel)) return readPom(text, rel);
+  if (/package\.json$/.test(rel)) return readPackageJson(text, rel);
+  if (/settings\.gradle/.test(rel)) return readGradleSettings(text, rel);
+  return readGradleBuild(text, rel, libs);
 }
 
 // Every declared coordinate, for catalog selection: `group:artifact`, never a version.

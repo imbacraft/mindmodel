@@ -5,11 +5,12 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 
 ## Layout
 - `engine-java/`: the Java engine (Maven, Java 17+, Spoon 11.5.0), shaded into `engine-java/target/mindmodel-engine.jar`.
-  It answers which project method each call reaches; `engine/run.mjs` runs it; `engine/dump.mjs` reads its dump.
-- `engine/`: Node scripts, no dependencies. `core/` (pure helpers, one owner per concept),
+  It answers which project method each call reaches; `engine/io/dump-run.mjs` runs it; `engine/dump.mjs` reads its dump.
+- `engine/`: Node scripts, no dependencies. `io/` (the only layer with side effects: git, processes, network, the
+  engine cache, reading build files), `core/` (pure helpers, one owner per concept),
   `model/` (the symbol model: full names, resolved annotations and supertypes), `catalogs/` (framework meaning as
-  JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/`; `scan.mjs` and `system.mjs`
-  orchestrate, `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs` keep their roles.
+  JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/` (pure parsing of build text);
+  `scan.mjs` and `system.mjs` orchestrate, `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs` keep their roles.
 - `rules/`: what the writers follow. `schema/`: the JSON the writers produce (`mindmodel.schema.json`, `facts.schema.json`, `catalog.schema.json`).
   `template/`: the pages.
 - `agents/`, `skills/`: the writer prompts and the slash commands.

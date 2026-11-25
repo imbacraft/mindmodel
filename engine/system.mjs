@@ -4,11 +4,11 @@
 // the single-app scanner; this adds what crosses service boundaries and joins it.
 // Usage: node system.mjs <folder> [outDir]   (default out: <folder>/mindmodel-system/.work/)
 import fs from 'node:fs';
-import { retuneHeap } from './heap.mjs';
+import { retuneHeap } from './io/heap.mjs';
 import path from 'node:path';
 import { scan, summarize } from './scan.mjs';
 import { configKeys } from './extract/config.mjs';
-import { dumpFor } from './run.mjs';
+import { dumpFor } from './io/dump-run.mjs';
 import { open as openDump } from './dump.mjs';
 import { simple } from './core/names.mjs';
 import { annotationOn, hasAnnotation } from './core/annotations.mjs';
