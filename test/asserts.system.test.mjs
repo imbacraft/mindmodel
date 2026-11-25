@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
-import { BUILTIN, channelName, codeIndex, jakartaJms, messaging, restCalls, resolve, gatewayRoutes } from '../engine/system.mjs';
+import { BUILTIN, channelName, codeIndex, jakartaJms, messaging, resolve } from '../engine/system/messaging.mjs';
+import { gatewayRoutes, restCalls } from '../engine/system/rest.mjs';
 
 const module_ = () => {
   const { db, model } = dumpOfLayers(['system-messaging']);

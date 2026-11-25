@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { accessFor } from './security.mjs';
+import { accessFor } from './security/rules/match.mjs';
 import { superBindings } from '../model/type-args.mjs';
 import { simple } from '../core/names.mjs';
 import { listOf, patternOf } from '../catalogs/catalog.mjs';

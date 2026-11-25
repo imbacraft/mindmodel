@@ -13,10 +13,11 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CONTRACT, open } from '../engine/dump.mjs';
 import { buildModelFromDump } from '../engine/model/from-dump-model.mjs';
-import { authSources, tenantSources } from '../engine/extract/security.mjs';
+import { authSources, tenantSources } from '../engine/extract/security/index.mjs';
 import { mavenTool, resolve, summaryHash } from '../engine/io/classpath.mjs';
 import { dumpFor } from '../engine/io/dump-run.mjs';
-import { scan, summarize } from '../engine/scan.mjs';
+import { scan } from '../engine/scan.mjs';
+import { summarize } from '../engine/digest/facts-md.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.dirname(here);

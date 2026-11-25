@@ -3,7 +3,14 @@
 // comes from (the tenant sources), and code without a request (jobs, listeners, async, webhooks) that touches
 // keyed entities and whether it sets the tenant context first.
 import assert from 'node:assert/strict';
-import { listOf, patternOf } from '../catalogs/catalog.mjs';
+import {
+  isAsyncAnnotation,
+  isJobAnnotation,
+  isListenerAnnotation,
+  isNoRequestAnnotation,
+  listOf,
+  patternOf,
+} from '../catalogs/catalog.mjs';
 import { queries } from '../model/query.mjs';
 import { isTestCode } from '../core/paths.mjs';
 import { targetIds } from '../model/targets.mjs';
@@ -434,10 +441,11 @@ export function noRequestPaths({ model, tenancy, repos, extra = [] }) {
   const entryAnn = (m) => (m.ann ?? []).map((a) => a.fqn ?? a.name);
   const kindOf = (m) => {
     const names = entryAnn(m);
-    if (names.some((n) => /(Scheduled|Schedule)$/.test(n ?? ''))) return 'job';
-    if (names.some((n) => /(JmsListener|KafkaListener|RabbitListener|EventListener|MessageDriven|Observes)$/.test(n ?? ''))) return 'listener';
-    if (names.some((n) => /Async$/.test(n ?? ''))) return 'async';
-    return null;
+    if (!names.some((n) => isNoRequestAnnotation(n))) return null;
+    if (names.some((n) => isJobAnnotation(n))) return 'job';
+    if (names.some((n) => isAsyncAnnotation(n))) return 'async';
+    if (names.some((n) => isListenerAnnotation(n))) return 'listener';
+    return 'job'; // a remaining no-request name, such as a timer's @Timeout
   };
   const setsContext = (t, m) => (m.calls ?? []).some((c) => /^(set|current)(Tenant|Workspace|Site)/.test(c.name ?? '')) || /Context|Holder/.test(t.name);
   const out = [];

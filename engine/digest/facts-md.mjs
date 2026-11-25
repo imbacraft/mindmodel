@@ -2,7 +2,7 @@
 // summarize() calls them in the order the digest prints them.
 import assert from 'node:assert';
 import path from 'node:path';
-import { checkSummary } from '../extract/security.mjs';
+import { checkSummary } from '../extract/security/summary.mjs';
 import { budgetLine, DIGEST_WARN_CHARS } from '../budget.mjs';
 
 // The budget line is built in budget.mjs; scan.mjs imports it from here.

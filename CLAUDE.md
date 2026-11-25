@@ -10,8 +10,12 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 - `engine/`: Node scripts, no dependencies. `io/` (the only layer with side effects: git, processes, network, the
   engine cache, reading build files), `core/` (pure helpers, one owner per concept),
   `model/` (the symbol model: full names, resolved annotations and supertypes), `catalogs/` (framework meaning as
-  JSON data), `extract/` (one fact family per module), `checks/`, `digest/`, `evidence/` (pure parsing of build text);
-  `scan.mjs` and `system.mjs` orchestrate, `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs` keep their roles.
+  JSON data), `extract/` (one fact family per module; `extract/security/` splits security by concern: rule parsers per
+  framework, the dump door and its walks, identity and tenant sources, the model), `checks/`, `digest/`, `evidence/`
+  (pure parsing of build text). `scan.mjs` and `system.mjs` are the CLIs and export `scan()` and `systemScan()`; their
+  parts live in `scan/` (inventory, model, one module per fact family, assembly) and `system/` (messaging and REST
+  edges, folder model, one service, joins, summary). `validate.mjs` / `render.mjs` / `system-render.mjs` / `shape.mjs`
+  keep their roles.
 - `rules/`: what the writers follow. `schema/`: the JSON the writers produce (`mindmodel.schema.json`, `facts.schema.json`, `catalog.schema.json`).
   `template/`: the pages.
 - `agents/`, `skills/`: the writer prompts and the slash commands.

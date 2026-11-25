@@ -141,6 +141,50 @@
       "setAttribute",
       "setAuthentication",
       "setContext"
+    ],
+    "async-annotations": [
+      "Async",
+      "Asynchronous"
+    ],
+    "interceptor-annotations": [
+      "WebFilter",
+      "Interceptor"
+    ],
+    "around-invoke-annotations": [
+      "AroundInvoke"
+    ],
+    "interceptor-registration-calls": [
+      "addInterceptor",
+      "addPathPatterns",
+      "excludePathPatterns"
+    ],
+    "request-scope-annotations": [
+      "RequestScoped",
+      "SessionScoped",
+      "ConversationScoped",
+      "ViewScoped",
+      "Scope",
+      "ControllerAdvice"
+    ],
+    "method-scope-annotations": [
+      "Scope"
+    ],
+    "exception-handler-annotations": [
+      "ExceptionHandler"
+    ],
+    "startup-annotations": [
+      "Startup"
+    ],
+    "session-attribute-annotations": [
+      "SessionAttributes"
+    ],
+    "session-attribute-calls": [
+      "setAttribute",
+      "getAttribute"
+    ],
+    "stomp-config-calls": [
+      "registerStompEndpoints",
+      "enableSimpleBroker"
     ]
   },
   "patterns": {
@@ -152,7 +196,15 @@
     "status-type-name": "(?:Status|State)$",
     "status-field-name": "(?i)^(?:status|state)$",
     "frontend-build": "NpmTask|node-gradle|com\\.github\\.node|frontend-maven-plugin|npm\\s+run|yarnBuild",
-    "frontend-served-hook": "(processResources|bootJar|generate-resources|prepare-package)[^\\n]*"
+    "frontend-served-hook": "(processResources|bootJar|generate-resources|prepare-package)[^\\n]*",
+    "interceptor-supers": "(ContainerRequestFilter|ContainerResponseFilter|OncePerRequestFilter|HandlerInterceptor|Filter)$",
+    "interceptor-registration-type": "FilterRegistrationBean",
+    "thread-local-type": "ThreadLocal",
+    "exception-mapper-supers": "ExceptionMapper$",
+    "base-class-exclusions": "Repository$|Exception$|^Object$",
+    "runner-supers": "(CommandLineRunner|ApplicationRunner)",
+    "session-holder-type": "HttpSession$",
+    "session-view-reads": "sessionScope\\.|session\\.getAttribute"
   },
   "maps": {
     "sdk-vendors": {

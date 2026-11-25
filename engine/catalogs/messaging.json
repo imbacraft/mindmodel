@@ -105,6 +105,9 @@
       "MessageListener",
       "MessageDrivenBean"
     ],
+    "sqs-listener-annotations": [
+      "SqsListener"
+    ],
     "consumer-poll-methods": [
       "poll",
       "nextDelivery",

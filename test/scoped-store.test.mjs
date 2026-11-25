@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';
-import { authSources, tenantSources } from '../engine/extract/security.mjs';
+import { authSources, tenantSources } from '../engine/extract/security/index.mjs';
 
 const L = (...x) => x.join('\n');
 

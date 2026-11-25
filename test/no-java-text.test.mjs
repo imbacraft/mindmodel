@@ -75,7 +75,7 @@ const PROBES = [
     id: 'java-body-param',
     re: /\b(?:callerBody|methodText)\b/g,
     why: 'handles a Java body passed as text',
-    only: ['engine/extract/security.mjs', 'engine/extract/lifecycle.mjs'],
+    only: ['engine/extract/lifecycle.mjs'],
   },
   {
     id: 'java-constants-scan',
@@ -97,7 +97,14 @@ const PROBES = [
       'g',
     ),
     why: 'reads text that is Java source (system.mjs reads services, not other formats)',
-    only: ['engine/system.mjs'],
+    only: [
+      'engine/system.mjs',
+      'engine/system/messaging.mjs',
+      'engine/system/rest.mjs',
+      'engine/system/service.mjs',
+      'engine/system/folder.mjs',
+      'engine/system/edges.mjs',
+    ],
   },
   { id: 'tree-sitter-parse', re: /\bparser\.parse\s*\(/g, why: 'parses Java source with tree-sitter' },
   {

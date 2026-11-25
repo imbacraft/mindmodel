@@ -151,6 +151,33 @@ export const mapOf = (name) => need('maps', name);
 /** A named table of rows. Read only. */
 export const tableOf = (name) => need('tables', name);
 
+/** One exact-name regex over a named list: `^(?:A|B)$`. Readers test an annotation's simple name against it. */
+export const anyNamed = (name) => cached(`any:${name}`, () => new RegExp(`^(?:${[...listOf(name)].join('|')})$`));
+
+/**
+ * The one "is this annotation a job, a listener or an async method" test: a simple name the named lists list, exactly
+ * or as the end of a longer one (`TransactionalEventListener` ends in `EventListener`). Takes a name or an FQN.
+ */
+export const endsWithNamed = (...names) => {
+  const listed = names.flatMap((n) => [...listOf(n)]);
+  return (annotation) => {
+    const s = simple(annotation);
+    return listed.some((e) => s === e || s.endsWith(e));
+  };
+};
+
+// The no-request annotations, by the lists that name them: a job (schedules, timers), a listener (messages, events,
+// observers) or an async method. Every reader asks these; none keeps a name list of its own.
+export const isNoRequestAnnotation = endsWithNamed('job-annotations', 'listener-annotations', 'message-driven-annotations');
+export const isJobAnnotation = endsWithNamed('scheduled-annotations');
+export const isAsyncAnnotation = endsWithNamed('async-annotations');
+export const isListenerAnnotation = endsWithNamed(
+  'listener-annotations',
+  'message-driven-annotations',
+  'observer-annotations',
+  'sqs-listener-annotations',
+);
+
 {
   const catalogs = loadCatalogs();
   assert.ok(catalogs.length >= 2, 'the shipped catalogs load');
@@ -182,6 +209,11 @@ export const tableOf = (name) => need('tables', name);
   // second definition of a name is an error at load time.
   assert.ok(listOf('job-annotations').has('KafkaListener'));
   assert.ok(patternOf('status-field-name').test('STATUS'));
+  // A listener by suffix counts as a listener; a name the lists do not name does not.
+  assert.ok(endsWithNamed('listener-annotations')('org.x.TransactionalEventListener'), 'a suffix names a listener');
+  assert.ok(!endsWithNamed('listener-annotations')('Scheduled'));
+  assert.ok(anyNamed('switch-annotations').test('Profile'));
+  assert.ok(!anyNamed('switch-annotations').test('ProfileX'), 'the exact-name test does not match a longer name');
   assert.throws(() => listOf('no-such-list'), /no list named/);
   assert.throws(
     () => vocabularyOf([{ id: 'a', lists: { x: [] } }, { id: 'b', lists: { x: [] } }]),

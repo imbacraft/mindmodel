@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';
-import { authSources, identityWarnings, requestReads, securityModel } from '../engine/extract/security.mjs';
+import { authSources, identityWarnings, requestReads, securityModel } from '../engine/extract/security/index.mjs';
 import { queries } from '../engine/model/query.mjs';
 
 const L = (...x) => x.join('\n');

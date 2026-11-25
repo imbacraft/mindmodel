@@ -1,7 +1,7 @@
 // Import-time self-checks moved out of engine/scan.mjs (Task 9); the assertions are unchanged.
 import test from 'node:test';
 import assert from 'node:assert';
-import { routePath } from '../engine/scan.mjs';
+import { routePath } from '../engine/scan/web.mjs';
 import { normalizePath } from '../engine/core/paths.mjs';
 
 test('routePath: React Router and Angular paths', () => {
