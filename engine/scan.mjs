@@ -525,7 +525,7 @@ function viewsReturnedBy(dump, t) {
     .filter((m) => !carriesAnn(m, 'ResponseBody'))
     .flatMap((m) =>
       (dump?.returnsOf(m.id) ?? [])
-        .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string')
+        .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string' && /^\S+$/.test(r.value.value))
         .map((r) => ({ view: r.value.value, line: r.line })),
     );
 }
@@ -910,15 +910,15 @@ function batchJobsOf(appTypes, files, R, read) {
   return files
     .filter((f) => /META-INF\/batch-jobs\/[\w.-]+\.xml$/.test(f))
     .map((f) => {
-      const text = read(f);
-      const id = /<job\b[^>]*\bid="([^"]+)"/.exec(text)?.[1] ?? path.basename(f, '.xml');
+      const xml = read(f);
+      const id = /<job\b[^>]*\bid="([^"]+)"/.exec(xml)?.[1] ?? path.basename(f, '.xml');
       // `JobOperator.start("name")`: the dump's call row, with the job id as its folded argument.
       const starts = appTypes.flatMap((t) =>
         (t.methods ?? [])
           .flatMap((m) => (m.calls ?? []).filter((c) => c.name === 'start' && (c.args ?? []).includes(`"${id}"`)))
           .map((c) => `${t.file}:${c.line}`),
       );
-      const steps = [...text.matchAll(/<(batchlet|reader|processor|writer)\b[^>]*\bref="([^"]+)"/g)].map(
+      const steps = [...xml.matchAll(/<(batchlet|reader|processor|writer)\b[^>]*\bref="([^"]+)"/g)].map(
         (m) => `${m[1]} ${m[2]}`,
       );
       return {

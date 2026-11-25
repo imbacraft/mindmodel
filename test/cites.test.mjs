@@ -92,6 +92,7 @@ test('the fixture declares the two overloads where the model says', () => {
 const DUMP = path.join(root, 'mindmodel', '.work', 'dump');
 fs.mkdirSync(DUMP, { recursive: true });
 const ndjson = (rows) => rows.map((r) => `${JSON.stringify(r)}\n`).join('');
+for (const empty of ['calls', 'fields', 'files']) fs.writeFileSync(path.join(DUMP, `${empty}.ndjson`), '');
 fs.writeFileSync(
   path.join(DUMP, 'meta.json'),
   JSON.stringify({ contract: CONTRACT, engine: 'fixture', counts: { types: 1 } }),
@@ -200,6 +201,19 @@ const map = (cites) => ({
       takeaways: ['The fixture stores strings.'],
       importance: 'The only flow.',
     },
+    // The schema asks for three stories; these two only fill the count.
+    ...['again', 'twice'].map((id) => ({
+      id,
+      kind: 'usage',
+      title: `Storing a string ${id}`,
+      setup: 'A caller has a string.',
+      steps: [
+        { region: 'core', text: 'The caller calls save.', cites: ['X.java:21'] },
+        { region: 'edge', text: 'The string reaches the field.', cites: ['X.java:25'] },
+      ],
+      takeaways: ['The fixture stores strings.'],
+      importance: 'A repeat.',
+    })),
   ],
 });
 
