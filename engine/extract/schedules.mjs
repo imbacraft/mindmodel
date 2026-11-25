@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { simple } from '../model/names.mjs';
 
 // Recurring work that is not `@Scheduled`: a fixed-rate/fixed-delay submission to an executor, a hashed-wheel timer,
 // or a project's own scheduler. These run forever after a lifecycle hook, and a reader who only greps for annotations
@@ -8,7 +9,6 @@ import assert from 'node:assert/strict';
 const RECURRING = /^(?:scheduleAtFixedRate|scheduleWithFixedDelay|scheduleAtFixedRateAsync|newTimeout|schedulePage|schedulePeriodic)$/;
 const SCHEDULER = /(?:Scheduler|Timer|WheelTimer|Executor)$/;
 
-const simple = (s) => String(s ?? '').split('.').pop();
 const cite = (type, m) => `${type.file}:${m.nameLine}#${m.name}`;
 
 export function extractSchedules(model, selected = []) {

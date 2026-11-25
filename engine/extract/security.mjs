@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { queries } from '../model/query.mjs';
 import { targetIds } from '../model/targets.mjs';
+import { simple } from '../model/names.mjs';
 
 // Security, in plain terms. One fact per path prefix the application protects, with what the prefix allows:
 // anonymous, authenticated, or a role. Sources: Spring Security filter chains (each chain's `securityMatcher` is its
@@ -287,7 +288,6 @@ export function anonymousWrites(rules, endpoints, methodSecurity) {
 // The extractors read code only through `engine/model/query.mjs`. `model.dump` is the handle the model was built from
 // (one dump per scan); a test may hand the dump in instead. Without one every primitive answers `no-dump` and the
 // facts below come out empty with a reason — never filled in from source text.
-const simple = (name) => String(name ?? '').split('.').pop();
 const baseType = (text) => String(text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
 const simpleType = (text) => baseType(text).split('.').pop();
 // The entry methods this repo reads identity and context from: framework method names, not project conventions.
@@ -325,14 +325,8 @@ const memberAt = (db, id) => db?.members?.get(id) ?? null;
 const memberFile = (db, id) => memberAt(db, id)?.pos?.file ?? null;
 const memberLine = (db, id) => memberAt(db, id)?.pos?.line ?? null;
 
-// One call row by id: the loader indexes calls by owning method, and an argument names the call it came from.
-const CALLS = new WeakMap();
-const callById = (db, id) => {
-  if (!id) return null;
-  let byId = CALLS.get(db);
-  if (!byId) CALLS.set(db, (byId = new Map(db.calls.map((c) => [c.id, c]))));
-  return byId.get(id) ?? null;
-};
+// One call row by id: an argument names the call it came from.
+const callById = (db, id) => (id ? db.callById(id) : null);
 
 /**
  * A request read: a call to a library method of `HttpServletRequest`/`Cookie` (or `@CookieValue`/`@RequestHeader`,
@@ -1246,7 +1240,7 @@ export function identityWarnings(model, isTest = () => false, db = null) {
     { id: 'a.F#go()@4:9', method: 'a.F#go()', name: 'getHeader', file: 'a/F.java', line: 4, args: [] },
     { id: 'a.F#go()@8:9', method: 'a.F#go()', name: 'store', file: 'a/F.java', line: 8, args: [] },
   ];
-  const db = { calls, members: new Map(), types: new Map() };
+  const db = { calls, callById: (id) => calls.find((c) => c.id === id) ?? null, members: new Map(), types: new Map() };
   const q = { argValue: (call, i) => ({ values: [], unresolved: [] }) };
   const read = { kind: 'header', name: 'X-Api-Key', call: 'a.F#go()@4:9' };
   assert.ok(valueReaches(read, { kind: 'local', from: 'a.F#go()@4:9' }, q, db), 'the local is assigned from the read');

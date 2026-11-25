@@ -4,7 +4,7 @@
 // keyed entities and whether it sets the tenant context first.
 import assert from 'node:assert/strict';
 import { queries } from '../model/query.mjs';
-import { isTestPath } from './entities.mjs';
+import { isTestPath } from '../model/names.mjs';
 import { targetIds } from '../model/targets.mjs';
 
 const MIN_ENTITIES = 3;

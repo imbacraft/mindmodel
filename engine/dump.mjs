@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { declaredId, overrideIds, targetIds, uniqueImplOf } from './model/targets.mjs';
+import { simple } from './model/names.mjs';
+import { push } from './model/collections.mjs';
 
 export const CONTRACT = 6;
 
@@ -15,7 +17,6 @@ function rows(file) {
     .map((l) => JSON.parse(l));
 }
 
-const simple = (fqn) => String(fqn ?? '').split('.').pop();
 const key = (file, line) => `${file}\u0000${line}`;
 
 /**
@@ -44,9 +45,7 @@ export function open(dir) {
   const byOwner = new Map();
   for (const m of members) {
     if (m.id) byId.set(m.id, m);
-    const list = byOwner.get(m.owner) ?? [];
-    list.push(m);
-    byOwner.set(m.owner, list);
+    push(byOwner, m.owner, m);
   }
   const byMethod = new Map();
   const byMethodRef = new Map();
@@ -57,29 +56,17 @@ export function open(dir) {
   for (const c of calls) {
     if (c.id) byCallId.set(c.id, c);
     const map = c.via === 'methodRef' ? byMethodRef : byMethod;
-    for (const [target, k] of [
-      [map, c.method],
-      [byLine, key(c.file, c.line)],
-      [bySite, key(c.file, `${c.line}:${c.col}`)],
-    ]) {
-      const list = target.get(k) ?? [];
-      list.push(c);
-      target.set(k, list);
-    }
-    for (const t of targetIds(c)) callers.set(t, [...(callers.get(t) ?? []), c]);
+    push(map, c.method, c);
+    push(byLine, key(c.file, c.line), c);
+    push(bySite, key(c.file, `${c.line}:${c.col}`), c);
+    for (const t of targetIds(c)) push(callers, t, c);
   }
   // Field reads and writes by field, so "which methods write this holder" is a lookup, not a scan.
   const byField = new Map();
-  for (const f of fields) {
-    if (!f.field) continue;
-    const list = byField.get(f.field) ?? [];
-    list.push(f);
-    byField.set(f.field, list);
-  }
+  for (const f of fields) if (f.field) push(byField, f.field, f);
   const byFile = new Map(files.map((f) => [f.path, f]));
   const subtypes = new Map();
-  for (const t of types)
-    for (const s of t.supertypes ?? []) subtypes.set(s.fqn, [...(subtypes.get(s.fqn) ?? []), t.fqn]);
+  for (const t of types) for (const s of t.supertypes ?? []) push(subtypes, s.fqn, t.fqn);
 
   /** Annotations on a type or member, by full name or simple name; the arguments are values, or null when unresolved. */
   const annotation = (element, name) => {
@@ -126,6 +113,8 @@ export function open(dir) {
     atSite: (file, line, col) => bySite.get(key(file, `${line}:${col}`)) ?? [],
     annotation,
     grep,
+    /** One call row by its id, or null. */
+    callById: (callId) => byCallId.get(callId) ?? null,
     /** The arguments of one call row, typed: `[{text, kind, ...}]`, in source order. */
     argsOf: (callId) => byCallId.get(callId)?.args ?? [],
     /** The type arguments a site's receiver is written with: `["shop.Voucher"]` for `Base<Voucher>.publish`. */

@@ -2,8 +2,9 @@
 // its annotations point, what its fields are typed as, which methods it has, and what each call reaches — so nothing
 // here resolves anything: it arranges the answers in the shape the extractors read.
 import assert from 'node:assert';
+import { simple } from './names.mjs';
+import { push } from './collections.mjs';
 
-const simpleOf = (name) => String(name ?? '').split('.').pop();
 const typeNameOf = (text) => (text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
 
 const JAVA_LANG = new Set([
@@ -36,7 +37,7 @@ function splitTypes(text) {
 // The dump names an annotation as the author wrote it; the file's imports turn that into an FQN, as javac would.
 const annOf = (row, line, resolveIn) =>
   (row.ann ?? []).map((a) => ({
-    name: simpleOf(a.name),
+    name: simple(a.name),
     fqn: resolveIn ? resolveIn(a.name) ?? a.name : a.name,
     args: a.raw ?? '',
     line: a.line || line,
@@ -62,7 +63,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     const file = row.pos?.file ?? '';
     types.set(row.fqn, {
       kind: row.kind,
-      name: simpleOf(row.fqn),
+      name: simple(row.fqn),
       fqn: row.fqn,
       enclosing: row.enclosing ?? null,
       file,
@@ -82,8 +83,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       methods: [],
       enumValues: [],
     });
-    if (!byFile.has(file)) byFile.set(file, []);
-    byFile.get(file).push(row.fqn);
+    push(byFile, file, row.fqn);
   }
 
   // Annotations name types, so they resolve once every type is registered.
@@ -104,7 +104,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   for (const t of types.values())
     for (const s of t.supers) {
       if (!s.fqn) continue;
-      if (types.has(s.fqn)) implsOf.set(s.fqn, [...(implsOf.get(s.fqn) ?? []), t.fqn]);
+      if (types.has(s.fqn)) push(implsOf, s.fqn, t.fqn);
       else external.add(s.fqn);
     }
 
@@ -166,12 +166,12 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     }
 
   // Calls join their own method by id, the same string every layer keys a method by.
-  const byId = new Map();
-  for (const t of types.values()) for (const m of t.methods) byId.set(m.id, m);
+  const methodsById = new Map();
+  for (const t of types.values()) for (const m of t.methods) if (m.id) methodsById.set(m.id, { type: t, method: m });
   for (const row of dump.calls) {
     // A method reference is a call row of its own; it names a method and does not call it.
     if (row.via === 'methodRef') continue;
-    const method = byId.get(row.method);
+    const method = methodsById.get(row.method)?.method;
     if (!method || row.origin === 'error') continue;
     // Each target is `{id, kind}`: the declaration Spoon resolved, then its overrides.
     const targets = row.targets ?? [];
@@ -214,7 +214,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     const own = constants.get(`${owner}.${name}`);
     if (own != null) return own;
     const statics = (sources.get(file)?.imports ?? []).filter((i) => i.isStatic && !i.wildcard);
-    for (const i of statics) if (simpleOf(i.name) === name) return constants.get(i.name) ?? null;
+    for (const i of statics) if (simple(i.name) === name) return constants.get(i.name) ?? null;
     return null;
   };
   for (const file of sources.keys())
@@ -223,7 +223,10 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   const importsOf = new Map([...sources].map(([file, s]) => [file, { pkg: s.pkg ?? '', imports: s.imports ?? [] }]));
   // `dump` rides on the model so an extractor can ask the query layer about code without a second plumbing path: the
   // dump is the only reader of Java, and the model is built from it. Null when the caller had none (tests, fixtures).
-  return { types, byFile, importsOf, external, implsOf, degraded, resolveIn, constants, resolveConst, dump };
+  // `methodsById`: every method by id, with the type that declares it.
+  return {
+    types, byFile, importsOf, external, implsOf, degraded, resolveIn, constants, resolveConst, dump, methodsById,
+  };
 }
 
 /**
@@ -262,12 +265,12 @@ function resolver(sources, types, known = new Set()) {
   const cache = new Map();
   // Built once from every registered type: a simple name nested in two types is ambiguous and maps to null.
   const nested = new Map();
-  for (const [fqn, t] of types) if (t.enclosing) nested.set(simpleOf(fqn), nested.has(simpleOf(fqn)) ? null : fqn);
+  for (const [fqn, t] of types) if (t.enclosing) nested.set(simple(fqn), nested.has(simple(fqn)) ? null : fqn);
   const forFile = (file) => {
     if (cache.has(file)) return cache.get(file);
     const source = sources.get(file) ?? { pkg: '', imports: [] };
     const singles = new Map(
-      (source.imports ?? []).filter((i) => !i.wildcard && !i.isStatic).map((i) => [simpleOf(i.name), i.name]),
+      (source.imports ?? []).filter((i) => !i.wildcard && !i.isStatic).map((i) => [simple(i.name), i.name]),
     );
     const wildcards = (source.imports ?? []).filter((i) => i.wildcard && !i.isStatic).map((i) => i.name);
     const resolve = (name) => {
@@ -300,7 +303,7 @@ function resolver(sources, types, known = new Set()) {
   const mk = (rows, members, calls = []) => {
     const types = new Map(rows.map((r) => [r.fqn, r]));
     const byOwner = new Map();
-    for (const m of members) byOwner.set(m.owner, [...(byOwner.get(m.owner) ?? []), m]);
+    for (const m of members) push(byOwner, m.owner, m);
     return { types, membersOf: (fqn) => byOwner.get(fqn) ?? [], calls };
   };
   const dump = mk(

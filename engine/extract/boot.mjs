@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { configKeys } from './config.mjs';
+import { simple } from '../model/names.mjs';
 import { dumpFor } from '../run.mjs';
 
 // What makes a `main` an app's entry point: a Spring Boot annotation on its type, or a Spring Boot initialiser it
@@ -13,11 +14,10 @@ import { dumpFor } from '../run.mjs';
 const SPRING_APP = ['SpringBootApplication', 'SpringBootConfiguration', 'EnableAutoConfiguration'];
 const SPRING_BASE = ['SpringBootServletInitializer'];
 
-const simple = (name) => String(name ?? '').split('.').pop();
-const hasAnn = (row, name) => (row.ann ?? []).some((a) => simple(a.name) === name);
+const carriesSimpleAnn = (row, name) => (row.ann ?? []).some((a) => simple(a.name) === name);
 const baseOf = (s) => simple(s.fqn ?? String(s.text ?? '').replace(/<[\s\S]*/, ''));
 const bindsSpring = (t) =>
-  SPRING_APP.some((n) => hasAnn(t, n)) || (t.supertypes ?? []).some((s) => SPRING_BASE.includes(baseOf(s)));
+  SPRING_APP.some((n) => carriesSimpleAnn(t, n)) || (t.supertypes ?? []).some((s) => SPRING_BASE.includes(baseOf(s)));
 const linesOf = (file) =>
   (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []);
 

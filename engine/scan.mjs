@@ -13,6 +13,7 @@ import { buildModelFromDump } from './model/from-dump-model.mjs';
 import { dumpFor } from './run.mjs';
 import { resolve as resolveClasspath, tildify } from './classpath.mjs';
 import { open as openDump } from './dump.mjs';
+import { isSrcTestOrItPath, isSrcTestPath } from './model/names.mjs';
 import { annotationFqns, annotationIndex, loadCatalogs, meanOf, selectCatalogs, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
@@ -177,7 +178,7 @@ export const isE2ePath = (p) => {
 };
 
 // --- helpers ------------------------------------------------------------------
-export const norm = (p) =>
+export const normPath = (p) =>
   ('/' + p)
     .replace(/\/+/g, '/')
     .replace(/\$\{[^}]*\}|\{[^}]*\}|:\w+/g, '{}')
@@ -324,7 +325,7 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   }
 
   // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
-  const javaAll = files.filter((f) => f.endsWith('.java') && !/\/src\/test\//.test(f)).map((p) => ({ p: R(p) }));
+  const javaAll = files.filter((f) => f.endsWith('.java') && !isSrcTestPath(f)).map((p) => ({ p: R(p) }));
   // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
   const app = deployables({ java: javaAll, files, rel: R, read });
   const java = javaAll.filter((j) => !app.isExcluded(j.p));
@@ -369,9 +370,10 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   bindingRates(model);
 
   // This deployable's types: the app excludes other modules, and a test fixture is not part of its schema.
-  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !/\/src\/test\//.test(t.file));
-  const hasAnn = (t, simple) =>
-    (t.ann ?? []).some((a) => a.name === simple || String(a.fqn ?? '').endsWith(`.${simple}`));
+  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !isSrcTestPath(t.file));
+  // By the annotation as written, or by the FQN it resolved to.
+  const carriesAnn = (t, name) =>
+    (t.ann ?? []).some((a) => a.name === name || String(a.fqn ?? '').endsWith(`.${name}`));
   // A model type in the shape the later passes already read: identity (name, kind, annotations, supertypes, enum
   // values) and members are the model's.
   const asEntry = (t) => {
@@ -424,13 +426,13 @@ function scheduledOf(t) {
 
 const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
 
-  const entities = appTypes.filter((t) => hasAnn(t, 'Entity')).map(asEntry);
+  const entities = appTypes.filter((t) => carriesAnn(t, 'Entity')).map(asEntry);
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
   const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
   // The view names a controller returns: the string values its methods hand back, as the dump wrote them.
   // shortcut: switch arms that return a view are not read yet, a view named only there counts as dead; upgrade when one shows up.
   const viewsReturnedBy = (t) =>
-    (t.methods ?? []).filter((m) => !hasAnn(m, 'ResponseBody')).flatMap((m) =>
+    (t.methods ?? []).filter((m) => !carriesAnn(m, 'ResponseBody')).flatMap((m) =>
       (dump?.returnsOf(m.id) ?? [])
         .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string')
         .map((r) => ({ view: r.value.value, line: r.line })),
@@ -438,13 +440,13 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   const controllers = appTypes
     .filter(
       (t) =>
-        hasAnn(t, 'RestController') ||
-        hasAnn(t, 'Controller') ||
-        hasAnn(t, 'Path') ||
-        (hasAnn(t, 'Named') && UI_SCOPES.some((s) => hasAnn(t, s))),
+        carriesAnn(t, 'RestController') ||
+        carriesAnn(t, 'Controller') ||
+        carriesAnn(t, 'Path') ||
+        (carriesAnn(t, 'Named') && UI_SCOPES.some((s) => carriesAnn(t, s))),
     )
     // A REST or JAX-RS method's string is a response body, not a view name.
-    .map((t) => ({ ...asEntry(t), views: hasAnn(t, 'RestController') || hasAnn(t, 'Path') ? [] : viewsReturnedBy(t) }));
+    .map((t) => ({ ...asEntry(t), views: carriesAnn(t, 'RestController') || carriesAnn(t, 'Path') ? [] : viewsReturnedBy(t) }));
   const repos = appTypes
     .filter((t) => (t.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')))
     .map(asEntry);
@@ -501,7 +503,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   const recurring = extractSchedules(model, selected);
   // Configured values by property key (application*.yml/.properties): topic and queue names come from here.
   const channelConfig = new Map();
-  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !/\/src\/test\//.test(x))) {
+  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !isSrcTestPath(x))) {
     const text = read(f);
     if (/\.properties$/.test(f)) {
       for (const m of text.matchAll(/^([\w.-]+)\s*[=:]\s*(.+)$/gm)) channelConfig.set(m[1].trim(), m[2].trim());
@@ -530,22 +532,22 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   const ruleSeen = new Set();
   const securityRules = [
     ...springChains(model),
-    ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !/\/src\/test\//.test(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
+    ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !isSrcTestPath(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
     ...files
-      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !/\/src\/test\//.test(f))
+      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !isSrcTestPath(f))
       .flatMap((f) => shiroRules(read(f), R(f))),
     ...shiroCodeRules(model),
     ...files
-      .filter((f) => /web\.xml$/.test(f) && !/\/src\/test\//.test(f))
+      .filter((f) => /web\.xml$/.test(f) && !isSrcTestPath(f))
       .flatMap((f) => webXmlRules(read(f), R(f))),
   ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
   // Two warning kinds in one family: an anonymous prefix that exposes writes, and an identity the client asserts
   // (a filter takes a header/cookie value as the caller with no verification call between).
   const securityWarnings = [
     ...anonymousWrites(securityRules, endpoints, methodSecurityIndex),
-    ...identityWarnings(model, (p) => /\/src\/(test|it)\//.test(p)),
+    ...identityWarnings(model, isSrcTestOrItPath),
   ];
-  const tenantFacts = tenantSources(model, (p) => /\/src\/(test|it)\//.test(p));
+  const tenantFacts = tenantSources(model, isSrcTestOrItPath);
   // Entities and tenancy on the model: fields (inherited too), relations and their owning side,
   // repository → entity from resolved type arguments; the tenant key decided by counts.
   // Flow entries are needed both by tenancy (worker callers) and by the flows themselves: compute once.
@@ -616,7 +618,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         const holder = [...model.types.values()].find((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn);
         addUser(t.authType, `${holder.file}:${holder.nameLine}`, `${holder.name} is a Sureness ${t.authType} processor`);
       }
-  for (const a of authSources(model, (p) => /\/src\/(test|it)\//.test(p)))
+  for (const a of authSources(model, isSrcTestOrItPath))
     if (!userSources.some((u) => u.kind === a.kind)) userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
   const baseControllers = new Set([...model.implsOf.keys()].filter((fqn) => model.types.get(fqn)?.methods?.length && /Controller$/.test(model.types.get(fqn)?.name ?? '')));
   const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources, baseControllers });
@@ -642,7 +644,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         .slice(Math.max(0, i - 3), i + 4)
         .join(' ');
       const vm = /method:\s*["'](GET|POST|PUT|DELETE|PATCH)["']/i.exec(around);
-      return [{ path: norm(m[1]), verb: vm?.[1]?.toUpperCase(), file: f.p, line: i + 1 }];
+      return [{ path: normPath(m[1]), verb: vm?.[1]?.toUpperCase(), file: f.p, line: i + 1 }];
     }),
   );
   const epByPath = new Map();
@@ -705,7 +707,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   const runners = appTypes
     .filter(
       (t) =>
-        (t.supers ?? []).some((s) => /(CommandLineRunner|ApplicationRunner)/.test(s.text ?? '')) || hasAnn(t, 'Startup'),
+        (t.supers ?? []).some((s) => /(CommandLineRunner|ApplicationRunner)/.test(s.text ?? '')) || carriesAnn(t, 'Startup'),
     )
     .map((t) => ({ file: t.file, line: t.start }));
   // Jakarta Batch: jobs are XML files under META-INF/batch-jobs; JobOperator.start("name") starts them.
@@ -835,14 +837,14 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   // A runnable entry point: a `main` method (the dump's `isMain`) whose class is a Spring Boot app or whose body runs
   // `SpringApplication`.
   const mains = [...model.types.values()]
-    .filter((t) => !/\/src\/test\//.test(t.file))
+    .filter((t) => !isSrcTestPath(t.file))
     .filter(
       (t) =>
         t.methods.some(
           (m) =>
             m.isMain &&
-            (hasAnn(t, 'SpringBootApplication') ||
-              hasAnn(t, 'SpringBootConfiguration') ||
+            (carriesAnn(t, 'SpringBootApplication') ||
+              carriesAnn(t, 'SpringBootConfiguration') ||
               (m.calls ?? []).some((c) => /(^|\.)SpringApplication(Builder)?$/.test(c.recvFqn ?? ''))),
         ),
     )

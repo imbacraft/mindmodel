@@ -18,6 +18,7 @@ import assert from 'node:assert';
 import { raw, table } from '../tools/library-table.mjs';
 import { targetIds } from './targets.mjs';
 import { typeArgsOf } from './type-args.mjs';
+import { simple } from './names.mjs';
 
 // ThreadLocal, its JDK subclass, and any project type extending either one.
 const HOLDER_BASES = ['java.lang.ThreadLocal', 'java.lang.InheritableThreadLocal'];
@@ -37,7 +38,6 @@ const COMPARISONS = new Set(['equals', 'equalsIgnoreCase', 'contentEquals', 'con
 // Framework calls that store a value, whose receiver may be untyped: a gap, never a `no`.
 const UNTYPED_STORES = new Set(['setAttribute', 'setAuthentication', 'setContext']);
 
-const simple = (name) => String(name ?? '').split('.').pop();
 const site = (row) => ({
   method: row.method ?? null, call: row.id ?? null, file: row.file ?? null, line: row.line ?? null, col: row.col ?? null,
 });
@@ -52,14 +52,9 @@ const holderOp = (name) => (/^set/.test(name ?? '') ? 'write' : /^(remove|clear)
 export function queries(db) {
   const noDump = (what) => ({ [what]: [], unresolved: [{ reason: 'no-dump', at: null }] });
 
-  // Call rows by id, so a primitive may be handed either the row or its id.
-  let byId = null;
+  // A primitive may be handed either the call row or its id.
   let readsCache = null;
-  const rowOf = (call) => {
-    if (typeof call !== 'string') return call ?? null;
-    byId ??= new Map(db.calls.map((c) => [c.id, c]));
-    return byId.get(call) ?? null;
-  };
+  const rowOf = (call) => (typeof call === 'string' ? db.callById(call) : (call ?? null));
 
   // The library table's type set: a receiver is a library type only if the generated table says so, never a regex.
   let library = null;
@@ -484,6 +479,7 @@ export function queries(db) {
     callersOf: (id) => calls.filter((c) => c.targets.includes(id)),
     methodRefsIn: () => [],
     argsOf: (id) => calls.find((c) => c.id === id)?.args ?? [],
+    callById: (id) => calls.find((c) => c.id === id) ?? null,
     fieldAccessOf: () => [],
     type: (fqn) => stub.types.get(fqn) ?? null,
   };

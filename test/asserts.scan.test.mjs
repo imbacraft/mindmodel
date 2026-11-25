@@ -1,7 +1,7 @@
 // Import-time self-checks moved out of engine/scan.mjs (Task 9); the assertions are unchanged.
 import test from 'node:test';
 import assert from 'node:assert';
-import { norm, routePath } from '../engine/scan.mjs';
+import { normPath, routePath } from '../engine/scan.mjs';
 
 test('routePath: React Router and Angular paths', () => {
   assert.equal(routePath('<Route path="/orders/:id" element={<Order/>} />'), '/orders/:id');
@@ -11,6 +11,6 @@ test('routePath: React Router and Angular paths', () => {
   assert.equal(routePath("  { path: 'users', component: X },"), null);
 });
 
-test('norm: placeholders replace ids and the query string goes', () => {
-  assert.strictEqual(norm('/api/orders/${o.id}/items?x=1'), '/api/orders/{}/items');
+test('normPath: placeholders replace ids and the query string goes', () => {
+  assert.strictEqual(normPath('/api/orders/${o.id}/items?x=1'), '/api/orders/{}/items');
 });

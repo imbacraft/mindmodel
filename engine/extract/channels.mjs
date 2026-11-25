@@ -36,9 +36,9 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
       // `${key:default}` in a topic annotation: the configured value, else the default, else the key.
       const spel = /^\$\{([^:}]+)(?::([^}]*))?\}$/.exec(lit[1].trim());
       if (spel) {
-        const norm = (x) => String(x).toLowerCase().replace(/[-_.]/g, '');
-        const want = norm(spel[1]);
-        for (const [k, v] of config) if (norm(k) === want || norm(k).endsWith(want)) return v;
+        const normChannelName = (x) => String(x).toLowerCase().replace(/[-_.]/g, '');
+        const want = normChannelName(spel[1]);
+        for (const [k, v] of config) if (normChannelName(k) === want || normChannelName(k).endsWith(want)) return v;
         return spel[2] || spel[1];
       }
       return lit[1];

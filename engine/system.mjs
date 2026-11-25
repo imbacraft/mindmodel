@@ -10,6 +10,7 @@ import { scan, summarize } from './scan.mjs';
 import { configKeys } from './extract/config.mjs';
 import { dumpFor } from './run.mjs';
 import { open as openDump } from './dump.mjs';
+import { simple } from './model/names.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
 
 // --- per-service extraction --------------------------------------------------------
@@ -22,7 +23,6 @@ export function resolve(value, keys) {
   return m[2] != null && m[2] !== '' ? { name: m[2], via: `${m[1]} default` } : { name: null, unresolved: m[1] };
 }
 
-const simple = (name) => String(name ?? '').split('.').pop();
 const relOf = (root, p) => path.relative(root, p).split(path.sep).join('/');
 const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
 const stringArg = (a) => (typeof a?.value === 'string' ? a.value : null);
@@ -489,12 +489,12 @@ export function systemScan(folder) {
             cite: `${path.relative(folder, f)}:${g.line}`,
           });
       // Plumbing the system relies on to run (config, discovery, admin): named, not a business service.
-      const hasAnn = (name) => module.types.some((t) => annOn(typeRow(module, t), name));
-      const role = hasAnn('EnableConfigServer')
+      const moduleCarriesAnn = (name) => module.types.some((t) => annOn(typeRow(module, t), name));
+      const role = moduleCarriesAnn('EnableConfigServer')
         ? 'config server'
-        : hasAnn('EnableEurekaServer')
+        : moduleCarriesAnn('EnableEurekaServer')
           ? 'discovery server'
-          : hasAnn('EnableAdminServer')
+          : moduleCarriesAnn('EnableAdminServer')
             ? 'admin server'
             : null;
       return {
@@ -520,7 +520,7 @@ export function systemScan(folder) {
   // Join: topics/queues to their producers and consumers; REST calls to the service they reach.
   // Match a call to a service by its name, its folder, the same name without dashes ("customercore"), or, for
   // local URLs like http://localhost:8110, by the port the service runs on.
-  const norm = (n) =>
+  const normService = (n) =>
     String(n)
       .toLowerCase()
       .replace(/[^a-z0-9]/g, '');
@@ -528,8 +528,8 @@ export function systemScan(folder) {
     services.flatMap((s) => [
       [s.name, s],
       [path.basename(s.dir), s],
-      [norm(s.name), s],
-      [norm(path.basename(s.dir)), s],
+      [normService(s.name), s],
+      [normService(path.basename(s.dir)), s],
       ...(s.port ? [[`localhost:${s.port}`, s]] : []),
     ]),
   );
@@ -545,7 +545,7 @@ export function systemScan(folder) {
   const rest = [];
   for (const s of services)
     for (const c of s.calls) {
-      const target = byName.get(c.host) ?? byName.get(norm(c.host));
+      const target = byName.get(c.host) ?? byName.get(normService(c.host));
       const ep =
         target && c.path && c.via !== 'gateway'
           ? target.facts.endpoints.find((e) => e.path === c.path.replace(/\{[^}]+}/g, '{}').replace(/\/$/, ''))

@@ -8,9 +8,9 @@ import assert from 'node:assert/strict';
 import { scheduleFacts } from './schedules.mjs';
 import { queries } from '../model/query.mjs';
 import { declaredId, targetIds } from '../model/targets.mjs';
+import { simple } from '../model/names.mjs';
 
-const simple = (name) => String(name ?? '').split('.').pop();
-const norm = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
+const normFqn = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
 const STATUS_NAME = /(?:Status|State)$/;
 const STATUS_FIELD = /^(?:status|state)$/i;
 const NO_SETTER = 'no setter found by the engine (check the code before saying it is never set)';
@@ -39,7 +39,7 @@ function expressionValues(value, enumFqn, at) {
   if (!value) return noHop('no-value', at);
   if (value.kind === 'unresolved') return noHop(value.reason ?? 'unresolved', at);
   if (value.kind === 'constant')
-    return norm(value.type) === enumFqn
+    return normFqn(value.type) === enumFqn
       ? { values: [{ value: constantName(value), cite: at?.method ?? null, how: 'direct' }], unresolved: [] }
       : noHop('other-type', at);
   if (value.kind === 'conditional') {
@@ -155,7 +155,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
     const found = [...dump.types.values()].find(
       (t) => t.kind === 'enum' && simple(t.fqn) === en.name && t.pos?.file === en.file,
     );
-    if (found && STATUS_NAME.test(simple(found.fqn))) appEnums.set(norm(found.fqn), en);
+    if (found && STATUS_NAME.test(simple(found.fqn))) appEnums.set(normFqn(found.fqn), en);
   }
   const valuesOf = (fqn) => (appEnums.get(fqn)?.values?.length ? appEnums.get(fqn).values : dump.membersOf(fqn).filter((m) => m.kind === 'enumConstant').map((m) => m.name));
 
@@ -163,7 +163,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
   const pairs = [];
   for (const e of entities)
     for (const field of e.fields ?? []) {
-      const enumFqn = norm(field.typeFqn);
+      const enumFqn = normFqn(field.typeFqn);
       if (!appEnums.has(enumFqn)) continue;
       pairs.push({ entity: e.name, entityFqn: e.type?.fqn ?? e.fqn, field: field.name, enumFqn, values: valuesOf(enumFqn) });
     }
@@ -229,12 +229,12 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
     if (call.via === 'methodRef' || call.origin === 'error' || !inApp(call.file)) continue;
     const args = dump.argsOf(call.id);
     args.forEach((arg, index) => {
-      const type = norm(arg?.type);
+      const type = normFqn(arg?.type);
       if (!STATUS_NAME.test(simple(type))) return;
       // The type whose instance receives the call: the receiver the dump typed, or the entity a Lombok builder setter
       // belongs to. Both are facts of the call row, not a reading of the argument's text.
       const receivers = new Set(
-        [norm(q.receiverEntity(call).type), ...targetIds(call).map(builtEntity)].filter(Boolean),
+        [normFqn(q.receiverEntity(call).type), ...targetIds(call).map(builtEntity)].filter(Boolean),
       );
       const owners = pairs.filter(
         (p) =>
@@ -272,7 +272,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
       if (!constants.length) continue;
       const entity = repoEntity.get(simple(member.owner));
       for (const pair of pairs) {
-        if (entity !== pair.entity || norm(constants[constants.length - 1].type) !== pair.enumFqn) continue;
+        if (entity !== pair.entity || normFqn(constants[constants.length - 1].type) !== pair.enumFqn) continue;
         const from = constants.slice(0, -1).map(constantName).join('/') || '?';
         const value = constantName(constants[constants.length - 1]);
         const slot = pair.setting.get(value) ?? { set: [], conditional: [] };
@@ -412,8 +412,8 @@ function outsideStatuses({ dump, declared, entities, cite, unresolved, inApp }) 
   const declaredNames = new Set([...dump.types.keys()].map(simple));
   const outside = (type) =>
     STATUS_NAME.test(simple(type)) &&
-    !declared.has(norm(type)) &&
-    !dump.types.has(norm(type)) &&
+    !declared.has(normFqn(type)) &&
+    !dump.types.has(normFqn(type)) &&
     !declaredNames.has(simple(type));
   // The entity whose status field holds each outside enum, when exactly one does: a value set there is that entity's
   // transition, which is what the flow rank reads. Two entities sharing an enum leave it unattributed, not guessed.

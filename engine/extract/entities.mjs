@@ -1,6 +1,7 @@
 // Entities as the model sees them: the annotations say which type is an entity, the model says which
 // fields it has (inherited ones included) and what each field's type resolves to. No line windows, no per-file search.
 import { meanOf } from '../catalogs/catalog.mjs';
+import { isTestPath } from '../model/names.mjs';
 
 const RELATIONS = new Set(['relation']);
 const IGNORED_FIELDS = new Set(['serialVersionUID']);
@@ -56,9 +57,6 @@ function fieldsOf(t, index, model, seen = new Set()) {
     .map((f) => ({ ...fieldInfo(index, f, t.file, model), owner: t.name }));
   return [...inherited, ...own];
 }
-
-export const isTestPath = (p) => /\/src\/(test|it|integrationTest)\//.test(p ?? '');
-
 export function entityFacts(model, index, types = new Map()) {
   const isRepoType = (fqn) => fqn && (types.get(fqn)?.entry?.means ?? null) === 'repository';
   // A test fixture annotated @Entity is not part of the app's schema.

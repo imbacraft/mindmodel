@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { accessFor } from './security.mjs';
 import { superBindings } from '../model/type-args.mjs';
+import { simple } from '../model/names.mjs';
 
 // Flow skeletons: a path from an entry point to at least one effect. An effect is a state write (a
 // repository or EntityManager call, from the state family), an outside call (HTTP, mail, messaging, from the outside
@@ -76,7 +77,6 @@ export const FLOW_WEIGHTS = {
   activity: 1, // a file on the path changed in the git window; small, never decisive
 };
 
-const simple = (s) => String(s ?? '').split('.').pop();
 
 // Queue polls and executor hand-offs, from catalog data or the receiver's type name (a project's own `…Queue`,
 // `…WorkerPool`). One classifier so the entry detector and the walk agree on what is a boundary.

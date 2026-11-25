@@ -43,8 +43,7 @@ function reachable(byId, start, depth = 2, deferred = new Set()) {
 
 export function extractTransactions(model, selected, { outside = [], writes = [] } = {}) {
   const index = annotationIndex(selected);
-  const byId = new Map();
-  for (const t of model.types.values()) for (const m of t.methods) if (m.id) byId.set(m.id, { type: t, method: m });
+  const byId = model.methodsById;
   // A method that registers after-commit work (a catalog `means: after-commit` call) defers whatever it hands over.
   const afterCommitCalls = [];
   for (const { catalog } of selected)
@@ -295,6 +294,9 @@ const lineOf = (f) => Number(/:(\d+)/.exec((f.evidence ?? [])[0] ?? '')?.[1] ?? 
       },
     },
   ];
+  model.methodsById = new Map(
+    [...model.types.values()].flatMap((t) => t.methods.filter((m) => m.id).map((m) => [m.id, { type: t, method: m }])),
+  );
   const outside = [
     { id: 'o1', family: 'outside-call', kind: 'HTTP', client: 'RestTemplate', target: 'RestTemplate.exchange', method: 'a.Svc#pay()', evidence: ['a/Svc.java#pay'], confidence: 'resolved' },
     { id: 'o2', family: 'outside-call', kind: 'Kafka', client: 'KafkaTemplate', target: 'KafkaTemplate.send', method: 'a.Svc#store(Order)', evidence: ['a/Svc.java:24#store'], confidence: 'resolved' },
