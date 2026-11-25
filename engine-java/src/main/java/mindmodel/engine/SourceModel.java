@@ -60,6 +60,17 @@ public final class SourceModel {
     }
 
     public static SourceModel build(Path root, List<String> relFiles, int compliance) {
+        return build(root, relFiles, compliance, List.of(), List.of());
+    }
+
+    /**
+     * The model with the project's own dependencies on the classpath. `noClasspath` stays true: a jar that is missing or
+     * unreadable degrades to the name-only answer this engine has always given, never to a failed dump. Extra source
+     * directories (annotation-processor output) are read as input, after the project's own files, so a duplicate
+     * declaration keeps the project's.
+     */
+    public static SourceModel build(Path root, List<String> relFiles, int compliance,
+            List<String> classpath, List<String> extraSourceDirs) {
         Path realRoot = realPath(root);
         Launcher launcher = new Launcher();
         Environment env = launcher.getEnvironment();
@@ -71,9 +82,26 @@ public final class SourceModel {
         env.setAutoImports(false);
         env.setCopyResources(false);
         env.setLevel("OFF");
+        if (!classpath.isEmpty()) env.setSourceClasspath(classpath.toArray(new String[0]));
         for (String rel : relFiles) launcher.addInputResource(realRoot.resolve(rel).toString());
+        for (String dir : extraSourceDirs) {
+            Path p = realRoot.resolve(dir);
+            if (Files.isDirectory(p)) launcher.addInputResource(p.toString());
+        }
         launcher.buildModel();
         return new SourceModel(realRoot, List.copyOf(relFiles), launcher);
+    }
+
+    /** Every source path Spoon read, project files and generated directories alike. */
+    public List<String> inputFiles() {
+        List<String> out = new ArrayList<>();
+        for (var unit : launcher.getFactory().CompilationUnit().getMap().keySet()) {
+            Path p = realPath(Path.of(unit));
+            if (!p.startsWith(root)) continue;
+            out.add(root.relativize(p).toString().replace('\\', '/'));
+        }
+        java.util.Collections.sort(out);
+        return out;
     }
 
     public Path root() {

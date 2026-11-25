@@ -6,10 +6,11 @@ import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CAPS, budgetFor, budgetWarnings, citeTarget, sectionWords, wordCount } from '../engine/validate.mjs';
 import { budgetLine } from '../engine/scan.mjs';
 
-const REPO = path.resolve(import.meta.dirname, '..');
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const schema = JSON.parse(fs.readFileSync(path.join(REPO, 'schema', 'mindmodel.schema.json'), 'utf8'));
 const validateSource = fs.readFileSync(path.join(REPO, 'engine', 'validate.mjs'), 'utf8');
 const rules = fs.readFileSync(path.join(REPO, 'rules', 'core.md'), 'utf8');
@@ -121,7 +122,7 @@ test('the always-read core keeps its own budget: ≤ 180 lines and ≤ 5,000 tok
 });
 
 test('the digest prints the tier, the core ceiling and both flat caps', () => {
-  const line = budgetLine(296); // dragonsoftworks
+  const line = budgetLine(296); // a 296-word core, from a large scanned app
   assert.match(line, /budget: tier 3 — core ≤ 3,600 words, regions ≤ 1,000, state ≤ 400/);
   assert.match(line, /sections purpose 144 · .* state 400 /);
   assert.match(budgetLine(12), /tier 1 — core ≤ 2,200 words/);
@@ -174,6 +175,6 @@ test('citeTarget counts blocks, not sentences: 2 per rule, 4 per region, 2 per c
     state: { owners: new Array(6).fill({}) },
   };
   assert.equal(citeTarget(map), 2 * 5 + 4 * 7 + 2 * 6 + 37 + 10 + 6 + 6);
-  // 338 cites on the old dragonsoftworks map was line-by-line: this shape needs ~109, so the warning fires.
+  // 338 cites on a large app's map was line-by-line: this shape needs ~109, so the warning fires.
   assert.ok(338 > Math.round(citeTarget(map) * 1.4));
 });

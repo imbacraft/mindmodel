@@ -13,6 +13,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirOf, loadApps } from './apps.mjs';
 
+// Both engines are read the same way, without a classpath: `compare` asks what the code says about the engine, and a
+// machine with a full ~/.m2 must not answer differently from one without.
+process.env.MINDMODEL_CLASSPATH = 'off';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
 // `node --test` discovers every .mjs under test/; this is a tool, not a test, and it scans the whole corpus twice.

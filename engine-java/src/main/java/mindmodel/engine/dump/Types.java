@@ -45,7 +45,11 @@ public final class Types {
         for (CtTypeReference<?> i : t.getSuperInterfaces()) supertype(g, "interface", i);
         g.writeEndArray();
         Anns.write(g, t.getAnnotations());
-        Ndjson.pos(g, Positions.of(t, root));
+        Positions.Pos pos = Positions.of(t, root);
+        // An annotation processor's output, read for its types only: stale the moment the sources change, and never
+        // something a map may cite (validate.mjs refuses any citation into target/ or build/).
+        if (pos != null && Generated.is(pos.file())) g.writeStringField("generated", "stale-possible");
+        Ndjson.pos(g, pos);
     }
 
     private static void supertype(JsonGenerator g, String kind, CtTypeReference<?> ref) throws IOException {

@@ -10,6 +10,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// The same rule as the snapshots: a truth file pins what the engine says, and a populated ~/.m2 would change receiver
+// typing on this machine alone. The classpath has its own tests.
+process.env.MINDMODEL_CLASSPATH = 'off';
 import { scan } from '../engine/scan.mjs';
 import { dirOf, loadApps } from './apps.mjs';
 

@@ -308,3 +308,15 @@ test('dump: the fixture contract', { skip }, () => {
     assert.equal(fs.readFileSync(path.join(d.out, name), 'utf8'), fs.readFileSync(path.join(again.out, name), 'utf8'), name);
   }
 });
+
+test('dump: a try block and its finalizer are ranges, kept apart from the decision arms', { skip }, () => {
+  const d = dumpInto(tmp());
+  const method = d.members.find((m) => m.id === 'contract.ScopedFilter#doFilterInternal(boolean)');
+  // The block's own lines, and the finalizer's: two ranges, so an extractor never re-reads a body to find them.
+  assert.deepStrictEqual(method.tryBlocks.map((b) => [b.start, b.end, b.finallyStart, b.finallyEnd]), [[10, 12, 12, 14]]);
+  // A try body always runs: its lines are never a decision arm, or every effect written in one would turn conditional.
+  assert.deepStrictEqual(method.branches, [{ start: 11, end: 11, kind: 'if' }]);
+  // A method without a try still writes the field, so a reader needs no optional check.
+  const plain = d.members.find((m) => m.id === 'contract.RequestHolder#set(String)');
+  assert.deepStrictEqual(plain.tryBlocks, []);
+});

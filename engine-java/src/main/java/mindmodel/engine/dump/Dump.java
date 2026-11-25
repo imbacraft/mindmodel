@@ -17,12 +17,12 @@ import spoon.reflect.declaration.CtType;
 import mindmodel.engine.SourceModel;
 
 /**
- * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 3.
+ * {@code dump <root> <file-list> <out-dir>}: one typed model of the checkout as streamed sections. Contract 5.
  * Deterministic by construction: rows are ordered by file, then source position, then name.
  */
 public final class Dump {
 
-    public static final int CONTRACT = 3;
+    public static final int CONTRACT = 5;
     public static final String ENGINE = "spoon-11.5.0";
 
     private Dump() {
@@ -38,11 +38,24 @@ public final class Dump {
             .thenComparingInt(r -> r.pos == null ? 0 : r.pos.col())
             .thenComparing(r -> Names.qualified(r.type));
 
-    public static void run(Path root, Path listPath, Path outDir, int compliance) throws IOException {
+    public static void run(Path root, Path listPath, Path outDir, int compliance, List<String> classpath,
+            List<String> generatedDirs) throws IOException {
         java.nio.file.Files.createDirectories(outDir);
         List<String> inputs = SourceModel.relativeFiles(root,
                 java.nio.file.Files.readAllLines(listPath, StandardCharsets.UTF_8));
-        SourceModel model = SourceModel.build(root, inputs, compliance);
+        SourceModel model;
+        String dropped = null;
+        try {
+            model = SourceModel.build(root, inputs, compliance, classpath, generatedDirs);
+        } catch (Throwable failure) {
+            // A classpath is an improvement, never a condition: a jar the reader cannot take (a class file from a newer
+            // Java, a corrupt entry) is dropped and the dump is rebuilt without it, exactly as it ran before.
+            if (classpath.isEmpty()) throw failure;
+            dropped = failure.getClass().getSimpleName()
+                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
+            if (dropped.length() > 200) dropped = dropped.substring(0, 200);
+            model = SourceModel.build(root, inputs, compliance, List.of(), generatedDirs);
+        }
         List<Row> rows = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (CtType<?> t : model.allTypes()) collect(t, rows, seen, root);
@@ -60,9 +73,12 @@ public final class Dump {
         Sites.Written written = Sites.write(types, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
         Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns());
         FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
+        // The library types the classpath let Spoon read: shallow rows, no positions, never cited (LibraryStubs).
+        int libraries = mindmodel.engine.dump.LibraryStubs.write(types, outDir.resolve("library.ndjson"));
         int failed = Files.write(inputs, types, model.packages(), problems(model, root, unread), root,
                 outDir.resolve("files.ndjson"));
-        meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"));
+        meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"), classpath, generatedDirs, libraries,
+                dropped);
     }
 
     /**
@@ -117,7 +133,8 @@ public final class Dump {
     }
 
     private static void meta(Path root, List<String> inputs, List<CtType<?>> types, int failed, int compliance,
-            Path out) throws IOException {
+            Path out, List<String> classpath, List<String> generatedDirs, int libraries, String dropped)
+            throws IOException {
         int fields = 0;
         int methods = 0;
         for (CtType<?> t : types) {
@@ -131,7 +148,14 @@ public final class Dump {
             g.writeStringField("engine", ENGINE);
             g.writeNumberField("compliance", compliance);
             g.writeStringField("root", root.getFileName() == null ? "" : root.getFileName().toString());
-            g.writeStringField("generatedAt", java.time.Instant.now().toString());
+            // No timestamp: a dump of the same inputs is byte-identical, directory and all.
+            g.writeObjectFieldStart("classpath");
+            g.writeNumberField("entries", classpath.size());
+            g.writeStringField("sha256", jarDigest(classpath));
+            g.writeNumberField("generatedDirs", generatedDirs.size());
+            g.writeNumberField("libraryTypes", libraries);
+            if (dropped != null) g.writeStringField("dropped", dropped);
+            g.writeEndObject();
             g.writeObjectFieldStart("counts");
             g.writeNumberField("files", inputs.size());
             g.writeNumberField("types", types.size());
@@ -140,6 +164,26 @@ public final class Dump {
             g.writeNumberField("failedFiles", failed);
             g.writeEndObject();
             g.writeEndObject();
+        }
+    }
+
+    /**
+     * A digest of the classpath as given: each entry's path and size, in order, so a run says which jars it read and a
+     * changed jar set changes the digest. Paths only — the jars themselves are never read twice.
+     */
+    private static String jarDigest(List<String> classpath) throws IOException {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            for (String entry : classpath) {
+                java.nio.file.Path p = java.nio.file.Path.of(entry);
+                long size = java.nio.file.Files.isRegularFile(p) ? java.nio.file.Files.size(p) : 0;
+                md.update((entry + ":" + size + "\n").getBytes(StandardCharsets.UTF_8));
+            }
+            StringBuilder hex = new StringBuilder();
+            for (byte b : md.digest()) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return "";
         }
     }
 }

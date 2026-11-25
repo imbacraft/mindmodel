@@ -20,7 +20,7 @@
 
 **P4. The code wins, silently.** Read the docs (README, CLAUDE.md, AGENTS.md, `docs/`, ADRs) for purpose, vocabulary and intent, then check the code. Where they disagree, write what the code does and say nothing about the doc. *Docs* means prose; configuration files are code, and a setting the code ignores can be a rule (3.8).
 
-**P4a. The coverage line is a boundary, not a footnote.** `facts.md` opens with what the engine resolved and what it did not; every fact carries a confidence. `parsed` and `resolved` facts are settled: cite them without re-reading the code. `inferred` ones: check the code first. "What the engine did not understand" (unknown annotations, unexplained base classes, uncatalogued dependencies, unreadable or degraded files) and the unresolved endpoints are where the facts are blind: read the code there, or leave it out.
+**P4a. The coverage line is a boundary, not a footnote.** `facts.md` opens with what the engine resolved and what it did not; every fact carries a confidence. `parsed` and `resolved` facts are settled: cite them without re-reading the code. `inferred` ones: check the code first. "What the engine did not understand" (unknown annotations, unexplained base classes, uncatalogued dependencies, unreadable or degraded files, and the classpath line: with `mode: none` every type in a dependency is a name without members) and the unresolved endpoints are where the facts are blind: read the code there, or leave it out.
 
 **P5. Plain names first, code names second.** Use the users' words ("School"), then the code name (`OrgUnit`), and use that name everywhere. A region never takes a concept's name unless it is about that concept.
 

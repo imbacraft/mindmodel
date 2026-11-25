@@ -62,6 +62,9 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   const resolveIn = resolver(sources, types, known);
 
   for (const row of dump.types.values()) {
+    // A type read from an annotation processor's output is not the project's code: Spoon resolved it so that a field
+    // or a return type reads correctly, and no fact or citation may come from it (the dump marks it `generated`).
+    if (row.generated) continue;
     const file = row.pos?.file ?? '';
     types.set(row.fqn, {
       kind: row.kind,
@@ -154,6 +157,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
         loops: member.loops ?? [],
         // The dump's decision arms: the flow marks an effect reached only through one as conditional.
         branches: member.branches ?? [],
+        // The dump's `try` ranges: a store whose lifetime is one request is read off the try/finally shape.
+        tryBlocks: member.tryBlocks ?? [],
         synthetic: member.generated,
         calls: [],
       });

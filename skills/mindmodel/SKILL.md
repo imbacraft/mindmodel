@@ -37,10 +37,22 @@ The plugin root is `${CLAUDE_PLUGIN_ROOT}`.
    > Plugin root: `${CLAUDE_PLUGIN_ROOT}`
    > Rules: `${CLAUDE_PLUGIN_ROOT}/rules/core.md` (read it all) · section rules: `${CLAUDE_PLUGIN_ROOT}/rules/sections.md` (open one section at a time) · JSON shape: `node ${CLAUDE_PLUGIN_ROOT}/engine/shape.mjs`
    > Facts digest: `<root>/mindmodel/.work/facts.md` (details in `facts.json`)
+   > Code excerpts: `<root>/mindmodel/.work/excerpts.md` (read once, right after the digest; every heading is a citation)
    > Validator: `${CLAUDE_PLUGIN_ROOT}/engine/validate.mjs`
    > Write `<root>/mindmodel/mindmodel.json` and make it pass the validator.
 
    Wait for it to finish. Don't do the analysis yourself, and don't read the project's code in this session; the subagent keeps that work out of the user's context. Its reply ends with two fenced blocks, `findings` and `observations`; step 5 saves them.
+
+   **Record the run.** Append one entry to `<root>/mindmodel/.work/run-stats.json` (create it if absent; keep the last
+   ten entries, oldest dropped). The subagent's completion notification carries `subagent_tokens`, `tool_uses` and
+   `duration_ms`; the rest comes from its reply and the plugin:
+   ```json
+   [{ "at": "2026-11-25", "version": "0.6.2", "tokens": 201000, "toolUses": 36, "durationMs": 900000, "validatorWarnings": 3, "spotcheck": "9/10" }]
+   ```
+   `version` is `version` in `<plugin>/.claude-plugin/plugin.json`, `validatorWarnings` the warning count on the
+   validator's last line (0 if it printed none), `spotcheck` the `n/10` from the writer's spot-check line. `tokens`
+   excludes cache reads, so `toolUses` is the cost proxy: cost grows with turns × context. Every writer, rules or
+   engine change is judged by this file, so keep the numbers exact and the file small.
 
 5. **Save the findings.** Do this before rendering: the writer subagent is not reliably allowed to write this file (a harness refused it once), so the blocks in its reply are the source of truth. Write `<root>/mindmodel/.work/findings.md` in exactly this shape:
    ````text

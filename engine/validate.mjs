@@ -162,6 +162,48 @@ export function citeTarget(map) {
   );
 }
 
+/** Every citation in one section, counted the way the collector at the end of `validate` counts them. */
+function sectionCiteCount(o) {
+  let n = 0;
+  const walk = (v) => {
+    if (Array.isArray(v)) return v.forEach(walk);
+    if (!v || typeof v !== 'object') return;
+    for (const [k, x] of Object.entries(v)) {
+      if ((k === 'cites' || k === 'start') && Array.isArray(x)) n += x.length;
+      else if (k === 'cite' && typeof x === 'string') n += 1;
+      else walk(x);
+    }
+  };
+  walk(o);
+  return n;
+}
+
+/** Citations per section, next to the words: the citation count is the other thing that grows a run's cost (P3a). */
+export function sectionCites(map) {
+  const out = {};
+  for (const [name, keys] of Object.entries(SECTION_KEYS))
+    out[name] = sectionCiteCount(Object.fromEntries(keys.filter((k) => map[k] !== undefined).map((k) => [k, map[k]])));
+  return out;
+}
+
+/** The citations each section needs when it is block-cited: the same factors as `citeTarget`, section by section. */
+export function sectionCiteTargets(map) {
+  return {
+    intros: 0,
+    purpose: 3, // the sentence, the audience, the scaling claim
+    context: 3,
+    concepts: 1 + 2 * (map.concepts?.length ?? 0),
+    regions: 1 + 4 * (map.regions?.length ?? 0),
+    state: 1 + (map.state?.owners?.length ?? 0),
+    runtime: 1 + (map.runtime?.steps?.length ?? 0),
+    background: 1 + (map.background?.items?.length ?? 0),
+    rules: 2 * (map.rules?.length ?? 0),
+    security:
+      2 + 2 * (map.security?.prefixes?.length ?? 0) + (map.security?.userSources?.length ?? 0) * 2 +
+      (map.security?.tenant ? 2 : 0),
+  };
+}
+
 // A share is the room a section has, not a target to fill. Writing to the ceiling and stopping early is the mirror of
 // writing over it: the section stops answering its question. `intros` is exempt (version and project strings).
 export const UNDER_SHARE = 0.6;
@@ -625,6 +667,12 @@ export function validate(map, root, declared = declaredFromDump(root)) {
       err(`${where}: malformed citation "${c}"`);
       continue;
     }
+    // Build output is never a citation's target: it is rewritten by every build, and a citation into it would point at
+    // code the project does not own (the scan reads generated sources for their types only).
+    if (/(^|\/)(target|build)\//.test(pc.file)) {
+      err(`${where}: "${c}" cites build output; cite the source behind it`);
+      continue;
+    }
     const abs = path.join(root, pc.file);
     if (!fs.existsSync(abs)) {
       err(`${where}: path not found "${pc.file}"`);
@@ -670,6 +718,12 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   const citeNeeded = citeTarget(map);
   if (cites.length > Math.round(citeNeeded * 1.4))
     warn(`citations: ${cites.length} > 1.4x the ~${citeNeeded} a block-cited map needs (P3: one or two per block)`);
+  // The same test per section: one over-cited section is one edit, and the total warning alone does not say which.
+  const citeCounts = sectionCites(map);
+  const citeBudgets = sectionCiteTargets(map);
+  for (const [name, n] of Object.entries(citeCounts))
+    if (citeBudgets[name] && n > Math.round(citeBudgets[name] * 1.4))
+      warn(`${name}: ${n} citations > 1.4x the ~${citeBudgets[name]} its blocks need (P3a: cite the block, not the sentence)`);
 
   // P6 wording and secrets, then the owner-only findings the map may not carry.
   const p6 = p6Issues(map);
@@ -692,6 +746,8 @@ export function validate(map, root, declared = declaredFromDump(root)) {
       budget: budget.core,
       sections: counts,
       targets: budget.sections,
+      citeCounts,
+      citeBudgets,
       storyWords: wordCount(map.stories),
     },
   };
@@ -714,10 +770,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`${errors.length ? 'FAILED' : 'OK'}: ${errors.length} error(s), ${warnings.length} warning(s)`);
   // The tier, the total and every section against its share, so the next edit is one section, not the whole map.
   if (stats) {
-    const parts = Object.entries(stats.sections).map(
-      ([k, n]) =>
-        `${k} ${n}/${stats.targets[k]}${n > stats.targets[k] ? '!' : n < stats.targets[k] * UNDER_SHARE && k !== 'intros' ? '_' : ''}`,
-    );
+    // Words and citations per section, so the next edit is one field of one section rather than the whole map.
+    const parts = Object.entries(stats.sections).map(([k, n]) => {
+      const over = n > stats.targets[k];
+      const thin = n < stats.targets[k] * UNDER_SHARE && k !== 'intros';
+      const budget = stats.citeBudgets[k];
+      const cites = budget ? ` cites ${stats.citeCounts[k]}/${budget}${stats.citeCounts[k] > budget * 1.4 ? '!' : ''}` : '';
+      return `${k} ${n}/${stats.targets[k]}${over ? '!' : thin ? '_' : ''}${cites}`;
+    });
     console.log(
       `budget: tier ${stats.tier} — core ${stats.coreWords}/${stats.budget} words · citations ${stats.citations}` +
         ` (target ~${stats.citeTarget}) · stories ${stats.storyWords} words`,

@@ -65,16 +65,32 @@ export function queries(db) {
   let library = null;
   const libraryTypes = () => (library ??= table().types);
 
-  /** The ThreadLocal base a field type reaches through project supertypes, or null. */
+  /** The ThreadLocal base a field type reaches through supertypes — the project's, or a library stub's — or null. */
   const holderBase = (fqn, seen = new Set()) => {
     if (!fqn || seen.has(fqn)) return null;
     if (HOLDER_BASES.includes(fqn)) return fqn;
     seen.add(fqn);
-    for (const s of db.type(fqn)?.supertypes ?? []) {
+    const supers = db.type(fqn)?.supertypes ?? (db.library?.get(fqn)?.supers ?? []).map((f) => ({ fqn: f }));
+    for (const s of supers) {
       const hit = holderBase(s.fqn, seen);
       if (hit) return hit;
     }
     return null;
+  };
+
+  /**
+   * The type a call is made on when its receiver is a type rather than an object, as the dump spells it. A resolved
+   * static call says `kind: 'static'`; a call on a type Spoon could not resolve — a library class with no classpath —
+   * arrives as `how: 'local'` with the type's written name in `text`, so its upper-case last segment is the only
+   * evidence there is: [heuristic], which is why a store it produces is `inferred` unless the classpath named the type.
+   */
+  const calledOnType = (c) => {
+    const recv = c.recv ?? {};
+    if (recv.kind === 'static' || recv.how === 'static') return recv.type ? { key: recv.type, type: recv.type } : null;
+    const written = String(recv.text ?? '').replace(/<[\s\S]*$/, '').replace(/\[\]$/, '').trim();
+    if (!written || !/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(written)) return null;
+    if (!/^[A-Z]/.test(written.split('.').pop())) return null;
+    return { key: written, type: written };
   };
 
   /**
@@ -183,7 +199,9 @@ export function queries(db) {
    * methods that clear it. A call on a holder type that matches no field row is unresolved: it holds something, but
    * the dump cannot say which field.
    */
+  let holderCache = null;
   const holders = () => {
+    if (holderCache) return holderCache;
     if (!db) return noDump('holders');
     const list = [];
     const gaps = [];
@@ -217,7 +235,41 @@ export function queries(db) {
       const hit = { method: c.method, call: c.id, name: c.name, file: c.file, line: c.line, col: c.col };
       (op === 'write' ? holder.writes : holder.clears).push(hit);
     }
-    return { holders: list, unresolved: gaps };
+    // A holder the classpath named: a static call-path field on a class Spoon read from a jar. Its write and clear
+    // happen inside the library, so `writes`/`clears` stay empty here and a static call on the type is the store
+    // (`stores()`). Resolved, because the field's declared type is the dump's own answer.
+    for (const t of db.library?.values() ?? []) {
+      if (t.unresolved) continue;
+      for (const f of t.fields ?? []) {
+        if (!(f.modifiers ?? []).includes('static')) continue;
+        const type = f.typeFqn ?? raw(f.type);
+        const base = holderBase(type);
+        if (!base) continue;
+        const element = typeArgsOf(f.type)[0] ?? null;
+        list.push({
+          field: `${t.fqn}#${f.name}`,
+          owner: t.fqn,
+          type,
+          base,
+          element,
+          writes: [],
+          clears: [],
+          origin: 'library',
+          confidence: 'resolved',
+          via: 'classpath',
+        });
+      }
+    }
+    holderCache = { holders: list, unresolved: gaps };
+    return holderCache;
+  };
+
+  /** The holder row a static call's receiver names, when that receiver's type is a holder (`Holder.set(x)`). */
+  const holderOf = (c) => {
+    const on = calledOnType(c);
+    if (!on) return null;
+    for (const h of holders().holders) if (h.owner === on.type || h.owner === on.key) return h;
+    return null;
   };
 
   /** One call as a store, by the shape that writes something a later read of the same request can see. */
@@ -245,8 +297,24 @@ export function queries(db) {
     const reads = holderReads();
     for (const { id, depth: d } of methods)
       for (const c of db.callsOf(id)) {
-        const store = storeOf(c, reads);
         const at = { method: id, depth: d, call: c.id, file: c.file, line: c.line, col: c.col };
+        // A call on a *library* holder type is the store: its setter's body is inside the jar, so no field write of
+        // this project's ever shows it. A project holder needs no shortcut — the reach walks its setter and finds the
+        // field write itself, and counting both would make one store into two.
+        const op = holderOp(c.name);
+        const holder = op && c.via !== 'methodRef' ? holderOf(c) : null;
+        if (holder?.origin === 'library' && !readOf(reads, c)) {
+          found.push({
+            kind: 'holder',
+            field: holder.field,
+            op,
+            ...(holder.origin === 'library' ? { via: 'classpath' } : {}),
+            ...at,
+            args: c.args ?? [],
+          });
+          continue;
+        }
+        const store = storeOf(c, reads);
         if (store) found.push({ ...store, ...at, args: c.args ?? [] });
         // A store-shaped call the dump could not resolve is a gap: it may be a store, and saying no would be a guess.
         else if (UNTYPED_STORES.has(c.name) && !c.recv?.type) gaps.push({ ...at, name: c.name, reason: 'receiver-untyped' });
@@ -309,7 +377,83 @@ export function queries(db) {
     return { comparisons, unresolved: gaps };
   };
 
-  return { reach, argValue, holders, stores, receiverEntity, comparedTo };
+  /**
+   * A store whose lifetime is one request, found by shape and never by a name (A.4): in one method, a static call on a
+   * type T inside a `try` block — directly, or in a project method the block reaches within two hops — and a static
+   * call on the same T directly inside that `try`'s `finally`. Clearing in the finalizer is what makes it per-request.
+   * A store whose call sits in an `if`/`else` arm is `conditional`. When T is a library type with no classpath, the
+   * receiver's written name is all the dump has, so the answer is `inferred`, never `resolved`.
+   */
+  const scopedStores = (methodId) => {
+    if (!db) return noDump('stores');
+    const member = db.members.get(methodId);
+    if (!member) return { stores: [], unresolved: [{ reason: 'no-method', at: null }] };
+    const blocks = (member.tryBlocks ?? []).filter(
+      (b) => Number.isFinite(b?.start) && Number.isFinite(b?.end) && Number.isFinite(b?.finallyStart),
+    );
+    const calls = blocks.length ? db.callsOf(methodId) : [];
+    const out = [];
+    for (const block of blocks) {
+      // The finalizer's types: the same written type must appear there, or the try is not a request-scoped store.
+      const cleared = new Map();
+      for (const c of calls) {
+        if (!(c.line >= block.finallyStart && c.line <= block.finallyEnd)) continue;
+        const on = calledOnType(c);
+        if (on) cleared.set(`${on.key}|${c.name}`, c);
+      }
+      if (!cleared.size) continue;
+      const clearTypes = new Set([...cleared.keys()].map((k) => k.split('|')[0]));
+      // Everything the try body can call: its own calls, then the calls of the project methods those reach, two hops.
+      const found = [];
+      const seen = new Set([methodId]);
+      let frontier = [{ id: methodId, conditional: false }];
+      for (let hop = 0; hop < 2 && frontier.length; hop++) {
+        const next = [];
+        for (const { id, conditional } of frontier) {
+          const owner = db.members.get(id);
+          const arms = (owner?.branches ?? []).filter((b) => b?.kind === 'if' || b?.kind === 'else');
+          const inArm = (line) => arms.some((a) => a.start <= line && line <= a.end);
+          for (const c of db.callsOf(id)) {
+            // `hop === 0` is the try body itself; later hops are the project methods it reaches, body and all.
+            if (hop === 0 && !(c.line >= block.start && c.line <= block.end)) continue;
+            // A store reached through an `if` arm is conditional, however many hops away it is written.
+            const reached = conditional || inArm(c.line);
+            const on = calledOnType(c);
+            if (on) found.push({ on, call: c, conditional: reached });
+            for (const t of targetIds(c))
+              if (!seen.has(t) && db.members.has(t)) (seen.add(t), next.push({ id: t, conditional: reached }));
+          }
+        }
+        frontier = next;
+      }
+      for (const f of found) {
+        if (!clearTypes.has(f.on.key)) continue;
+        // The finalizer's call is a different method (`setContext` / `clearContext`): one call cannot be its own clear.
+        const clear = [...cleared.entries()].find(([k]) => k.startsWith(`${f.on.key}|`))?.[1];
+        if (clear?.name === f.call.name) continue;
+        out.push({
+          kind: 'holder',
+          field: null,
+          holder: f.on.type,
+          op: 'write',
+          via: 'try-finally-pattern',
+          conditional: f.conditional,
+          method: f.call.method ?? methodId,
+          depth: 0,
+          call: f.call.id,
+          file: f.call.file,
+          line: f.call.line,
+          col: f.call.col ?? null,
+          args: f.call.args ?? [],
+          clearedAt: clear ? { call: clear.id, file: clear.file, line: clear.line } : null,
+        });
+      }
+    }
+    const unique = new Map(out.map((s) => [`${s.call}|${s.holder}`, s]));
+    return { stores: [...unique.values()], unresolved: [] };
+  };
+
+  return { reach, argValue, holders, stores, scopedStores, receiverEntity, comparedTo };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

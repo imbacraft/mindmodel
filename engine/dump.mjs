@@ -5,7 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { declaredId, overrideIds, targetIds, uniqueImplOf } from './model/targets.mjs';
 
-export const CONTRACT = 3;
+export const CONTRACT = 5;
 
 function rows(file) {
   return fs
@@ -27,8 +27,14 @@ export function open(dir) {
   if (!fs.existsSync(metaFile)) throw new Error(`no dump at ${dir}: meta.json missing`);
   const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
   if (meta.contract !== CONTRACT) throw new Error(`dump contract ${meta.contract}, this loader speaks ${CONTRACT}`);
-  const types = rows(path.join(dir, 'types.ndjson'));
-  const members = rows(path.join(dir, 'members.ndjson'));
+  // Build output is never the project's code: a type or member read from `target/` or `build/` is dropped here, so no
+  // extractor and no citation can reach it (the generated-source directories are inputs for type resolution only).
+  const isGenerated = (row) => /(^|\/)(target|build)\//.test(row.pos?.file ?? '');
+  const types = rows(path.join(dir, 'types.ndjson')).filter((t) => !t.generated && !isGenerated(t));
+  const members = rows(path.join(dir, 'members.ndjson')).filter((m) => !isGenerated(m));
+  // The library types the classpath let Spoon read: shallow rows with no positions, used for holders and signatures.
+  const libraryRows = fs.existsSync(path.join(dir, 'library.ndjson')) ? rows(path.join(dir, 'library.ndjson')) : [];
+  const library = new Map(libraryRows.map((r) => [r.fqn, r]));
   const calls = fs.existsSync(path.join(dir, 'calls.ndjson')) ? rows(path.join(dir, 'calls.ndjson')) : [];
   // Contract 2 sections: absent in an older dump, empty rather than fatal, because the indexes below answer [] then.
   const fields = fs.existsSync(path.join(dir, 'fields.ndjson')) ? rows(path.join(dir, 'fields.ndjson')) : [];
@@ -107,6 +113,8 @@ export function open(dir) {
     meta,
     types: byFqn,
     members: byId,
+    /** Library types read from the classpath, by FQN: `{fqn, kind, origin: 'library', supers, fields, methods}`. */
+    library,
     calls,
     fields,
     files: byFile,

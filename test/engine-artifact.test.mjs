@@ -5,11 +5,12 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { cacheJar, lock, matches, sha256 } from '../engine/engine.mjs';
 
-const REPO = path.resolve(import.meta.dirname, '..');
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT = path.join(REPO, 'engine-java', 'target', 'mindmodel-engine.jar');
 
 test('the lock names a release that the repository points at', () => {

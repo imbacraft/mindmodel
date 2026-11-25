@@ -184,6 +184,54 @@
    "type": "array",
    "description": "Stays in the scanner."
   },
+  "classpath": {
+   "type": "object",
+   "description": "What the run could read of the project's own dependencies (engine/classpath.mjs). `mode: none` is the normal answer on a machine that has never built the project: nothing blocks, the library types stay unresolved.",
+   "additionalProperties": true,
+   "properties": {
+    "mode": {
+     "type": "string",
+     "enum": [
+      "maven-offline",
+      "gradle-offline",
+      "none"
+     ]
+    },
+    "jars": {
+     "type": "number"
+    },
+    "generatedSources": {
+     "type": "number"
+    },
+    "failedModules": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "module",
+       "reason"
+      ],
+      "properties": {
+       "module": {
+        "type": "string"
+       },
+       "reason": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    "tool": {
+     "type": "string"
+    },
+    "ms": {
+     "type": "number"
+    },
+    "reason": {
+     "type": "string"
+    }
+   }
+  },
   "build": {
    "type": "array",
    "description": "Replaced by evidence/build.mjs in slice 1."
@@ -459,7 +507,9 @@
       "type": "string",
       "enum": [
        "header",
-       "token"
+       "token",
+       "cookie",
+       "path"
       ]
      },
      "name": {

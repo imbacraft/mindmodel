@@ -472,15 +472,23 @@ export function tenantSources(model, _textOf, isTest = () => false, db = null) {
   for (const t of model.types?.values() ?? []) {
     if (isTest(t.file)) continue;
     for (const m of t.methods ?? []) {
-      if (!TENANT_ENTRY.test(m.name ?? '')) continue;
+      // The cheap test first: only a request entry can hold a tenant, and a `doFilterInternal` one is read only when
+      // the request-scoped shape proves it stores something (A.4) — so no method's reach is walked for nothing.
+      const entry = TENANT_ENTRY.test(m.name ?? '');
+      if (!entry && !IDENTITY_ENTRY.test(m.name ?? '')) continue;
       const id = m.id ?? `${t.fqn}#${m.name}`;
       const { methods } = q.reach(id, 2);
       // The tenant is *stored*: a holder write, a request attribute, the security context. A clear is not a store.
       // A tenant is kept in a holder or a request attribute. The security context is the *caller*, not the tenant:
       // `stores()` knows that store too, and counting it here would make every authenticated request a tenant source.
-      const stores = methods.flatMap(({ id: mid }) =>
-        q.stores(mid, 0).stores.filter((s) => s.op !== 'clear' && s.kind !== 'security-context'),
-      );
+      const scoped = q.scopedStores ? methods.flatMap(({ id: mid }) => q.scopedStores(mid).stores) : [];
+      if (!entry && !scoped.length) continue;
+      const stores = [
+        ...methods.flatMap(({ id: mid }) =>
+          q.stores(mid, 0).stores.filter((s) => s.op !== 'clear' && s.kind !== 'security-context'),
+        ),
+        ...scoped,
+      ];
       if (!stores.length) continue;
       const writer = stores[0];
       const storedBy =
@@ -495,25 +503,45 @@ export function tenantSources(model, _textOf, isTest = () => false, db = null) {
           ? simpleType(writer.holder)
           : null;
       const valueName = fieldName ? camelName(fieldName) : null;
-      const writerCite = `${memberFile(d, writer.method) ?? t.file}:${memberLine(d, writer.method) ?? m.start}`;
+      const writerCite =
+        writer.via === 'try-finally-pattern' && writer.file
+          ? `${writer.file}:${writer.line}`
+          : `${memberFile(d, writer.method) ?? t.file}:${memberLine(d, writer.method) ?? m.start}`;
       const reads = requestReads(id, q, d, model, 2, methods).reads;
       const headers = reads.filter((r) => r.kind === 'header');
+      const cookies = reads.filter((r) => r.kind === 'cookie');
       const claim = claimReadIn(methods, d);
       const path = pathReadIn(methods, d);
+      // A cookie is an origin for the stores the run had to work for: the request-scoped shape (A.4) and a holder the
+      // classpath named. Both are stores of a request value the engine could not type before; a header is the
+      // better-known spelling of the same thing and still outranks it.
+      const inferredStore = writer.via === 'try-finally-pattern' || writer.via === 'classpath';
+      // A token origin is the claim's name when the read carries one, else the store's own name; and it cites the read,
+      // never the store — the store line is already the first evidence, and citing it twice says one thing twice.
       const origin = claim
-        ? { kind: 'token', name: valueName ?? 'token claim', cite: writerCite }
+        ? {
+            kind: 'token',
+            name: literalName(claim) ?? valueName ?? 'token claim',
+            cite: claim.file ? `${claim.file}:${claim.line}` : writerCite,
+          }
         : headers.length
           ? headers[0]
-          : path
-            ? { kind: 'path', name: 'request path', cite: `${path.file}:${path.line}` }
-            : null;
+          : inferredStore && cookies.length
+            ? cookies[0]
+            : path
+              ? { kind: 'path', name: 'request path', cite: `${path.file}:${path.line}` }
+              : null;
       if (!origin) continue;
-      const all = origin.kind === 'header' ? headers : [origin];
+      const all = origin.kind === 'header' ? headers : origin.kind === 'cookie' ? cookies : [origin];
       for (const o of all)
         facts.push({
           id: `tenant-source:${o.kind}:${o.name}@${m.name}`,
           family: 'tenant-source',
-          confidence: o.kind === 'token' || o.kind === 'path' ? 'inferred' : 'resolved',
+          // A store found by shape is inferred, whatever the origin: the holder's own type is a library type the dump
+          // could not read, and the try/finally is the evidence.
+          confidence:
+            writer.via === 'try-finally-pattern' ? 'inferred' : o.kind === 'token' || o.kind === 'path' ? 'inferred' : 'resolved',
+          ...(writer.via ? { via: writer.via } : {}),
           kind: o.kind,
           name: o.name,
           method: `${t.name}#${m.name}`,
@@ -522,8 +550,11 @@ export function tenantSources(model, _textOf, isTest = () => false, db = null) {
           why: [
             `${simple(String(writer.method).split('#')[0])}#${String(writer.method).split('#').pop()} ` +
               `stores the tenant into a ${storedBy}`,
-            `the value read here comes from ${o.kind} ${o.name} (${o.cite})`,
-          ],
+            writer.via === 'try-finally-pattern'
+              ? `${simpleType(writer.holder)} is called in a try block and cleared in its finally: one request, one store (inferred from the shape)`
+              : `the value read here comes from ${o.kind} ${o.name} (${o.cite})`,
+            writer.via === 'try-finally-pattern' ? `the value read here comes from ${o.kind} ${o.name} (${o.cite})` : null,
+          ].filter(Boolean),
         });
     }
   }
@@ -540,13 +571,22 @@ const camelName = (field) =>
     .replace(/ (.)/g, (_, c) => c.toUpperCase());
 
 /** A call in the reach that reads a token claim: what makes the stored tenant a claim rather than a header. */
+/**
+ * The call that reads a claim value, if the reach has one. A read that carries the claim's own name in a literal
+ * (`getClaim("iss")`) is the strongest evidence and wins; otherwise the first match in source order stands, and its name
+ * is whatever the store is called.
+ */
 const claimReadIn = (methods, db) => {
+  const hits = [];
   for (const { id } of methods)
     for (const c of db.callsOf(id))
-      if (/claim/i.test(c.name ?? '') || /^(get|resolve|read|load|parse).*(Subject|Token)/i.test(c.name ?? ''))
-        return c;
-  return null;
+      if (/claim/i.test(c.name ?? '') || /^(get|resolve|read|load|parse).*(Subject|Token)/i.test(c.name ?? '')) hits.push(c);
+  return hits.find((c) => literalName(c)) ?? hits[0] ?? null;
 };
+
+/** The first string literal among a call's arguments: the claim or parameter name the code actually asks for. */
+const literalName = (c) =>
+  (c.args ?? []).map((a) => (a?.kind === 'literal' && a.valueKind === 'string' ? a.value : null)).find(Boolean) ?? null;
 const pathReadIn = (methods, db) => {
   for (const { id } of methods)
     for (const c of db.callsOf(id)) if (['getRequestURI', 'getServletPath', 'getPathInfo'].includes(c.name)) return c;
@@ -744,8 +784,11 @@ function identityStores(q, id, db) {
 /** A store as one short phrase, for the `why` line a writer reads. */
 const storeLabel = (store, db) => {
   const row = callById(db, store.call);
-  const recv = row?.recv?.type ? `${simpleType(row.recv.type)}.` : '';
-  return `${recv}${row?.name ?? store.kind}(${row?.args?.map((a) => a.text).join(', ') ?? ''})`;
+  // A store found by shape names its type as written: the call's receiver type is the enclosing class when Spoon
+  // could not resolve the library type, and naming that would name the filter instead of the holder.
+  const recv = store.via === 'try-finally-pattern' ? store.holder : row?.recv?.type;
+  const owner = recv ? `${simpleType(recv)}.` : '';
+  return `${owner}${row?.name ?? store.kind}(${row?.args?.map((a) => a.text).join(', ') ?? ''})`;
 };
 
 /**
@@ -913,32 +956,39 @@ export function authSources(model, _textOf, isTest = () => false, db = null) {
       if (!IDENTITY_ENTRY.test(m.name ?? '')) continue;
       const id = m.id ?? `${t.fqn}#${m.name}`;
       const { methods } = q.reach(id, 2);
-      const stores = methods.flatMap(({ id: mid }) => identityStores(q, mid, d));
+      const typed = methods.flatMap(({ id: mid }) => identityStores(q, mid, d));
+      // A store found by shape (one request, one try/finally) is enough for a caller carried in a cookie, and for
+      // nothing else: without a classpath the element type is unknown, and an unknown is no evidence for a header
+      // identity or for a warning (P6: never a claim the code cannot support).
+      const scoped = methods.flatMap(({ id: mid }) => (q.scopedStores ? q.scopedStores(mid).stores : []));
+      const stores = typed.length ? typed : scoped;
       if (!stores.length) continue;
       const { reads } = requestReads(id, q, d, model, 2, methods);
       // The same verification the warning uses: the receiver's type, never the method's name.
       const verified = Boolean(verifiesIn(methods, d, model));
       const store = storeLabel(stores[0], d);
-      const cookie = reads.find((r) => r.kind === 'cookie');
-      if (cookie) {
-        // The unverified state belongs in the kind: it is the one field of a user source the digest keeps, and a
-        // caller the code believes without checking it is what a reader has to know.
-        facts.push({
-          id: `user-source:cookie:${t.name}:${cookie.name}`,
-          family: 'user-source',
-          confidence: 'resolved',
-          kind: `cookie ${cookie.name}${verified ? '' : ' (unverified)'}`,
-          method: `${t.name}#${m.name}`,
-          name: cookie.name,
-          verified,
-          evidence: [`${cookie.cite}#${m.name}`],
-          why: [
-            `${t.name}#${m.name} reads cookie ${cookie.name} and stores the caller (${store})`,
-            verified
-              ? 'a verification call runs before the caller is stored'
-              : 'nothing verifies the cookie: the caller asserts its own identity',
-          ],
-        });
+      const cookies = reads.filter((r) => r.kind === 'cookie');
+      if (cookies.length) {
+        // One fact per cookie the filter reads: the digest lists what the caller can come from, and a filter that
+        // reads two names a reader needs both. The unverified state belongs in the kind: it is the one field of a user
+        // source the digest keeps, and a caller the code believes without checking it is what a reader has to know.
+        for (const cookie of cookies)
+          facts.push({
+            id: `user-source:cookie:${t.name}:${cookie.name}`,
+            family: 'user-source',
+            confidence: 'resolved',
+            kind: `cookie ${cookie.name}${verified ? '' : ' (unverified)'}`,
+            method: `${t.name}#${m.name}`,
+            name: cookie.name,
+            verified,
+            evidence: [`${cookie.cite}#${m.name}`],
+            why: [
+              `${t.name}#${m.name} reads cookie ${cookie.name} and stores the caller (${store})`,
+              verified
+                ? 'a verification call runs before the caller is stored'
+                : 'nothing verifies the cookie: the caller asserts its own identity',
+            ],
+          });
         continue;
       }
       const headerLine = reads.find(
@@ -1030,6 +1080,14 @@ export function identityWarnings(model, _textOf, isTest = () => false, db = null
   assert.ok(isVerifierType('java.security.MessageDigest', model));
   assert.ok(isVerifierType('shop.JwtTokenService', model));
   assert.ok(!isVerifierType('shop.TwoFactorService', model));
+  // A claim's name is the literal the read asks for, never a variable or a type: `getClaim("iss")` names `iss`.
+  assert.equal(literalName({ args: [{ kind: 'literal', valueKind: 'string', value: 'iss' }] }), 'iss');
+  assert.equal(
+    literalName({ args: [{ kind: 'local', text: 'claimName' }, { kind: 'literal', valueKind: 'number', value: '1' }] }),
+    null,
+    'a variable is not a claim name, and neither is a number',
+  );
+  assert.equal(literalName({}), null, 'a call with no arguments names nothing');
   assert.ok(!isVerifierType('java.lang.String', model));
   assert.equal(simpleType('java.util.Map<String, Object>'), 'Map');
   assert.equal(annotationName({ raw: 'value = "X-Tenant", required = false' }), 'X-Tenant');

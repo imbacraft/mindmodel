@@ -172,3 +172,24 @@ test('query: comparedTo finds the comparison of a parameter, and the value that 
   assert.deepStrictEqual(q().comparedTo({ method: 'contract.Compare#fromLiteral()' }).unresolved.map((u) => u.reason),
     ['no-target-id']);
 });
+
+test('query: scopedStores reads a request-scoped store off the try/finally shape, two hops away', { skip }, () => {
+  const filter = 'contract.ScopedFilter#doFilterInternal(boolean)';
+  const { stores, unresolved } = q().scopedStores(filter);
+  assert.deepStrictEqual(unresolved, []);
+  assert.equal(stores.length, 1, 'one store: one type, one try');
+  const [store] = stores;
+  // The library type is named by its written text (no classpath), the call is the one inside the helper it reaches,
+  // the clear is the finalizer's, and the answer is inferred, never resolved.
+  assert.deepStrictEqual(
+    [store.kind, store.holder, store.op, store.via, store.conditional],
+    ['holder', 'library.ContextHolder', 'write', 'try-finally-pattern', true],
+  );
+  assert.equal(store.method, 'contract.ScopedFilter#remember(String)', 'the call that writes it, not the filter');
+  assert.deepStrictEqual([store.file, store.line], ['src/contract/ScopedFilter.java', 18]);
+  assert.deepStrictEqual([store.clearedAt.file, store.clearedAt.line], ['src/contract/ScopedFilter.java', 13]);
+  // A method with no try at all has no such store, and one with a try whose finalizer calls no type does not either.
+  assert.deepStrictEqual(q().scopedStores('contract.Stores#holder(String)').stores, []);
+  assert.deepStrictEqual(q().scopedStores('contract.RequestHolder#set(String)').stores, []);
+  assert.deepStrictEqual(q().scopedStores('contract.Missing#none()').unresolved.map((u) => u.reason), ['no-method']);
+});

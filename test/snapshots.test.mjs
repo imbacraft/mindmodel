@@ -17,6 +17,10 @@ import { validateSystem, renderSystemPage } from '../engine/system-render.mjs';
 import { git } from '../engine/activity.mjs';
 import { dirOf, loadApps } from './apps.mjs';
 
+// A snapshot is a fact about the engine, not about this machine: a populated ~/.m2 changes receiver typing, so the
+// corpus is always read without a classpath. The classpath itself is tested in test/classpath.test.mjs.
+process.env.MINDMODEL_CLASSPATH = 'off';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfg = loadApps(here);
 const root = process.env.MINDMODEL_TEST_APPS ?? cfg.root;
@@ -31,8 +35,8 @@ function checkFacts(facts, where) {
   assert.deepStrictEqual(errors.slice(0, 5), [], `${where}: facts do not match schema/facts.schema.json`);
 }
 
-// The scan date is the only value that changes between runs of the same code.
-const stable = (x) => JSON.parse(JSON.stringify(x, (k, v) => (k === 'scannedAt' ? undefined : v)));
+// The scan date and the stage timings are the values that change between runs of the same code.
+const stable = (x) => JSON.parse(JSON.stringify(x, (k, v) => (k === 'scannedAt' || k === 'timings' ? undefined : v)));
 const digest = (facts) => summarize({ ...facts, scannedAt: 'DATE' });
 const readMap = (dir, rel) =>
   rel && fs.existsSync(path.join(dir, rel)) ? JSON.parse(fs.readFileSync(path.join(dir, rel), 'utf8')) : null;

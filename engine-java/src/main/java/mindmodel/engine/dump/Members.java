@@ -13,6 +13,7 @@ import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtIf;
 import spoon.reflect.code.CtNewArray;
 import spoon.reflect.code.CtStatement;
+import spoon.reflect.code.CtTry;
 import spoon.reflect.declaration.CtConstructor;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtEnum;
@@ -36,6 +37,10 @@ public final class Members {
 
     /** One decision arm of a body: the lines its statement(s) occupy, and which decision put them there. */
     private record Arm(int start, int end, String kind) {
+    }
+
+    /** One `try` in a body: the lines of its block and, when it has one, of its finalizer. */
+    private record TryRange(int start, int end, int finallyStart, int finallyEnd) {
     }
 
     private Members() {
@@ -190,6 +195,38 @@ public final class Members {
         arms.add(new Arm(p.line(), p.endLine(), kind));
     }
 
+    /**
+     * The `try` blocks a body writes, as line ranges: the block, and its finalizer when it has one. A store whose
+     * lifetime is one request is read off this shape — a call on one type inside the try and a call on the same type in
+     * the finally — so the ranges are the dump's fact and no extractor re-reads a body. Never part of `branches`: a try
+     * body always runs, so an effect written in it is not conditional.
+     */
+    private static void tryBlocks(JsonGenerator g, CtExecutable<?> e, Path root) throws IOException {
+        List<TryRange> blocks = new ArrayList<>();
+        for (CtTry t : e.getElements(new spoon.reflect.visitor.filter.TypeFilter<>(CtTry.class))) {
+            Positions.Pos body = Positions.of(t.getBody(), root);
+            if (body == null) body = Positions.of(t, root);
+            if (body == null) continue;
+            Positions.Pos fin = Positions.of(t.getFinalizer(), root);
+            blocks.add(new TryRange(body.line(), body.endLine(),
+                    fin == null ? 0 : fin.line(), fin == null ? 0 : fin.endLine()));
+        }
+        // Source order, so the dump is byte-identical across runs.
+        blocks.sort(java.util.Comparator.comparingInt(TryRange::start).thenComparingInt(TryRange::end));
+        g.writeArrayFieldStart("tryBlocks");
+        for (TryRange b : blocks) {
+            g.writeStartObject();
+            g.writeNumberField("start", b.start());
+            g.writeNumberField("end", b.end());
+            if (b.finallyStart() > 0) {
+                g.writeNumberField("finallyStart", b.finallyStart());
+                g.writeNumberField("finallyEnd", b.finallyEnd());
+            }
+            g.writeEndObject();
+        }
+        g.writeEndArray();
+    }
+
     private static void callable(JsonGenerator g, CtType<?> owner, CtExecutable<?> executable,
             boolean constructor, Path root, java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns)
             throws IOException {
@@ -223,6 +260,7 @@ public final class Members {
         Anns.write(g, executable.getAnnotations());
         loops(g, executable, root);
         branches(g, executable, root);
+        tryBlocks(g, executable, root);
         Returns.write(g, returns.get(executable));
         Ndjson.pos(g, Positions.of(executable, root));
     }
@@ -268,6 +306,7 @@ public final class Members {
         Anns.write(g, m.getAnnotations());
         loops(g, m, root);
         branches(g, m, root);
+        tryBlocks(g, m, root);
         Returns.write(g, returns.get(m));
         Ndjson.pos(g, Positions.of(m, root));
     }
@@ -302,11 +341,14 @@ public final class Members {
         if (ctor != null) {
             loops(g, ctor, root);
             branches(g, ctor, root);
+            tryBlocks(g, ctor, root);
             Returns.write(g, returns.get(ctor));
         } else {
             g.writeArrayFieldStart("loops");
             g.writeEndArray();
             g.writeArrayFieldStart("branches");
+            g.writeEndArray();
+            g.writeArrayFieldStart("tryBlocks");
             g.writeEndArray();
             Returns.write(g, null);
         }

@@ -11,6 +11,8 @@ import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
 import { bindingRates } from './model/calls.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
 import { dumpFor } from './run.mjs';
+import { resolve as resolveClasspath, tildify } from './classpath.mjs';
+import { writeExcerpts } from './excerpts.mjs';
 import { open as openDump } from './dump.mjs';
 import { annotationFqns, annotationIndex, loadCatalogs, meanOf, selectCatalogs, typeIndex } from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
@@ -311,6 +313,7 @@ export function retirePreviousMap(root) {
 }
 
 export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
+  const started = Date.now();
   const files = walk(root);
   const R = (p) => rel(root, p);
   const read = (p) => fs.readFileSync(p, 'utf8');
@@ -331,7 +334,14 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
   // The model comes first: one base (the dump) answers identity, members, calls and each file's package and imports.
   // Everything below is a query over it — the app's own files, annotations, supertypes and enum values — never a
   // second parse.
-  const dumpRun = dumpFor(root, javaAll.map((j) => j.p));
+  // The project's own dependency jars, when the machine already has them (offline, nothing built): Spoon then resolves
+  // library types, and the library stubs say what their members are. Optional and never blocking.
+  const cpStart = Date.now();
+  const classpath = resolveClasspath(root, { files: files.map(R) });
+  const classpathMs = Date.now() - cpStart;
+  const dumpStart = Date.now();
+  const dumpRun = dumpFor(root, javaAll.map((j) => j.p), { classpath });
+  const dumpMs = Date.now() - dumpStart;
   const dump = dumpRun.ok ? openDump(dumpRun.dir) : null;
   const sources = new Map(
     [...(dump?.files?.entries() ?? [])].map(([p, f]) => [
@@ -942,8 +952,22 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     version: 2,
     root,
     scannedAt: new Date().toISOString().slice(0, 10),
+    // Where the run went (B.7): millisecond stages, so a slow scan says which stage to look at. `digest` is filled by
+    // the CLI, which is the only caller that renders it.
+    timings: { dump: dumpMs, classpath: classpathMs, extract: Date.now() - started - dumpMs - classpathMs },
     inventory: { byExt, topDirs: [...new Set(files.map((f) => R(f).split('/').slice(0, 2).join('/')))].slice(0, 60) },
     build: buildFiles,
+    // What the run could read of the project's dependencies, and what it could not: the digest says it in one line.
+    classpath: {
+      mode: classpath.mode,
+      jars: classpath.jars.length,
+      generatedSources: classpath.generatedSources.length,
+      failedModules: classpath.failedModules.map((f) => ({ module: f.module, reason: tildify(f.reason) })),
+      // `tool` and `reason` are omitted rather than null: the schema has no null-able fields.
+      ...(classpath.tool ? { tool: classpath.tool } : {}),
+      ms: classpath.ms,
+      ...(classpath.reason ? { reason: tildify(classpath.reason) } : {}),
+    },
     git: gitInfo,
     docs,
     packages: Object.entries(
@@ -1058,7 +1082,27 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   };
   // Tests that check resolution against hand-verified calls need the model; facts alone cannot show a receiver type.
   if (withModel) Object.defineProperty(factsOut, 'model', { value: model, enumerable: false });
+  // The lifecycle set sites: the same rows the flows rank reads, kept for the excerpt file (the writer's flow steps and
+  // setter context). Not part of facts.json — the digest already carries the sentence form of every one.
+  Object.defineProperty(factsOut, 'statusSets', { value: deep.statusSets, enumerable: false });
   return factsOut;
+}
+
+/**
+ * One digest line for the run's classpath: `maven offline, 412 jars, 2 modules unresolved (x, y)`, or
+ * `none (no mvn on PATH)`. Null when the facts carry no classpath section at all (an older facts.json).
+ */
+export function classpathLine(cp) {
+  if (!cp) return null;
+  const modules = (cp.failedModules ?? []).map((m) => m.module);
+  if (cp.mode === 'none') return `- classpath: none${cp.reason ? ` — ${cp.reason}` : ''} — library types unresolved`;
+  const parts = [`- classpath: ${cp.mode.replace('-offline', ' offline')}`, `${cp.jars} jar(s)`];
+  if (cp.generatedSources) parts.push(`${cp.generatedSources} generated source root(s)`);
+  if (modules.length)
+    parts.push(
+      `${modules.length} module(s) unresolved (${modules.slice(0, 4).join(', ')}${modules.length > 4 ? `, +${modules.length - 4}` : ''})`,
+    );
+  return parts.join(', ');
 }
 
 // P8: the size tier and its section targets, on the digest's second line, so the writer drafts to numbers instead of
@@ -1145,9 +1189,13 @@ export function summarize(f) {
   if (f.coverage?.line) L.push(`**Coverage:** ${f.coverage.line}`);
   L.push(budgetLine(f.endpoints.length));
   // The blind spots by name: a writer checks the code behind anything listed here before claiming it (rule P4a).
+  const blind = [];
+  // The classpath is a blind spot either way: what the engine could not read of the dependencies. One line, always, so
+  // a "no store found" note can be told from a limit of the run.
+  const cp = classpathLine(f.classpath);
+  if (cp) blind.push(cp);
   if (f.coverage) {
     const c = f.coverage;
-    const blind = [];
     if (c.unknownAnnotations?.length) {
       const top = c.unknownAnnotations.slice(0, 6).map((u) => `${u.name}×${u.count} (${ab(u.samples[0])})`);
       blind.push(
@@ -1171,10 +1219,10 @@ export function summarize(f) {
         `- generated code (not hand-written): ${c.generatedSources.map((g) => `${g.file}: ${g.plugin}${g.packages.length ? ` -> ${g.packages.slice(0, 2).join(', ')}` : ''}`).join('; ')}`,
       );
     if (c.degradedFiles?.length) blind.push(`- files that failed to parse: ${c.degradedFiles.length}`);
-    if (blind.length) {
-      sec('What the engine did not understand');
-      push(blind);
-    }
+  }
+  if (blind.length) {
+    sec('What the engine did not understand');
+    push(blind);
   }
   if (J.length > 8) L.push('**J/ = @@J@@**');
   if (I) L.push('**~/ = @@I@@** (inside each module: "mod/~/x" means "mod/@@I@@x")');
@@ -1588,16 +1636,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   retuneHeap();
   const root = path.resolve(process.argv[2] ?? '.');
   const out = path.resolve(process.argv[3] ?? path.join(root, 'mindmodel', '.work', 'facts.json'));
-  const facts = scan(root);
+  // The model is kept for the excerpt file only: it is not part of facts.json (non-enumerable), and it is the one place
+  // that knows where each method's body begins and ends.
+  const facts = scan(root, { withModel: true });
   // Right before the writer: create the scratch folder (self-ignoring) and move any previous map out of its path.
   ensureWork(root);
   const retired = retirePreviousMap(root);
+  const digestStart = Date.now();
+  const digest = summarize(facts);
+  facts.timings.digest = Date.now() - digestStart;
+  const excerptsStart = Date.now();
+  const code = writeExcerpts(root, facts, facts.model);
+  facts.timings.excerpts = Date.now() - excerptsStart;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(facts, null, 1));
-  fs.writeFileSync(out.replace(/\.json$/, '.md'), summarize(facts));
+  fs.writeFileSync(out.replace(/\.json$/, '.md'), digest);
   const f = facts;
+  const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
   console.log(
-    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.securityRules.length} security rules, ${f.recurring.length} recurring job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'}`,
+    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.schedules.length} scheduled job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'} · ${Object.entries(f.timings).map(([k, v]) => `${k} ${seconds(v)}`).join(' ')} · excerpts ${Math.round(code.bytes / 1024)} KB`,
   );
   if (retired) console.log(`previous map kept at ${retired}`);
 }

@@ -267,3 +267,13 @@ test('a #Type citation is not made ambiguous by the constructor of the same name
   assert.deepEqual(errors, []);
   assert.equal(ruleCite(m), 'X.java:4-29#X');
 });
+
+test('a citation into build output is refused, even when the file is there', () => {
+  // A generated source is read for its types and never cited: the next build rewrites it.
+  const generated = path.join(root, 'target', 'generated-sources', 'annotations', 'X.java');
+  fs.mkdirSync(path.dirname(generated), { recursive: true });
+  fs.writeFileSync(generated, 'public class X {}\n');
+  const m = map(['target/generated-sources/annotations/X.java:1#X']);
+  const { errors } = validate(m, root, DECLARED);
+  assert.deepEqual(errors, ['$.rules[0].cites: "target/generated-sources/annotations/X.java:1#X" cites build output; cite the source behind it']);
+});

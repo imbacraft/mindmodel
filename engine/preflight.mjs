@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { ensure } from './engine.mjs';
+import { preflightLines as classpathLines } from './classpath.mjs';
 
 const git = (root, args) => {
   try {
@@ -51,6 +52,10 @@ function preflightInner(root) {
       level: 'block',
       text: `Java 17+ not found on PATH (${java ? `found ${java}` : 'no java'}); the Spoon engine cannot run. Install a JDK 17+.`,
     });
+
+  // The classpath is optional and never blocks: one line says where the dependencies would come from, and the only
+  // `confirm` is a Maven build that would execute project code (extensions, .mvn/jvm.config, .mvn/maven.config).
+  warnings.push(...classpathLines(root));
 
   const isRepo = git(root, ['rev-parse', '--is-inside-work-tree']) === 'true';
   if (!isRepo) {

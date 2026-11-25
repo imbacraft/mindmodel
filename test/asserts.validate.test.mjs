@@ -9,3 +9,4 @@ test('parseCite: path, range, symbol and arity forms', () => {
   assert.deepStrictEqual(parseCite('a/B.java:5#save'), parsed('a/B.java', 5, 5, 'save', null));
   assert.deepStrictEqual(parseCite('a/B.java#save/2'), parsed('a/B.java', null, null, 'save', 2));
 });
+
