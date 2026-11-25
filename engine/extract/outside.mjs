@@ -1,6 +1,6 @@
 // L5: outside calls. A call whose receiver type a catalog names as an outside client (HTTP, mail, Kafka, RabbitMQ,
 // JMS, SQS) is a fact: this method reaches the outside world, through this client. The receiver is resolved by the
-// model (§5.1), so the fact follows a field, a parameter, a local or a chain alike.
+// model, so the fact follows a field, a parameter, a local or a chain alike.
 import assert from 'node:assert';
 import { factOf, citeOf, withUniqueIds } from './facts.mjs';
 

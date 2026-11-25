@@ -1,4 +1,4 @@
-// Entities as the model sees them (§5.1, slice 3): the annotations say which type is an entity, the model says which
+// Entities as the model sees them: the annotations say which type is an entity, the model says which
 // fields it has (inherited ones included) and what each field's type resolves to. No line windows, no per-file search.
 import { meanOf } from '../catalogs/catalog.mjs';
 

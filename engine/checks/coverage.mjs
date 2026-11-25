@@ -56,7 +56,7 @@ export function coverage(model, facts, selected, { build = [], rels = [] } = {})
 
   // An annotation is understood when a catalog names its resolved FQN, or — for a name the model could not resolve
   // (a wildcard import, a simple name it kept as written) — when at least one selected catalog knows that simple name
-  // at that placement. The match is then `inferred` (§4.2); what matters for the blind-spot list is that the name is
+  // at that placement. The match is then `inferred`; what matters for the blind-spot list is that the name is
   // not a mystery.
   const understood = (a) => {
     if (a.fqn && (index.byFqn.has(a.fqn) || HARMLESS.has(simple(a.fqn)))) return true;
@@ -68,7 +68,7 @@ export function coverage(model, facts, selected, { build = [], rels = [] } = {})
   const fields = [...model.types.values()].flatMap((t) => t.fields ?? []).filter((f) => /^[A-Z]/.test(f.type));
   const endpoints = facts.filter((f) => f.family === 'endpoint');
 
-  // A rate that can fail (§6.1). "annotations resolved" measured nothing, since an imported name always resolves;
+  // A rate that can fail. "annotations resolved" measured nothing, since an imported name always resolves;
   // "endpoints with a handler" and "endpoints with a path" are 100% by construction, since the extractor only emits a
   // fact when it has both. They are gone. The rates left can each drop on real code.
   const b = model.bindings ?? { calls: 0, typed: 0, project: 0, targeted: 0, ambiguous: 0 };

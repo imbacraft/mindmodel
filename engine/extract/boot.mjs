@@ -27,7 +27,7 @@ const linesOf = (file) =>
  * `isMain` member lines), because the scan opens the whole dump a moment later and its calls section is far larger than
  * everything here.
  */
-export function mainIndex(dir) {
+function mainIndex(dir) {
   const types = new Map();
   for (const line of linesOf(path.join(dir, 'types.ndjson'))) {
     const t = JSON.parse(line);
@@ -238,7 +238,7 @@ const RUNTIMES = [
   [/tomee-maven-plugin/, 'tomee:run', 'TomEE', 8080],
   [/cargo-maven\d?-plugin/, 'cargo:run', null, 8080],
 ];
-export function eeBoot(pom, B, mvn, prefix = '') {
+function eeBoot(pom, B, mvn, prefix = '') {
   const profiles = [...pom.matchAll(/<profile>[\s\S]*?<\/profile>/g)].map((m) => ({
     text: m[0],
     from: m.index,

@@ -1,15 +1,15 @@
-// Tenancy (§5.4): the key is decided by counts, never by the name. Then coverage (which entities carry it), the
+// Tenancy: the key is decided by counts, never by the name. Then coverage (which entities carry it), the
 // repository methods that read or write a keyed entity without the key (possible cross-tenant access), where the key
-// comes from (round 4's tenant sources), and code without a request (jobs, listeners, async, webhooks) that touches
+// comes from (the tenant sources), and code without a request (jobs, listeners, async, webhooks) that touches
 // keyed entities and whether it sets the tenant context first.
 import assert from 'node:assert/strict';
 import { queries } from '../model/query.mjs';
 import { isTestPath } from './entities.mjs';
 import { targetIds } from '../model/targets.mjs';
 
-export const MIN_ENTITIES = 3;
-// Tuned from 30% (§0): hertzbeat's workspace sits on 9 of 60 entities (15%), and the 30% cut produced no key at all.
-export const MIN_SHARE = 0.1;
+const MIN_ENTITIES = 3;
+// Tuned on hertzbeat: its workspace sits on 9 of 60 entities (15%), and a 30% cut produces no key at all.
+const MIN_SHARE = 0.1;
 export const MIN_FILTER_SHARE = 0.5;
 // A tenancy key is an identifier exchanged with the request, not a free-text attribute.
 const IDENTIFIER = /(Id|ID|Uuid)$/;
@@ -57,7 +57,7 @@ export function tenancyFacts(
   // (b2) the key is *stored into* a request/context holder — a ThreadLocal write, a request attribute, the security
   // context — through a call chain of at most three hops. ONE definition of "store", shared with security:
   // `engine/model/query.mjs`'s `stores()`. Being read off the request (a `@PathVariable`, a query parameter) is a
-  // foreign key in the path, not a tenant: naming it in request-scoped code used to be enough to outvote the repository
+  // foreign key in the path, not a tenant: naming it in request-scoped code would be enough to outvote the repository
   // evidence, so a child id in controllers became "the tenant". The key may be handed over directly or wrapped by a
   // helper (`setupForSubscription(subscriptionId)` builds a context and stores it).
   const flat = (s) => String(s ?? '').replace(/_/g, '').toLowerCase();
@@ -133,7 +133,7 @@ export function tenancyFacts(
     return selfNamed[0] ?? viaArg[0] ?? null;
   };
   // A tie-break only: the request names the key literally in a filter (`getParameter("workspaceId")`), or a filter
-  // method's own parameter is named after it. It ranks candidates; it no longer decides on its own.
+  // method's own parameter is named after it. It ranks candidates; it does not decide on its own.
   const strongLink = (key) => {
     const named = namesKey(key);
     for (const t of model?.types?.values() ?? []) {
@@ -401,7 +401,7 @@ export function tenancyFacts(
   const byRepo = new Map();
   for (const u of unscoped) byRepo.set(u.repo, (byRepo.get(u.repo) ?? 0) + 1);
 
-  // Where the key comes from: round 4's tenant sources, kept in one fact with the key.
+  // Where the key comes from: the tenant sources, kept in one fact with the key.
   const sources = (tenantSources ?? []).map((s) => ({ kind: s.kind, name: s.name, method: s.method, evidence: s.evidence }));
 
   return {

@@ -4,7 +4,7 @@
 // and the clear written in the finalizer. Every fixture runs through the real engine.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_ENGINE, dumpOf } from './fixtures/dump-run.mjs';
+import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';
 import { authSources, tenantSources } from '../engine/extract/security.mjs';
 
 const L = (...x) => x.join('\n');
@@ -51,8 +51,8 @@ const NO_FINALLY = L(
   '}',
 );
 
-const tenantOf = (model, db) => tenantSources(model, () => '', () => false, db);
-const userOf = (model, db) => authSources(model, () => '', () => false, db);
+const tenantOf = (model, db) => tenantSources(model, () => false, db);
+const userOf = (model, db) => authSources(model, () => false, db);
 
 test('scoped store: a library holder called in a try and cleared in its finally is a tenant source', { skip: NO_ENGINE }, () => {
   const { model, db } = dumpOf({ 'src/main/java/shop/ContextFilter.java': FILTER });

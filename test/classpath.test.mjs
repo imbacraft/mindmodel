@@ -208,12 +208,12 @@ test('classpath: a jar in the local repository makes the holder a typed store', 
       [...db.files].map(([p, f]) => [p, { pkg: f.package ?? '', imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })) }]),
     );
     const model = buildModelFromDump(db, sources, new Set());
-    const tenant = tenantSources(model, () => '', () => false, db);
+    const tenant = tenantSources(model, () => false, db);
     assert.equal(tenant.length, 1, 'the cookie the filter reads is the tenant source');
     assert.deepStrictEqual([tenant[0].kind, tenant[0].name, tenant[0].storedBy], ['cookie', 'cluster', 'thread-local']);
     assert.equal(tenant[0].confidence, 'resolved', 'read from the holder type, not inferred from a shape');
     assert.equal(tenant[0].via, 'classpath');
-    const users = authSources(model, () => '', () => false, db);
+    const users = authSources(model, () => false, db);
     assert.deepStrictEqual(users.map((u) => u.kind), ['cookie cluster (unverified)']);
     assert.match(users[0].why[0], /ContextHolder\.setContext\(/);
   } finally {

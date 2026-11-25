@@ -4,7 +4,7 @@
 // Nothing here concludes meaning — no "this is a tenant", no "this is a cookie identity". The primitives say what the
 // code is shaped like; the extractor says what that shape means.
 //
-// What the dump cannot answer, and so what these primitives cannot either (Phase 3 has to report these, not paper over
+// What the dump cannot answer, and so what these primitives cannot either (the extractors report these, not paper over
 // them):
 //   - `==` / `!=` comparisons. The dump records a conditional's two branches, never its condition, so `comparedTo`
 //     answers `equals`/`contains` calls only. An identity check `cookieName == NAME` is invisible to it.
@@ -223,7 +223,7 @@ export function queries(db) {
     const byField = new Map(list.map((h) => [h.field, h]));
     const reads = holderReads();
     for (const c of db.calls) {
-      if (c.via === 'methodRef') continue; // a reference names a method; it does not write the holder now
+      if (c.via === 'methodRef') continue; // a reference names a method; it does not write the holder
       const op = holderOp(c.name);
       const read = readOf(reads, c);
       if (!read) {
@@ -378,7 +378,7 @@ export function queries(db) {
   };
 
   /**
-   * A store whose lifetime is one request, found by shape and never by a name (A.4): in one method, a static call on a
+   * A store whose lifetime is one request, found by shape and never by a name: in one method, a static call on a
    * type T inside a `try` block — directly, or in a project method the block reaches within two hops — and a static
    * call on the same T directly inside that `try`'s `finally`. Clearing in the finalizer is what makes it per-request.
    * A store whose call sits in an `if`/`else` arm is `conditional`. When T is a library type with no classpath, the

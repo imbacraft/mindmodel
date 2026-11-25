@@ -1,4 +1,4 @@
-// Channels (slice 5): the queues and topics a service listens to or sends on, from the model — a listener is an
+// Channels: the queues and topics a service listens to or sends on, from the model — a listener is an
 // annotation with a destination argument, a send is a call on a messaging client with a channel argument. The name is
 // the argument when it is a literal or a resolvable static constant, else the argument text.
 

@@ -1,4 +1,4 @@
-// Task 1 of docs/engine-improvements.md, end to end: the flow trace follows `super.m(...)` into a generic base class
+// the flow trace follows `super.m(...)` into a generic base class
 // with the subclass's type arguments, follows a port call to its implementation, and weights a status change a flow
 // performs. The fixtures are Java sources on disk (test-support/fixtures/flow-effects), dumped by the real engine and
 // read back as a model — the same path a scan takes. Nothing here parses Java or names a declaration by hand.

@@ -4,7 +4,7 @@
 import assert from 'node:assert';
 
 const simpleOf = (name) => String(name ?? '').split('.').pop();
-export const typeNameOf = (text) => (text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
+const typeNameOf = (text) => (text ?? '').replace(/<[\s\S]*/, '').replace(/\[\]/g, '').trim();
 
 const JAVA_LANG = new Set([
   'String', 'Object', 'Class', 'Enum', 'Record', 'Throwable', 'Exception', 'RuntimeException', 'Error',
@@ -166,13 +166,12 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   const byId = new Map();
   for (const t of types.values()) for (const m of t.methods) byId.set(m.id, m);
   for (const row of dump.calls) {
-    // Contract 2 writes a method reference as a call row of its own; nothing reads it as a call yet.
+    // A method reference is a call row of its own; it names a method and does not call it.
     if (row.via === 'methodRef') continue;
     const method = byId.get(row.method);
     if (!method || row.origin === 'error') continue;
-    // Contract 3 writes each target as `{id, kind}`: the declaration Spoon resolved, then its overrides. A call row
-    // from an older dump carries bare ids, read as declarations.
-    const targets = (row.targets ?? []).map((t) => (typeof t === 'string' ? { id: t, kind: 'declared' } : t));
+    // Each target is `{id, kind}`: the declaration Spoon resolved, then its overrides.
+    const targets = row.targets ?? [];
     const call = {
       kind: 'call',
       // The dump's own row id: a reader hands it back to the query layer for the typed arguments (`argsOf`), the
@@ -181,7 +180,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       name: row.name,
       line: row.line,
       col: row.col ?? null,
-      // Contract 2 arguments are typed objects; the extractors still read the written text of the first two.
+      // Arguments are typed objects; the extractors read the written text of the first two.
       args: (row.args ?? []).slice(0, 2).map((a) => (typeof a === 'string' ? a : a?.text ?? '')),
       recvFqn: row.recv?.type ?? null,
       recvHow: row.recv?.how ?? row.recv?.kind ?? null,
@@ -243,8 +242,7 @@ function receiverOf(row) {
 // `direct` when the answer names one declaration of the receiver's own type, `impl` when it reaches an implementation
 // or several, `external` for a library, `unresolved` when the engine could not answer. The vocabulary the facts speak.
 function howOf(row) {
-  // Contract 3 targets are `{id, kind}`; an older dump writes the id alone.
-  const targets = (row.targets ?? []).map((t) => (typeof t === 'string' ? t : t?.id)).filter(Boolean);
+  const targets = (row.targets ?? []).map((t) => t?.id).filter(Boolean);
   // `arity` is a member lookup that found exactly one member: it names a target just as the compiler does.
   if (row.origin === 'java' || row.origin === 'lombok' || row.origin === 'arity') {
     // A generated member (Lombok's builder step) has a receiver but no declaration to name: the chain typed it.
@@ -330,7 +328,7 @@ function resolver(sources, types, known = new Set()) {
     [
       {
         method: 'a.Impl#find(Long)', file: 'src/a/Impl.java', line: 5, name: 'save', argc: 0,
-        recv: { type: 'a.Port', how: 'field' }, targets: ['a.Port#save()'], origin: 'java', args: [],
+        recv: { type: 'a.Port', how: 'field' }, targets: [{ id: 'a.Port#save()', kind: 'declared' }], origin: 'java', args: [],
       },
     ],
   );

@@ -1,4 +1,4 @@
-// The two rates of §6.1 over the model the facts are built from. Resolution is not here: the dump owns it (Spoon, with
+// The two rates over the model the facts are built from. Resolution is not here: the dump owns it (Spoon, with
 // the engine's library table for chains), so this file counts what the dump answered and nothing else.
 import assert from 'node:assert';
 

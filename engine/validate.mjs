@@ -164,7 +164,7 @@ export function citeTarget(map) {
 
 // A share is the room a section has, not a target to fill. Writing to the ceiling and stopping early is the mirror of
 // writing over it: the section stops answering its question. `intros` is exempt (version and project strings).
-export const UNDER_SHARE = 0.6;
+const UNDER_SHARE = 0.6;
 
 // One warning per section over its share, plus the total: the writer fixes a section, never the whole map.
 export function budgetWarnings(counts, budget) {
@@ -207,7 +207,7 @@ const containsSymbol = (lines, pc) =>
 const symbolWithArity = (pc) => (pc.arity == null ? pc.symbol : `${pc.symbol}/${pc.arity}`);
 
 // `path:start-end#name (N params)` for each declaration the citation could mean, so the error can list them all.
-export function citeCandidatesText(file, named) {
+function citeCandidatesText(file, named) {
   return named
     .map((d) => `${file}:${d.start}-${d.end}#${d.name} (${d.arity == null ? 'arity unknown' : `${d.arity} params`})`)
     .join(', ');
@@ -290,7 +290,7 @@ export function resolveCites(map, root, declared = null) {
 
 // Activity badges are computed, never written by hand: each region lists its `paths`, and the commit
 // counts come from git in the shared window. Regions without paths keep whatever activity they have.
-export function fillActivity(map, root) {
+function fillActivity(map, root) {
   const regions = (map.regions ?? []).filter((r) => r.paths?.length);
   if (!regions.length) return;
   const w = gitWindow(root);
@@ -323,7 +323,7 @@ const P6_WEAKNESS = [
 const P6_BUG = /\bbugs?\b/i;
 
 // Every prose string with its location in the map, skipping the fields that hold code.
-export function proseOf(map) {
+function proseOf(map) {
   const out = [];
   const walk = (v, where, code) => {
     if (typeof v === 'string') {
@@ -338,7 +338,7 @@ export function proseOf(map) {
   return out;
 }
 
-export function p6Issues(map) {
+function p6Issues(map) {
   const errors = [], warnings = [];
   for (const [where, text] of proseOf(map)) {
     for (const [re, what] of P6_SECRETS) if (re.test(text)) errors.push(`${where}: looks like ${what}`);
@@ -605,7 +605,7 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   const inferred = map.stories.flatMap((s) => s.steps.filter((x) => x.inferred).map(() => s.id));
   if (inferred.length) warn(`${inferred.length} story step(s) marked inferred: ${[...new Set(inferred)].join(', ')}`);
 
-  // R7/R8: collect every citation, check it resolves.
+  // Collect every citation, check it resolves.
   const cites = [];
   const walk = (node, where) => {
     if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${where}[${i}]`));

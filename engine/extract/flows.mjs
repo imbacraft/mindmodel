@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { accessFor } from './security.mjs';
 import { superBindings } from '../model/type-args.mjs';
 
-// Flow skeletons (§5.3, revised): a path from an entry point to at least one effect. An effect is a state write (a
+// Flow skeletons: a path from an entry point to at least one effect. An effect is a state write (a
 // repository or EntityManager call, from the state family), an outside call (HTTP, mail, messaging, from the outside
 // family) or a message sent (an outside call to a broker). A branch with no effect is not part of the flow, so response
 // envelopes and read-only side branches disappear; a path with no effect anywhere is not a flow at all.

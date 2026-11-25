@@ -29,7 +29,7 @@ import spoon.reflect.declaration.CtExecutable;
  *   "arms": [ { "labels": ["NEW"], "default": false, "value": { ...reference... } } ] }
  * </pre>
  *
- * A switch entry gets a {@code target} when its result is assigned to one local — the old "chosen inline" question. The
+ * A switch entry gets a {@code target} when its result is assigned to one local. The
  * arms are the source's arms in source order; an arm whose value cannot be described is {@code unresolved} with a reason.
  *
  * Planned while the body is the current scope of {@link Refs} (so a returned local can still name its source), then

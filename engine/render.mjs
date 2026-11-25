@@ -13,7 +13,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 // What the page was built from, and how much of the project the engine understood. Kept short: the page states its
 // own evidence, and the long form lives in facts.json.
-export function provenanceOf(facts) {
+function provenanceOf(facts) {
   if (!facts) return null;
   return {
     scannedAt: facts.scannedAt ?? null,
@@ -28,7 +28,7 @@ export function provenanceOf(facts) {
 
 // Facts describe one commit. A page must never mix a map written from one commit with facts from another: the
 // derived sections would cite code the map never saw. A short commit on either side matches its longer form.
-export function factsForMap(map, facts) {
+function factsForMap(map, facts) {
   if (!facts) return null;
   const head = facts.git?.head,
     commit = map.project?.commit;
@@ -38,7 +38,7 @@ export function factsForMap(map, facts) {
 
 // Sections the page renders straight from facts instead of asking the writer to transcribe them. Each row is a fact
 // plus its citation; the map supplies only the paragraph that says what they mean.
-export function derivedOf(facts) {
+function derivedOf(facts) {
   if (!facts) return null;
   const jobs = (facts.background?.scheduledAsyncListeners ?? []).map((x) => ({
     name: x.method ? `${x.cls}.${x.method}` : x.cls || x.file,

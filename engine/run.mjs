@@ -19,12 +19,12 @@ export { jarPath };
 // Spoon 11.5 accepts a compliance level up to 26 (JDK 25); 11.2.1 died above 21. A project on a newer JDK therefore
 // gets the highest level this engine understands, and `capped` says so in the facts rather than pretending the source
 // parsed at its own level.
-export const MAX_COMPLIANCE = 26;
+const MAX_COMPLIANCE = 26;
 export function compliance() {
   const asked = Number(process.env.MINDMODEL_COMPLIANCE || 17);
   return String(Number.isFinite(asked) ? Math.min(asked, MAX_COMPLIANCE) : 17);
 }
-export function complianceCapped() {
+function complianceCapped() {
   return Number(process.env.MINDMODEL_COMPLIANCE || 17) > MAX_COMPLIANCE;
 }
 {
@@ -54,7 +54,7 @@ function contentHash(file) {
  * The blob id is the same on every branch switch and every clone, so a warm dump stays warm for a file nobody edited;
  * mtimes, which change on checkout, made every branch switch a cold dump for no reason. Null outside a git repo.
  */
-export function gitState(root, files) {
+function gitState(root, files) {
   const git = (args) =>
     spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
   const listed = git(['ls-files', '-s', '-z', '--', '*.java']);

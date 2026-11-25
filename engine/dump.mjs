@@ -35,10 +35,9 @@ export function open(dir) {
   // The library types the classpath let Spoon read: shallow rows with no positions, used for holders and signatures.
   const libraryRows = fs.existsSync(path.join(dir, 'library.ndjson')) ? rows(path.join(dir, 'library.ndjson')) : [];
   const library = new Map(libraryRows.map((r) => [r.fqn, r]));
-  const calls = fs.existsSync(path.join(dir, 'calls.ndjson')) ? rows(path.join(dir, 'calls.ndjson')) : [];
-  // Contract 2 sections: absent in an older dump, empty rather than fatal, because the indexes below answer [] then.
-  const fields = fs.existsSync(path.join(dir, 'fields.ndjson')) ? rows(path.join(dir, 'fields.ndjson')) : [];
-  const files = fs.existsSync(path.join(dir, 'files.ndjson')) ? rows(path.join(dir, 'files.ndjson')) : [];
+  const calls = rows(path.join(dir, 'calls.ndjson'));
+  const fields = rows(path.join(dir, 'fields.ndjson'));
+  const files = rows(path.join(dir, 'files.ndjson'));
 
   const byFqn = new Map(types.map((t) => [t.fqn, t]));
   const byId = new Map();
@@ -123,7 +122,6 @@ export function open(dir) {
     callsOf: (methodId) => byMethod.get(methodId) ?? [],
     callersOf: (methodId) => callers.get(methodId) ?? [],
     implsOf: (fqn) => subtypes.get(fqn) ?? [],
-    subtypesOf: (fqn) => subtypes.get(fqn) ?? [],
     atLine: (file, line) => byLine.get(key(file, line)) ?? [],
     atSite: (file, line, col) => bySite.get(key(file, `${line}:${col}`)) ?? [],
     annotation,
@@ -239,7 +237,7 @@ export function open(dir) {
   assert.deepEqual(d.atSite('a/Impl.java', 2, 9).map((c) => c.origin), ['java']);
   assert.deepEqual(d.annotation(d.members.get('a.Impl#find(Long)'), 'Transactional'), { value: 'x' });
   assert.equal(d.constant('a.Impl', 'PATH').value, '/x');
-  // Contract 2: typed arguments, field reads and writes, returns, method references and imports, each a lookup.
+  // Typed arguments, field reads and writes, returns, method references and imports, each a lookup.
   assert.deepEqual(d.argsOf('a.Impl#find(Long)@2:9').map((a) => a.kind), ['constant']);
   assert.deepEqual(d.argsOf('a.Impl#find(Long)@2:25')[0].reason, 'no-declaration', 'an unresolved argument says why');
   assert.deepEqual(d.argsOf('a.Impl#find(Long)@missing'), [], 'an unknown call has no arguments, not a guess');
@@ -258,8 +256,8 @@ export function open(dir) {
     'a method reference is not a call; two call sites on one line are two rows');
   assert.deepEqual(d.imports('a/Impl.java').map((i) => i.name), ['java.util.List']);
   assert.equal(d.imports('a/Unknown.java'), null, 'an unreadable header is an unknown, not an empty list');
-  // Contract 3: the receiver's type arguments, the declaration told apart from its overrides, and the value of a field
-  // write typed like an argument.
+  // The receiver's type arguments, the declaration told apart from its overrides, and the value of a field write
+  // typed like an argument.
   assert.deepEqual(d.typeArgsOf('a.Impl#find(Long)@2:9'), [], 'a receiver with no type arguments says none');
   assert.deepEqual(d.typeArgsOf('a.Impl#find(Long)@2:30'), ['java.lang.String']);
   assert.deepEqual(d.targetsOf('a.Impl#find(Long)@2:9'),

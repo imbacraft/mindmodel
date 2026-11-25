@@ -1,7 +1,8 @@
 // Fixtures run through the real engine: the Java sources live on disk under test-support/fixtures/<name>/, and a case
 // names the layers it needs (base, then a variant that overrides or adds files). The layers are copied into a scratch
-// dir once per set and the jar dumps them; the model is built from that dump — the same path a scan takes. Nothing
-// here parses Java; a test that needs a dump skips when the jar has not been built.
+// dir once per set and the jar dumps them; the model is built from that dump — the same path a scan takes. Inline Java
+// (`dumpOf`) takes the same route through a scratch dir of its own. Nothing here parses Java; a test that needs a dump
+// skips when the jar has not been built.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,9 @@ import { buildModelFromDump } from '../../engine/model/from-dump-model.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const JAR = process.env.MINDMODEL_ENGINE_JAR ?? path.join(here, '../../engine-java/target/mindmodel-engine.jar');
 export const NO_ENGINE = !fs.existsSync(JAR) ? 'engine jar not built (mvn -f engine-java/pom.xml package)' : false;
+
+// A real path, not the /var symlink: the dump relativises its file paths against the root it was given.
+const scratchDir = () => fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mindmodel-fixture-'));
 
 const copyTree = (from, to) => {
   fs.mkdirSync(to, { recursive: true });
@@ -35,6 +39,35 @@ const javaFiles = (dir, base = dir) => {
   return out.sort();
 };
 
+/** The jar reads `dir` and the listed files, and writes the dump under `dir/dump`; returns the open dump. */
+function runDump(dir, files, { generated = [] } = {}) {
+  const list = path.join(dir, 'files.txt');
+  fs.writeFileSync(list, files.join('\n') + (files.length ? '\n' : ''));
+  const out = path.join(dir, 'dump');
+  const args = ['-jar', JAR, 'dump', '--contract', String(CONTRACT)];
+  if (generated.length) {
+    const roots = path.join(dir, 'generated.txt');
+    fs.writeFileSync(roots, generated.join('\n') + '\n');
+    args.push('--generated', roots);
+  }
+  args.push(dir, list, out);
+  execFileSync('java', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  return open(out);
+}
+
+/** The imports and package of each file, as the model reads them. */
+function sourcesOf(db) {
+  return new Map(
+    [...db.files].map(([p, f]) => [
+      p,
+      {
+        pkg: f.package ?? '',
+        imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })),
+      },
+    ]),
+  );
+}
+
 // One dump per layer set: the cases in a test file share the base layers, so each set is copied and dumped once.
 const dumps = new Map();
 
@@ -47,36 +80,33 @@ const dumps = new Map();
 export function dumpOfLayers(layers, { generated = [] } = {}) {
   const key = `${layers.join('|')}#${generated.join('|')}`;
   if (dumps.has(key)) return dumps.get(key);
-  // A real path, not the /var symlink: the dump relativises its file paths against the root it was given.
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mindmodel-fixture-'));
+  const dir = scratchDir();
   for (const layer of layers) copyTree(path.join(here, layer), dir);
-  const list = path.join(dir, 'files.txt');
   // Build output is never an input: a scan's file list comes from the sources, and a generated root is named apart.
   const files = javaFiles(dir)
     .filter((f) => !/(^|\/)(target|build)\//.test(f))
     .filter((f) => !generated.some((g) => f.startsWith(`${g}/`)));
-  fs.writeFileSync(list, files.join('\n') + (files.length ? '\n' : ''));
-  const out = path.join(dir, 'dump');
-  const args = ['-jar', JAR, 'dump', '--contract', String(CONTRACT)];
-  if (generated.length) {
-    const roots = path.join(dir, 'generated.txt');
-    fs.writeFileSync(roots, generated.join('\n') + '\n');
-    args.push('--generated', roots);
-  }
-  args.push(dir, list, out);
-  execFileSync('java', args, { stdio: ['ignore', 'ignore', 'pipe'] });
-  const db = open(out);
-  const sources = new Map(
-    [...db.files].map(([p, f]) => [
-      p,
-      {
-        pkg: f.package ?? '',
-        imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })),
-      },
-    ]),
-  );
+  const db = runDump(dir, files, { generated });
+  const sources = sourcesOf(db);
   const model = buildModelFromDump(db, sources);
   const result = { db, model, sources, dir };
   dumps.set(key, result);
   return result;
+}
+
+/**
+ * One dump of one set of inline sources: `files` is `{ 'src/main/java/shop/F.java': text }`. Returns the open dump, the
+ * model built from it (which carries the dump, so the extractors can query it) and the file → package/imports map.
+ */
+export function dumpOf(files, known = new Set()) {
+  const dir = scratchDir();
+  for (const [rel, text] of Object.entries(files)) {
+    const p = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, text);
+  }
+  const db = runDump(dir, Object.keys(files).sort());
+  const sources = sourcesOf(db);
+  const model = buildModelFromDump(db, sources, known);
+  return { db, model, sources, dir };
 }

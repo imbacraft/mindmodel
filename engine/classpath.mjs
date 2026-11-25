@@ -15,7 +15,7 @@ import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { readBuild } from './evidence/build.mjs';
 
-export const TIMEOUT = 120_000;
+const TIMEOUT = 120_000;
 
 /** `mvn 3.9.9 (PATH)`, or null when Maven is not installed. */
 export function mavenTool() {
@@ -42,7 +42,7 @@ export function risk(root, files = []) {
 }
 
 /** The Maven modules this checkout declares: one per POM, plus the reactor coordinates a jar must never shadow. */
-export function mavenModules(root, files) {
+function mavenModules(root, files) {
   // Only files that are really there: a caller's list may name a build file it read from a configuration.
   const builds = readBuild(root, files.filter((f) => fs.existsSync(path.join(root, f)))).filter((b) => b.kind === 'maven');
   return {
@@ -57,7 +57,7 @@ export function mavenModules(root, files) {
  * module (`--- dependency:...:build-classpath ... @ module ---`) followed by `Dependencies classpath:` and one line of
  * `path.delimiter`-separated absolute jar paths; with `-q` it prints nothing at all, which is why the log is read.
  */
-export function parseClasspathLog(log, { artifacts = new Set() } = {}) {
+function parseClasspathLog(log, { artifacts = new Set() } = {}) {
   const jars = [];
   const seen = new Set();
   const failed = [];
@@ -110,7 +110,7 @@ export function parseClasspathLog(log, { artifacts = new Set() } = {}) {
  * Why Maven produced no classpath at all: the first line that names a cause, without the help articles and the
  * re-run advice. A reactor that cannot even be read (a BOM missing from the local repository) lands here.
  */
-export function failureReason(log) {
+function failureReason(log) {
   const lines = String(log)
     .split('\n')
     .map((l) => l.replace(/^\[(?:ERROR|FATAL)\]\s*/, '').trim())
@@ -129,7 +129,7 @@ export function failureReason(log) {
  * Maven's cause, cut to what a reader needs: the artifact that is missing and the kind of miss. One line of a digest
  * cannot carry a nested reactor sentence, the `(absent)` markers or the repository URL that "Cannot access" repeats.
  */
-export function shortenCause(text) {
+function shortenCause(text) {
   let t = String(text).replace(/\s+/g, ' ').trim();
   t = t.replace(/^(\[FATAL\]|\[ERROR\])\s*/, '');
   t = t.replace(
@@ -170,7 +170,7 @@ export function generatedDirs(root, poms) {
 }
 
 /** A hash of every build file's content plus the tool and the repository: a changed dependency re-resolves. */
-export function buildKey(root, files, { tool = '', m2 = '' } = {}) {
+function buildKey(root, files, { tool = '', m2 = '' } = {}) {
   const h = crypto.createHash('sha256');
   h.update(`${tool}\u0000${m2}\u0000`);
   for (const rel of files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?)$/.test(f)).sort()) {

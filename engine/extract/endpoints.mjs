@@ -8,7 +8,7 @@ import { evalString, splitTop } from '../model/strings.mjs';
 
 // The expression an annotation gives for its path: the first named argument the catalog declares, else the first
 // positional one. Segments are split at top-level commas so `value = A + "/x", method = GET` keeps its expression.
-export function pathExpr(entry, args = '') {
+function pathExpr(entry, args = '') {
   const segs = splitTop(args, ',');
   for (const key of entry.path?.args ?? ['value', 'path']) {
     const seg = segs.find((s) => new RegExp(`^\\s*${key}\\s*=`).test(s));
@@ -20,7 +20,7 @@ export function pathExpr(entry, args = '') {
 }
 
 // The verb an annotation declares, or the one named in `method = RequestMethod.X`.
-export function verbOf(entry, args = '') {
+function verbOf(entry, args = '') {
   if (entry.verb) return entry.verb;
   const m = /RequestMethod\.(\w+)/.exec(args);
   return m ? m[1] : (entry.verbFromArg?.default ?? 'ANY');
@@ -28,7 +28,7 @@ export function verbOf(entry, args = '') {
 
 // Same shape as the scanner's path normalization, so old and new facts are comparable letter for letter. `{?}` is the
 // engine's own marker for an unresolved part and survives; every other brace group is a path variable.
-export const normPath = (p) => {
+const normPath = (p) => {
   // `{?}` is ours, not a path variable or a query string: park it outside the replacements and put it back.
   const MARK = '\u0000';
   const out = ('/' + String(p).replace(/\{\?\}/g, MARK))
@@ -76,7 +76,7 @@ function pathPart(model, type, hit, args) {
 
 // Project supertypes of one type, nearest first: breadth first from the class itself, superclass and interfaces
 // alike. Only types this scan declares are walked; a library base class adds nothing the model can read.
-export function superChain(model, fqn) {
+function superChain(model, fqn) {
   const out = [],
     seen = new Set([fqn]),
     queue = [fqn];

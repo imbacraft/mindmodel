@@ -27,7 +27,7 @@ import spoon.reflect.reference.CtTypeReference;
  * {@code inLambda} marks a site inside a lambda (it may run later, or never); {@code via: methodRef} marks a method
  * reference, whose {@code argc} is the referenced method's parameter count.
  *
- * Contract 3 adds three things a reader needs and Spoon can answer: {@code recv.typeArgs}, the type arguments the
+ * The call rows add three things a reader needs and Spoon can answer: {@code recv.typeArgs}, the type arguments the
  * receiver's declared type is written with at the site (`[shop.Voucher]` for `Base<Voucher>.publish`); {@code targets}
  * as {@code {id, kind}} with {@code declared} for the member Spoon resolved and {@code override} for each implementation
  * of it in a subtype; and {@code uniqueImpl}, true only when the declaration has no body and exactly one override.

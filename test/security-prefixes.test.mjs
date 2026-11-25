@@ -1,4 +1,4 @@
-// Task 4 of docs/engine-improvements.md: a prefix's access is stated only when all its endpoints have it, and a chain
+// a prefix's access is stated only when all its endpoints have it, and a chain
 // whose rules live in a configurer the repo does not declare says so instead of reporting the prefix as "unknown".
 // The fixtures are Java sources on disk (test-support/fixtures/security-prefixes), dumped by the real engine and read
 // back as a model — the same path a scan takes. Nothing here parses Java.

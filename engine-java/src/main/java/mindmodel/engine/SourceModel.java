@@ -11,7 +11,6 @@ import java.util.Set;
 
 import spoon.Launcher;
 import spoon.compiler.Environment;
-import spoon.reflect.code.CtInvocation;
 import spoon.reflect.declaration.CtType;
 
 import mindmodel.engine.dump.Names;
@@ -137,12 +136,6 @@ public final class SourceModel {
 
     public List<CtType<?>> allTypes() {
         return new ArrayList<>(launcher.getModel().getAllTypes());
-    }
-
-    /** Every invocation anywhere in the model, anonymous and local class bodies included. */
-    public List<CtInvocation<?>> allInvocations() {
-        return new ArrayList<>(launcher.getModel().getElements(new spoon.reflect.visitor.filter.TypeFilter<>(
-                CtInvocation.class)));
     }
 
     /**

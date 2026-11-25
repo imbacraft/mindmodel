@@ -23,7 +23,7 @@ import spoon.reflect.visitor.Filter;
  * returns, switches, field reads and writes, and the writes to each local. Walking once is what keeps the contract-2
  * dump inside its time budget: five separate {@code getElements} passes per body would double the dump's cost.
  *
- * The buckets keep source order, so the call rows are written in the order the old single pass wrote them.
+ * The buckets keep source order, so the call rows are written in source order.
  */
 final class Walk {
 

@@ -10,7 +10,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 
 // mulberry32: small, deterministic, good enough for picking ten rows.
-export function rng(seed) {
+function rng(seed) {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -22,7 +22,7 @@ export function rng(seed) {
 
 // Every claim the map makes with a citation: rules, story steps and state rows. A claim without a cite cannot be
 // spot-checked and is not a claim under P3 anyway.
-export function claimsOf(map) {
+function claimsOf(map) {
   const out = [];
   for (const r of map.rules ?? [])
     if (r.cites?.length) out.push({ where: `rule: ${r.title ?? r.kind}`, text: r.text ?? '', cites: r.cites });
@@ -62,7 +62,7 @@ export function pick(claims, seed = 1, count = 10) {
   return picked;
 }
 
-export function spotcheckMarkdown(picked, { root, seed, mapName = 'mindmodel.json' }) {
+function spotcheckMarkdown(picked, { root, seed, mapName = 'mindmodel.json' }) {
   const out = [
     `# Spot-check (${picked.length} claims, seed ${seed}, map ${mapName})`,
     '',

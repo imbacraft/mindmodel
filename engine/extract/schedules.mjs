@@ -92,7 +92,7 @@ export function extractSchedules(model, selected = []) {
 
 
 
-// Schedules and retries in plain words (moved out of deep.mjs in slice 6, R2). Both come off the model: the method's
+// Schedules and retries in plain words. Both come off the model: the method's
 // annotations (the dump's rows, with the argument list as the dump wrote it) and its own calls (for the time windows).
 import { humanMs, humanSchedule, windowsIn } from './text/time.mjs';
 

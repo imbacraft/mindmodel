@@ -139,7 +139,7 @@ function citing(dump) {
  * The lifecycle facts: one entry per (entity, status enum), each value with the places it is set. Also returns the
  * sites the flows rank reads, and the questions the dump could not answer (as `unresolved`, with a reason).
  */
-export function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortlist = null, repoEntity = new Map() }) {
+function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortlist = null, repoEntity = new Map() }) {
   const sites = [];
   const unresolved = [];
   if (!dump) return { lifecycle: [], sites, unresolved: [{ reason: 'no-dump', at: null }] };

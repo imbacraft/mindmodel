@@ -4,8 +4,8 @@
 // with it. Only the CLI entry points call this: a test that imports `scan` runs in the caller's own process.
 import { spawnSync } from 'node:child_process';
 
-export const SEMI_SPACE_MB = 3;
-export const HEAP_TUNED = 'MINDMODEL_HEAP_TUNED';
+const SEMI_SPACE_MB = 3;
+const HEAP_TUNED = 'MINDMODEL_HEAP_TUNED';
 
 export function retuneHeap(script = process.argv[1]) {
   if (process.env[HEAP_TUNED]) return;

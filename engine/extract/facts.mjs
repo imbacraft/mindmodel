@@ -1,5 +1,5 @@
-// Shared building blocks for the fact families ported in slice 2: citations to a method, confidence arithmetic, and
-// the envelope (§5.2) every fact wears. Extractors never read files; they answer from the model and the catalogs.
+// Shared building blocks for the fact families: citations to a method, confidence arithmetic, and
+// the envelope every fact wears. Extractors never read files; they answer from the model and the catalogs.
 import assert from 'node:assert';
 
 // A citation that the validator can resolve: overloaded names carry the range, so two overloads don't read as one.

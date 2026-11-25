@@ -41,7 +41,7 @@ function unescape(body) {
 }
 
 // '{"/a", "/b"}' -> '"/a"' (a one-element array of paths is the same path in Spring and JAX-RS).
-export function firstArrayItem(expr) {
+function firstArrayItem(expr) {
   const t = (expr ?? '').trim();
   if (!t.startsWith('{')) return t;
   const inner = t.slice(1, t.lastIndexOf('}') >= 0 ? t.lastIndexOf('}') : t.length);

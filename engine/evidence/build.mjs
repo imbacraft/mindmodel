@@ -111,7 +111,7 @@ function pluginOf(node, resolve) {
   };
 }
 
-export function readPom(text, rel = 'pom.xml') {
+function readPom(text, rel = 'pom.xml') {
   const project = childOf(parseXml(text), 'project');
   if (!project) return null;
   const value = (tag) => textOf(childOf(project, tag));
@@ -157,7 +157,7 @@ export function readPom(text, rel = 'pom.xml') {
 }
 
 // `libs.springframework.boot` -> "org.springframework.boot:spring-boot-starter-web:3.4.0" (version catalogs, TOML).
-export function readVersionCatalog(text) {
+function readVersionCatalog(text) {
   const libs = new Map(),
     versions = new Map();
   let section = '';
@@ -195,7 +195,7 @@ export function readVersionCatalog(text) {
 }
 
 // Groovy and Kotlin DSL: the same information, written three ways (`'g:a:v'`, a map, or a version-catalog accessor).
-export function readGradleBuild(source, rel = 'build.gradle', libs = new Map()) {
+function readGradleBuild(source, rel = 'build.gradle', libs = new Map()) {
   const text = stripComments(source);
   const depsText = blocksOf(text, 'dependencies').join('\n');
   const group = /\bgroup\s*[=:]\s*['"]([^'"]+)/.exec(text)?.[1];
@@ -235,7 +235,7 @@ export function readGradleBuild(source, rel = 'build.gradle', libs = new Map()) 
 }
 
 // settings.gradle(.kts): the module tree, which is what makes a folder a deployable in Gradle builds.
-export function readGradleSettings(text, rel = 'settings.gradle') {
+function readGradleSettings(text, rel = 'settings.gradle') {
   const modules = [];
   for (const m of text.matchAll(/\binclude\s*\(?\s*((?:['"][^'"]+['"]\s*,?\s*)+)/g))
     for (const q of m[1].matchAll(/['"]([^'"]+)['"]/g)) modules.push(q[1].replace(/^:/, '').replace(/:/g, '/'));
@@ -243,8 +243,8 @@ export function readGradleSettings(text, rel = 'settings.gradle') {
 }
 
 // package.json: the frontend half of a full-stack app. Coordinates are `npm:<name>`; no catalog matches them, and the
-// frontend family (slice 10) reads the same file for routes and calls. Kept here so the build evidence is complete.
-export function readPackageJson(text, rel = 'package.json') {
+// frontend family reads the same file for routes and calls. Kept here so the build evidence is complete.
+function readPackageJson(text, rel = 'package.json') {
   let pkg = {};
   try {
     pkg = JSON.parse(text);
@@ -267,7 +267,7 @@ export function readPackageJson(text, rel = 'package.json') {
 
 const BUILD_FILE = /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|package\.json)$/;
 
-export function isBuildFile(rel) {
+function isBuildFile(rel) {
   return BUILD_FILE.test(rel) && !/(^|\/)(node_modules|build|target|dist)\//.test(rel);
 }
 

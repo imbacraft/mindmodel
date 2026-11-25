@@ -295,7 +295,7 @@ export function gatewayRoutes(yml) {
 
 // --- discovery -----------------------------------------------------------------------
 const IGNORE = /(^|\/)(node_modules|target|build|\.git|mindmodel|mindmodel-system|docs|docker|scripts)(\/|$)/;
-export function findServices(folder) {
+function findServices(folder) {
   const out = [];
   const visit = (dir, depth) => {
     if (depth > 2 || IGNORE.test(dir)) return;

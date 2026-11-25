@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Phase 1 of the generation rules: collect the mechanical facts so the writer reads code only to judge, not to search.
+// Collects the mechanical facts so the writer reads code only to judge, not to search.
 // Usage: node scan.mjs <projectRoot> [outFile]   (default out: <root>/mindmodel/.work/facts.json)
 // Never copies config values (only keys) so secrets cannot leak into facts or the map.
 import fs from 'node:fs';
@@ -189,7 +189,7 @@ const linesMatching = (text, re) =>
 // --- main ---------------------------------------------------------------------
 // `import jakarta.persistence.*;` then `@Entity`: an annotation with no explicit import is resolved through the
 // catalog, not guessed. Only names a catalog knows resolve; everything else stays unknown and shows up in coverage.
-export function resolveWildcardAnnotations(model, index) {
+function resolveWildcardAnnotations(model, index) {
   const known = new Map();
   for (const [fqn, hits] of index.byFqn) known.set(fqn, hits);
   let fixed = 0;
@@ -239,7 +239,7 @@ function callStatsOf(model, dump) {
 
 // The run's scratch folder. `.work/` holds facts, the Java dump and report files (megabytes nobody should commit);
 // `mindmodel.json` and `index.html` beside it are the deliverables and stay visible.
-export function ensureWork(root) {
+function ensureWork(root) {
   const work = path.join(root, 'mindmodel', '.work');
   fs.mkdirSync(work, { recursive: true });
   // A `.gitignore` inside `.work/` keeps the scan data out of `git status` without editing the project's own file.
@@ -257,7 +257,7 @@ const describeAnn = (a) => `@${a.name}${a.args ? `(${a.args})` : ''}`.slice(0, 1
  * supertype, a field's type, a method's return type, or a call. Each `text` says what the shape is — the supertype
  * implemented, the annotation written, the argument passed — and a place is listed once.
  */
-export function modelEntries(types, { types: tSpec = {}, methods: mSpec = {}, fields: fSpec = {} } = {}) {
+function modelEntries(types, { types: tSpec = {}, methods: mSpec = {}, fields: fSpec = {} } = {}) {
   const out = [];
   for (const t of types ?? []) {
     for (const a of t.ann ?? [])
@@ -298,7 +298,7 @@ export function modelEntries(types, { types: tSpec = {}, methods: mSpec = {}, fi
  * writes: left there, the writer patches the old map and a plugin upgrade never shows. Renaming keeps the old file
  * byte-identical inside `.work/`, where it is out of the writer's way but still there for a diff.
  */
-export function retirePreviousMap(root) {
+function retirePreviousMap(root) {
   const map = path.join(root, 'mindmodel', 'mindmodel.json');
   let isFile = false;
   try {
@@ -426,7 +426,6 @@ function scheduledOf(t) {
 const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
 
   const entities = appTypes.filter((t) => hasAnn(t, 'Entity')).map(asEntry);
-  const entityNames = new Set(entities.map((e) => e.name));
   // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
   const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
   const controllers = appTypes
@@ -438,7 +437,6 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         (hasAnn(t, 'Named') && UI_SCOPES.some((s) => hasAnn(t, s))),
     )
     .map(asEntry);
-  const nonEntity = appTypes.filter((t) => !hasAnn(t, 'Entity')).map(asEntry);
   const repos = appTypes
     .filter((t) => (t.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')))
     .map(asEntry);
@@ -481,7 +479,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   // Facts belong to the app, not the repository: the model spans every module (calls cross them), but a module the
   // app excludes from its component scan is another deployable and its handlers are not this app's API.
   const endpoints = extractEndpoints(model, selected, { include: (p) => !app.isExcluded(p) });
-  // The slice-2 families, all on resolved calls: outside clients, repository writes and cache state, then the
+  // The families below, all on resolved calls: outside clients, repository writes and cache state, then the
   // transaction boundary that those together can leak through.
   const outsideCalls = extractOutside(model, selected);
   const stateFacts = extractState(model, selected);
@@ -537,10 +535,10 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
   // (a filter takes a header/cookie value as the caller with no verification call between).
   const securityWarnings = [
     ...anonymousWrites(securityRules, endpoints, methodSecurityIndex),
-    ...identityWarnings(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p)),
+    ...identityWarnings(model, (p) => /\/src\/(test|it)\//.test(p)),
   ];
-  const tenantFacts = tenantSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p));
-  // Entities and tenancy on the model (§5.4, slice 3): fields (inherited too), relations and their owning side,
+  const tenantFacts = tenantSources(model, (p) => /\/src\/(test|it)\//.test(p));
+  // Entities and tenancy on the model: fields (inherited too), relations and their owning side,
   // repository → entity from resolved type arguments; the tenant key decided by counts.
   // Flow entries are needed both by tenancy (worker callers) and by the flows themselves: compute once.
   const flowEntryList = flowEntries(model, endpoints, selected);
@@ -610,11 +608,11 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         const holder = [...model.types.values()].find((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn);
         addUser(t.authType, `${holder.file}:${holder.nameLine}`, `${holder.name} is a Sureness ${t.authType} processor`);
       }
-  for (const a of authSources(model, (rel) => read(path.join(root, rel)), (p) => /\/src\/(test|it)\//.test(p)))
+  for (const a of authSources(model, (p) => /\/src\/(test|it)\//.test(p)))
     if (!userSources.some((u) => u.kind === a.kind)) userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
   const baseControllers = new Set([...model.implsOf.keys()].filter((fqn) => model.types.get(fqn)?.methods?.length && /Controller$/.test(model.types.get(fqn)?.name ?? '')));
   const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources, baseControllers });
-  // §5.4's 30% vs the 10% this build uses: report all three and let the owner decide.
+  // The tenant key at 10%, 20% and 30% shares is reported side by side, and the owner decides.
   const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
     share,
     key: tenancyFacts(entFacts, { tenantSources: tenantFacts, model, minShare: share }).key,
@@ -811,7 +809,6 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       (m.ann ?? []).filter((a) => a.name === 'Modifying').map((a) => ({ file: r.p, line: a.line ?? m.nameLine, entity: repoEntity.get(r.name) })),
     ),
   );
-  const sdkFiles = new Set(java.filter((j) => importsOf(j.p).some((name) => Object.keys(EXT).some((k) => name.includes(k)))).map((j) => j.p));
   const deep = javaFacts({
     // Statuses are read from the dump's typed arguments and returns: the source text is not consulted.
     dump,
@@ -1090,9 +1087,9 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
 
 /**
  * One digest line for the run's classpath: `maven offline, 412 jars, 2 modules unresolved (x, y)`, or
- * `none (no mvn on PATH)`. Null when the facts carry no classpath section at all (an older facts.json).
+ * `none (no mvn on PATH)`. Null when the facts carry no classpath section at all.
  */
-export function classpathLine(cp) {
+function classpathLine(cp) {
   if (!cp) return null;
   const modules = (cp.failedModules ?? []).map((m) => m.module);
   if (cp.mode === 'none') return `- classpath: none${cp.reason ? ` — ${cp.reason}` : ''} — library types unresolved`;
@@ -1413,7 +1410,7 @@ export function summarize(f) {
     L.push(`- @ExceptionHandler in ${f.runtime.exceptionHandlers.length} files (list in facts.json)`);
   for (const b of f.runtime.baseClasses) L.push(`- base class ${b.base}: ${b.subclasses} subclasses`);
   for (const s of f.runtime.sessionState.slice(0, 20)) L.push(`- session ${s.file}:${s.line} ${s.text}`);
-  // Tenancy (§5.4): the key decided by counts, its coverage, the reads that skip it, and code without a request.
+  // Tenancy: the key decided by counts, its coverage, the reads that skip it, and code without a request.
   sec('Tenancy (the key is inferred from counts, never from the name)');
   if (f.tenancy.key) {
     const t = f.tenancy;

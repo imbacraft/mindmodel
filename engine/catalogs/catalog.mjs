@@ -9,13 +9,13 @@ import { checkSchema } from '../validate.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA = JSON.parse(fs.readFileSync(path.join(HERE, '../../schema/catalog.schema.json'), 'utf8'));
 
-export function validateCatalog(cat) {
+function validateCatalog(cat) {
   const errors = [];
   checkSchema(cat, SCHEMA, SCHEMA.$defs ?? {}, '$', (m) => errors.push(m));
   return errors;
 }
 
-export function loadCatalog(file) {
+function loadCatalog(file) {
   const cat = JSON.parse(fs.readFileSync(file, 'utf8'));
   const errors = validateCatalog(cat);
   if (errors.length) throw new Error(`${path.basename(file)}: ${errors.slice(0, 3).join('; ')}`);
@@ -31,7 +31,7 @@ export function loadCatalogs(dir = HERE) {
 }
 
 // An entry may name one FQN or the Spring/Jakarta spellings of the same idea.
-export const fqnsOf = (entry) => entry.fqns ?? (entry.fqn ? [entry.fqn] : []);
+const fqnsOf = (entry) => entry.fqns ?? (entry.fqn ? [entry.fqn] : []);
 
 // A catalog applies when the build declares one of its deps, when a source import matches one of its prefixes, or —
 // for a catalog with no `when` rule at all — always (the `ignore` catalog: annotations known to carry no fact, whose
@@ -56,7 +56,7 @@ export function selectCatalogs(catalogs, { deps = [], imports = [] } = {}) {
 }
 
 // Select once per scan: the build says which frameworks are installed, the imports confirm what the code uses.
-export function selectForModel(model, catalogs, { deps = [] } = {}) {
+function selectForModel(model, catalogs, { deps = [] } = {}) {
   const imports = [...model.importsOf.values()].flatMap((i) => i.imports.map((x) => x.name));
   return selectCatalogs(catalogs, { deps, imports });
 }

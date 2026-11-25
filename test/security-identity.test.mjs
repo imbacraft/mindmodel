@@ -7,7 +7,7 @@
 // and the extractor reads only the dump. A fixture the dump cannot answer stays unresolved and is asserted as such.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_ENGINE, dumpOf } from './fixtures/dump-run.mjs';
+import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';
 import { authSources, identityWarnings, requestReads, securityModel } from '../engine/extract/security.mjs';
 import { queries } from '../engine/model/query.mjs';
 

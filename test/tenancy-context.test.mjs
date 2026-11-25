@@ -1,4 +1,4 @@
-// Task 2 of docs/engine-improvements.md: a request parameter is a tenant only when it is *stored into* a
+// a request parameter is a tenant only when it is *stored into* a
 // request/context holder. Being read off the request — a @PathVariable, a query parameter — is a foreign key in the
 // path, and a child id named in controllers once became "the tenant" over the repository evidence.
 //
@@ -6,7 +6,7 @@
 // entity and tenancy extractors read only that dump. The store definition is `stores()`, the same one security uses.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NO_ENGINE, dumpOf } from './fixtures/dump-run.mjs';
+import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';
 import { annotationIndex, loadCatalogs, selectCatalogs, typeIndex } from '../engine/catalogs/catalog.mjs';
 import { entityFacts } from '../engine/extract/entities.mjs';
 import { tenancyFacts } from '../engine/extract/tenancy.mjs';

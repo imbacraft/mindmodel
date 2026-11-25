@@ -236,13 +236,13 @@ const globRe = (pattern) => {
 };
 // A rule only applies inside its chain's scope: `anyRequest().permitAll()` in the /api/shop/** chain does not open
 // /api/admin/**, however wide the rule itself reads.
-export const inScope = (rule, path) =>
+const inScope = (rule, path) =>
   (rule.scope ?? ['**']).some((s) => globRe(s).test(path)) && globRe(rule.pattern).test(path);
 
 // A rule applies to its path and its method: `HttpMethod.OPTIONS` or `===get` names one, `*` means every method.
 const verbOk = (rule, verb) =>
   !verb || !rule.verbs || rule.verbs.includes('*') || rule.verbs.includes(String(verb).toUpperCase());
-export const appliesTo = (rule, path, verb) => inScope(rule, path) && verbOk(rule, verb);
+const appliesTo = (rule, path, verb) => inScope(rule, path) && verbOk(rule, verb);
 
 // The access a path gets: Spring Security evaluates its filter chains in @Order, and the first chain whose
 // securityMatcher matches decides; inside a chain, the first matching requestMatchers rule decides.
@@ -503,7 +503,7 @@ const constantNameAt = (db, owner, row) => {
 };
 
 /** The name an annotation argument carries: the resolved `value` when the dump has it, else its own written text. */
-export function annotationName(a) {
+function annotationName(a) {
   const resolved = a?.args?.value;
   if (typeof resolved === 'string' && resolved) return resolved;
   const raw = String(a?.raw ?? a?.args ?? '');
@@ -516,7 +516,7 @@ export function annotationName(a) {
 // Where the tenant comes from: a store an entry performs — `stores()`, one definition shared with security — and
 // the request value that feeds it. A claim read outranks a header read: a filter that reads a header *and* a claim
 // stores what the claim said, and the header is only checked against it. Then the path. Nothing is read from text.
-export function tenantSources(model, _textOf, isTest = () => false, db = null) {
+export function tenantSources(model, isTest = () => false, db = null) {
   const d = db ?? model?.dump ?? null;
   const q = queries(d);
   const facts = [];
@@ -524,7 +524,7 @@ export function tenantSources(model, _textOf, isTest = () => false, db = null) {
     if (isTest(t.file)) continue;
     for (const m of t.methods ?? []) {
       // The cheap test first: only a request entry can hold a tenant, and a `doFilterInternal` one is read only when
-      // the request-scoped shape proves it stores something (A.4) — so no method's reach is walked for nothing.
+      // the request-scoped shape proves it stores something — so no method's reach is walked for nothing.
       const entry = TENANT_ENTRY.test(m.name ?? '');
       if (!entry && !IDENTITY_ENTRY.test(m.name ?? '')) continue;
       const id = m.id ?? `${t.fqn}#${m.name}`;
@@ -563,8 +563,8 @@ export function tenantSources(model, _textOf, isTest = () => false, db = null) {
       const cookies = reads.filter((r) => r.kind === 'cookie');
       const claim = claimReadIn(methods, d);
       const path = pathReadIn(methods, d);
-      // A cookie is an origin for the stores the run had to work for: the request-scoped shape (A.4) and a holder the
-      // classpath named. Both are stores of a request value the engine could not type before; a header is the
+      // A cookie is an origin for the stores the run had to work for: the request-scoped shape and a holder the
+      // classpath named. Both are stores of a request value the dump may not type; a header is the
       // better-known spelling of the same thing and still outranks it.
       const inferredStore = writer.via === 'try-finally-pattern' || writer.via === 'classpath';
       // A token origin is the claim's name when the read carries one, else the store's own name; and it cites the read,
@@ -1061,7 +1061,7 @@ function valueReaches(read, value, q, db, weak = false, depth = 2) {
 
 // A user source says where the caller comes from: the cookie or header a filter reads and stores. The stored caller is
 // whatever makes it current — `stores()`, the same definition tenancy uses.
-export function authSources(model, _textOf, isTest = () => false, db = null) {
+export function authSources(model, isTest = () => false, db = null) {
   const facts = [];
   const d = db ?? model?.dump ?? null;
   if (!d) return facts;
@@ -1145,7 +1145,7 @@ export const checkSummary = (p) => {
   return `${top.check} on ${top.count} of ${p.endpoints ?? p.checked} endpoint(s)${distinct > 1 ? `, ${distinct} distinct checks` : ''}`;
 };
 
-export function identityWarnings(model, _textOf, isTest = () => false, db = null) {
+export function identityWarnings(model, isTest = () => false, db = null) {
   const warnings = [];
   const d = db ?? model?.dump ?? null;
   if (!d) return warnings;
@@ -1306,10 +1306,10 @@ export function securityModel({ rules, endpoints, methodSecurity = [], tenancy =
     }
     const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
     const [modal, n] = ranked[0] ?? ['unknown', 0];
-    // A prefix rule is stated only when every endpoint under the prefix has it. The modal value used to be reported as
-    // the prefix's rule, so `/api/v1/**: role:X` covered every endpoint under the prefix when only the external
-    // controllers carried the annotation and the rest were merely authenticated. A share ("role:A on 95 of 142") still
-    // names the commonest check, which is what a reader acts on, and never claims it for the whole prefix.
+    // A prefix rule is stated only when every endpoint under the prefix has it. The modal value is never reported as
+    // the prefix's rule: `/api/v1/**: role:X` would cover every endpoint under the prefix when only the external
+    // controllers carry the annotation and the rest are merely authenticated. A share ("role:A on 95 of 142") names the
+    // commonest check, which is what a reader acts on, and never claims it for the whole prefix.
     const mixed = ranked.length > 1;
     const access = mixed ? `${modal} on ${n} of ${eps.length}` : modal;
     const example = eps.find((e) => accessOfEndpoint(e) === modal) ?? eps[0];
