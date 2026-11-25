@@ -2,6 +2,10 @@
 // A path made of constants ("{" + JOB_ID + "}") must be resolved or reported, never half-printed.
 import assert from 'node:assert';
 
+// The lines of `text` that match `re`, each as its 1-based line number and its trimmed text (cut at 160 characters).
+export const linesMatching = (text, re) =>
+  text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
+
 // Split on a separator at depth 0, keeping quotes and braces intact. Commas inside strings and generics stay put.
 export function splitTop(expr, sep = '+') {
   const out = [];

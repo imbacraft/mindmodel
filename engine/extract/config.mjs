@@ -1,5 +1,60 @@
 // Config keys from yml/properties (moved unchanged from deep.mjs).
 import assert from 'node:assert';
+import { isSrcTestPath } from '../model/names.mjs';
+
+// Config values by property key, from every application*.yml and .properties outside src/test. Channel and queue names
+// come from here; nested YAML keys are joined with dots.
+export function channelConfigOf(files, read) {
+  const out = new Map();
+  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !isSrcTestPath(x))) {
+    const text = read(f);
+    if (/\.properties$/.test(f)) {
+      for (const m of text.matchAll(/^([\w.-]+)\s*[=:]\s*(.+)$/gm)) out.set(m[1].trim(), m[2].trim());
+      continue;
+    }
+    const stack = [];
+    for (const line of text.split('\n')) {
+      const m = /^(\s*)([\w.-]+):\s*(.*)$/.exec(line);
+      if (!m || /^\s*#/.test(line)) continue;
+      const indent = m[1].length;
+      while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
+      const key = [...stack.map((x) => x[1]), m[2]].join('.');
+      if (m[3].trim() && !/^[|>]/.test(m[3].trim())) out.set(key, m[3].trim().replace(/^["']|["']$/g, ''));
+      else stack.push([indent, m[2]]);
+    }
+  }
+  return out;
+}
+
+// The application and bootstrap config files under resources, outside test and e2e folders (absolute paths).
+export function configFilesOf(files) {
+  return files.filter(
+    (f) =>
+      /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) &&
+      /resources/.test(f) &&
+      !/\/src\/test\/|[-_]e2e\b|\/e2e\//.test(f),
+  );
+}
+
+// Config keys by file, with the database a JDBC URL names. Keys only: a value never leaves the file.
+export function configKeyFacts(configFiles, rel, read) {
+  return configFiles.map((f) => {
+    const t = read(f);
+    const keys = f.endsWith('.properties')
+      ? t
+          .split('\n')
+          .map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)])
+          .filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l))
+          .map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`)
+      : t
+          .split('\n')
+          .map((l, i) => [l, i + 1])
+          .filter(([l]) => /^\s*[\w-]+:/.test(l))
+          .map(([l, n]) => `${l.trim().split(':')[0]}:${n}`);
+    const db = /jdbc:(\w+)/.exec(t);
+    return { file: rel(f), db: db?.[1], keys };
+  });
+}
 
 export function configKeys(text, props = false) {
   const out = new Map(),

@@ -6,19 +6,28 @@ import fs from 'node:fs';
 import { retuneHeap } from './heap.mjs';
 import path from 'node:path';
 import { javaFacts } from './extract/lifecycle.mjs';
-import { bootFacts, deployables } from './extract/boot.mjs';
+import { bootEntries, bootFacts, deployables } from './extract/boot.mjs';
 import { activityByFile, forgetActivity, git, gitWindow } from './activity.mjs';
 import { bindingRates } from './model/calls.mjs';
 import { buildModelFromDump } from './model/from-dump-model.mjs';
 import { dumpFor } from './run.mjs';
 import { resolve as resolveClasspath, tildify } from './classpath.mjs';
 import { open as openDump } from './dump.mjs';
-import { isSrcTestOrItPath, isSrcTestPath } from './model/names.mjs';
-import { annotationFqns, annotationIndex, loadCatalogs, meanOf, selectCatalogs, typeIndex } from './catalogs/catalog.mjs';
+import { carriesAnn, isSrcTestOrItPath, isSrcTestPath } from './model/names.mjs';
+import { linesMatching } from './model/strings.mjs';
+import {
+  annotationFqns,
+  annotationIndex,
+  loadCatalogs,
+  meanOf,
+  selectCatalogs,
+  typeIndex,
+} from './catalogs/catalog.mjs';
 import { extractEndpoints } from './extract/endpoints.mjs';
 import { buildFlows, flowEntries } from './extract/flows.mjs';
 import { channelFacts } from './extract/channels.mjs';
 import { extractSchedules } from './extract/schedules.mjs';
+import { channelConfigOf, configFilesOf, configKeyFacts } from './extract/config.mjs';
 import {
   anonymousWrites,
   authSources,
@@ -73,8 +82,13 @@ const IGNORE = new Set([
   '.agent',
 ]);
 // Compiled and binary files are never read, so don't even list them (wherever a build tool put them).
-const SKIP_EXT =
-  /\.(class|jar|war|ear|so|dll|dylib|exe|o|pyc|png|jpe?g|gif|webp|ico|bmp|tiff?|woff2?|ttf|otf|eot|mp[34]|mov|avi|zip|gz|tgz|rar|7z|pdf|psd|map)$/i;
+const SKIP_EXT = new RegExp(
+  [
+    '\\.(class|jar|war|ear|so|dll|dylib|exe|o|pyc|png|jpe?g|gif|webp|ico|bmp|tiff?|woff2?|ttf|otf|eot|',
+    'mp[34]|mov|avi|zip|gz|tgz|rar|7z|pdf|psd|map)$',
+  ].join(''),
+  'i',
+);
 const lc = (s) => s[0].toLowerCase() + s.slice(1);
 const rel = (root, p) => path.relative(root, p).split(path.sep).join('/');
 
@@ -157,8 +171,9 @@ export function routePath(line, angular = false) {
 
 // --- end-to-end test code -------------------------------------------------------
 // A Cypress/Playwright spec runs in a browser against a *running* application, so the calls it makes belong to
-// whoever wrote the test, not to this app's frontend: in one run 31 of 48 "unmatched frontend API calls" were helpers in
-// `cypress/cypress/integration/utils/`. The rule mirrors the Java scan's `src/test/` exclusion: a test folder — or the
+// whoever wrote the test, not to this app's frontend: in one run 31 of 48 "unmatched frontend API calls" were
+// helpers in `cypress/cypress/integration/utils/`. The rule mirrors the Java scan's `src/test/` exclusion: a test
+// folder — or the
 // Cypress `*.cy.*` naming — says the file is a test, wherever it sits.
 const E2E_DIRS = new Set([
   'cypress',
@@ -186,8 +201,6 @@ export const normPath = (p) =>
     .replace(/\$\{[^}]*\}|\{[^}]*\}|:\w+/g, '{}')
     .replace(/\?.*$/, '')
     .replace(/\/$/, '') || '/';
-const linesMatching = (text, re) =>
-  text.split('\n').flatMap((l, i) => (re.test(l) ? [{ line: i + 1, text: l.trim().slice(0, 160) }] : []));
 
 // --- main ---------------------------------------------------------------------
 // `import jakarta.persistence.*;` then `@Entity`: an annotation with no explicit import is resolved through the
@@ -264,18 +277,21 @@ function modelEntries(types, { types: tSpec = {}, methods: mSpec = {}, fields: f
   const out = [];
   for (const t of types ?? []) {
     for (const a of t.ann ?? [])
-      if ((tSpec.ann ?? []).some((re) => re.test(a.name))) out.push({ file: t.file, line: a.line ?? t.nameLine, text: describeAnn(a) });
+      if ((tSpec.ann ?? []).some((re) => re.test(a.name)))
+        out.push({ file: t.file, line: a.line ?? t.nameLine, text: describeAnn(a) });
     for (const sp of t.supers ?? []) {
       const name = simpleName(sp.fqn ?? sp.text ?? '');
       if (!tSpec.supers || !tSpec.supers.test(name)) continue;
-      out.push({ file: t.file, line: t.nameLine, text: `${sp.kind === 'interface' ? 'implements' : 'extends'} ${name}` });
+      const verb = sp.kind === 'interface' ? 'implements' : 'extends';
+      out.push({ file: t.file, line: t.nameLine, text: `${verb} ${name}` });
     }
     for (const f of t.fields ?? [])
       if (fSpec.type && (fSpec.type.test(f.type ?? '') || fSpec.type.test(f.typeFqn ?? '')))
         out.push({ file: t.file, line: f.line, text: `${f.type || f.typeFqn} ${f.name}` });
     for (const m of t.methods ?? []) {
       for (const a of m.ann ?? [])
-        if ((mSpec.ann ?? []).some((re) => re.test(a.name))) out.push({ file: t.file, line: a.line ?? m.nameLine, text: describeAnn(a) });
+        if ((mSpec.ann ?? []).some((re) => re.test(a.name)))
+          out.push({ file: t.file, line: a.line ?? m.nameLine, text: describeAnn(a) });
       if (mSpec.returns && mSpec.returns.test(m.returns ?? ''))
         out.push({ file: t.file, line: m.nameLine, text: `${m.returns} ${m.name}()` });
       for (const c of m.calls ?? []) {
@@ -315,89 +331,7 @@ function retirePreviousMap(root) {
   return kept;
 }
 
-export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
-  const started = Date.now();
-  const files = walk(root);
-  const R = (p) => rel(root, p);
-  const read = (p) => fs.readFileSync(p, 'utf8');
-  const byExt = {};
-  for (const f of files) {
-    const e = path.extname(f).slice(1) || '(none)';
-    byExt[e] = (byExt[e] ?? 0) + 1;
-  }
-
-  // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
-  const javaAll = files.filter((f) => f.endsWith('.java') && !isSrcTestPath(f)).map((p) => ({ p: R(p) }));
-  // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
-  const app = deployables({ java: javaAll, files, rel: R, read });
-  const java = javaAll.filter((j) => !app.isExcluded(j.p));
-  // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs). Read once, used for
-  // catalog selection (which frameworks are installed) and as a fact family of its own.
-  const buildFiles = readBuild(root, files.map(R));
-  // The model comes first: one base (the dump) answers identity, members, calls and each file's package and imports.
-  // Everything below is a query over it — the app's own files, annotations, supertypes and enum values — never a
-  // second parse.
-  // The project's own dependency jars, when the machine already has them (offline, nothing built): Spoon then resolves
-  // library types, and the library stubs say what their members are. Optional and never blocking.
-  const cpStart = Date.now();
-  const classpath = resolveClasspath(root, { files: files.map(R) });
-  const classpathMs = Date.now() - cpStart;
-  const dumpStart = Date.now();
-  const dumpRun = dumpFor(root, javaAll.map((j) => j.p), { classpath });
-  const dumpMs = Date.now() - dumpStart;
-  const dump = dumpRun.ok ? openDump(dumpRun.dir) : null;
-  const sources = new Map(
-    [...(dump?.files?.entries() ?? [])].map(([p, f]) => [
-      p,
-      {
-        pkg: f.package ?? '',
-        imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })),
-        // A file the engine could not read at all is degraded: the dump says so rather than leaving a silent empty list.
-        degraded: (f.errors ?? []).length > 0,
-      },
-    ]),
-  );
-  // Which frameworks are installed decides how a wildcard import of a name the project does not declare resolves
-  // (`jakarta.persistence.*` with `@Entity`), so the catalogs are selected before the model is built.
-  const imports = [...sources.values()].flatMap((s) => s.imports.map((x) => x.name));
-  const selected = selectCatalogs(CATALOGS, { deps: coordinatesOf(buildFiles), imports });
-  const model = buildModelFromDump(
-    dump ?? { types: new Map(), calls: [], membersOf: () => [] },
-    sources,
-    annotationFqns(selected),
-  );
-  if (!dump && javaAll.length)
-    throw new Error(`mindmodel: no engine dump for ${javaAll.length} Java file(s) (${dumpRun.reason})`);
-  const callStats = dump ? callStatsOf(model, dump) : { answered: 0, targets: 0, ambiguous: 0, unanswered: 0, sites: 0 };
-  bindingRates(model);
-
-  // This deployable's types: the app excludes other modules, and a test fixture is not part of its schema.
-  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !isSrcTestPath(t.file));
-  // By the annotation as written, or by the FQN it resolved to.
-  const carriesAnn = (t, name) =>
-    (t.ann ?? []).some((a) => a.name === name || String(a.fqn ?? '').endsWith(`.${name}`));
-  // A model type in the shape the later passes already read: identity (name, kind, annotations, supertypes, enum
-  // values) and members are the model's.
-  const asEntry = (t) => {
-    return {
-      p: t.file,
-      name: t.name,
-      kind: t.kind,
-      classLine: t.start,
-      annotations: (t.ann ?? []).map((a) => a.name),
-      extends: (t.supers ?? []).filter((s) => s.kind !== 'interface').map((s) => s.text).join(','),
-      implements: (t.supers ?? []).filter((s) => s.kind === 'interface').map((s) => s.text).join(','),
-      constants: t.enumValues ?? [],
-      scheduled: scheduledOf(t),
-      views: [],
-      table: tableOf(t),
-      fields: (t.fields ?? []).map((f) => ({ name: f.name, type: f.type, typeFqn: f.typeFqn, ann: f.ann, line: f.line })),
-      methods: t.methods ?? [],
-      type: t,
-    };
-  };
-
-// A job, an observer or a message listener: the annotation is on the method (or its parameter), the model has both.
+/** A job, an observer or a message listener: the annotation is on the method (or its parameter), the model has both. */
 function scheduledOf(t) {
   const jobs = [];
   for (const m of t.methods ?? []) {
@@ -426,42 +360,238 @@ function scheduledOf(t) {
   return jobs.sort((a, b) => a.line - b.line);
 }
 
-const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
+const tableOf = (t) =>
+  /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.name === 'Table')?.args ?? '')?.[1];
 
-  const entities = appTypes.filter((t) => carriesAnn(t, 'Entity')).map(asEntry);
-  // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
-  const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
-  // The view names a controller returns: the string values its methods hand back, as the dump wrote them.
-  // shortcut: switch arms that return a view are not read yet, a view named only there counts as dead; upgrade when one shows up.
-  const viewsReturnedBy = (t) =>
-    (t.methods ?? []).filter((m) => !carriesAnn(m, 'ResponseBody')).flatMap((m) =>
+// The SDK packages that mark an integration, and the name each one is reported under.
+const EXT = {
+  'com.stripe': 'Stripe',
+  'com.google.api': 'Google APIs',
+  'com.google.cloud': 'Google Cloud',
+  'software.amazon': 'AWS',
+  'com.amazonaws': 'AWS',
+  'com.sendgrid': 'SendGrid',
+  brevo: 'Brevo',
+  sendinblue: 'Brevo',
+  'jakarta.mail': 'SMTP mail',
+  'javax.mail': 'SMTP mail',
+  'org.springframework.mail': 'SMTP mail',
+  'org.springframework.kafka': 'Kafka',
+  'org.springframework.amqp': 'RabbitMQ',
+  redis: 'Redis',
+  'com.twilio': 'Twilio',
+  'io.minio': 'S3-compatible storage',
+  'com.openai': 'OpenAI',
+  okhttp3: '(HTTP client)',
+  'org.springframework.web.reactive.function.client': '(HTTP client: WebClient)',
+  'org.springframework.web.client.RestTemplate': '(HTTP client: RestTemplate)',
+  feign: '(HTTP client: Feign)',
+  'org.springframework.web.client.RestClient': '(HTTP client: RestClient)',
+  'java.net.http': '(HTTP client: java.net.http)',
+  'jakarta.jms': 'JMS',
+  'javax.jms': 'JMS',
+  'jakarta.ws.rs.client': '(HTTP client: JAX-RS)',
+  'javax.ws.rs.client': '(HTTP client: JAX-RS)',
+  'org.eclipse.microprofile.rest.client': '(HTTP client: MicroProfile)',
+};
+
+/**
+ * A model type in the shape the families read: identity (name, kind, annotations, supertypes, enum values), and its
+ * members.
+ */
+function typeEntry(t) {
+  return {
+    p: t.file,
+    name: t.name,
+    kind: t.kind,
+    classLine: t.start,
+    annotations: (t.ann ?? []).map((a) => a.name),
+    extends: (t.supers ?? []).filter((s) => s.kind !== 'interface').map((s) => s.text).join(','),
+    implements: (t.supers ?? []).filter((s) => s.kind === 'interface').map((s) => s.text).join(','),
+    constants: t.enumValues ?? [],
+    scheduled: scheduledOf(t),
+    views: [],
+    table: tableOf(t),
+    fields: (t.fields ?? []).map((f) => ({
+      name: f.name,
+      type: f.type,
+      typeFqn: f.typeFqn,
+      ann: f.ann,
+      line: f.line,
+    })),
+    methods: t.methods ?? [],
+    type: t,
+  };
+}
+
+// --- inventory and the model ------------------------------------------------------
+
+/** A reader that loads each file once per scan: several families read the same config and frontend files. */
+function memoizedReader() {
+  const texts = new Map();
+  return (file) => {
+    if (!texts.has(file)) texts.set(file, fs.readFileSync(file, 'utf8'));
+    return texts.get(file);
+  };
+}
+
+/** The checkout's files, the Java files the dump reads, and the one app among the deployables. */
+function inventory(root) {
+  const files = walk(root);
+  const R = (p) => rel(root, p);
+  const read = memoizedReader();
+  const byExt = {};
+  for (const f of files) {
+    const e = path.extname(f).slice(1) || '(none)';
+    byExt[e] = (byExt[e] ?? 0) + 1;
+  }
+  // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
+  const javaAll = files.filter((f) => f.endsWith('.java') && !isSrcTestPath(f)).map((p) => ({ p: R(p) }));
+  // A repo can hold several apps: map the primary one only (other deployables are named in Boot).
+  const app = deployables({ java: javaAll, files, rel: R, read });
+  const java = javaAll.filter((j) => !app.isExcluded(j.p));
+  // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs).
+  const buildFiles = readBuild(root, files.map(R));
+  return { root, files, R, read, byExt, javaAll, app, java, buildFiles };
+}
+
+/**
+ * The dump, the classpath and the model built from them: the one base every family queries. The binding rates are
+ * written onto the model here, before any family reads it.
+ */
+function loadModel({ root, files, R, javaAll, buildFiles }) {
+  // The project's own dependency jars, when the machine already has them (offline, nothing built): Spoon then resolves
+  // library types, and the library stubs say what their members are. Optional and never blocking.
+  const cpStart = Date.now();
+  const classpath = resolveClasspath(root, { files: files.map(R) });
+  const classpathMs = Date.now() - cpStart;
+  const dumpStart = Date.now();
+  const dumpRun = dumpFor(root, javaAll.map((j) => j.p), { classpath });
+  const dumpMs = Date.now() - dumpStart;
+  const dump = dumpRun.ok ? openDump(dumpRun.dir) : null;
+  const sources = new Map(
+    [...(dump?.files?.entries() ?? [])].map(([p, f]) => [
+      p,
+      {
+        pkg: f.package ?? '',
+        imports: (f.imports ?? []).map((i) => ({ name: i.name, wildcard: !!i.wildcard, isStatic: !!i.static })),
+        // A file the engine could not read at all is degraded: the dump says so rather than a silent empty list.
+        degraded: (f.errors ?? []).length > 0,
+      },
+    ]),
+  );
+  // Which frameworks are installed decides how a wildcard import of a name the project does not declare resolves
+  // (`jakarta.persistence.*` with `@Entity`), so the catalogs are selected before the model is built.
+  const imports = [...sources.values()].flatMap((s) => s.imports.map((x) => x.name));
+  const selected = selectCatalogs(CATALOGS, { deps: coordinatesOf(buildFiles), imports });
+  const model = buildModelFromDump(
+    dump ?? { types: new Map(), calls: [], membersOf: () => [] },
+    sources,
+    annotationFqns(selected),
+  );
+  if (!dump && javaAll.length)
+    throw new Error(`mindmodel: no engine dump for ${javaAll.length} Java file(s) (${dumpRun.reason})`);
+  const callStats = dump
+    ? callStatsOf(model, dump)
+    : { answered: 0, targets: 0, ambiguous: 0, unanswered: 0, sites: 0 };
+  bindingRates(model);
+  return {
+    dump,
+    dumpRun,
+    dumpMs,
+    classpath,
+    classpathMs,
+    sources,
+    selected,
+    model,
+    callStats,
+    // Built once: the method-security and the wildcard-annotation passes both read this index.
+    annIndex: annotationIndex(selected),
+  };
+}
+
+// Depth-5 walks need answers that are exact across the app, not partly filled by a fallback.
+function exactTargetsOf({ answered, ambiguous, unanswered, sites }) {
+  return !!answered && ambiguous === 0 && unanswered < sites * 0.02;
+}
+
+// --- types: entities, controllers, repositories, enums ------------------------------
+
+/** The view names a controller returns: the string values its methods hand back, as the dump wrote them. */
+// shortcut: switch arms that return a view are not read yet, a view named only there counts as dead; upgrade when one
+// shows up.
+function viewsReturnedBy(dump, t) {
+  return (t.methods ?? [])
+    .filter((m) => !carriesAnn(m, 'ResponseBody'))
+    .flatMap((m) =>
       (dump?.returnsOf(m.id) ?? [])
         .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string')
         .map((r) => ({ view: r.value.value, line: r.line })),
     );
-  const controllers = appTypes
-    .filter(
-      (t) =>
-        carriesAnn(t, 'RestController') ||
-        carriesAnn(t, 'Controller') ||
-        carriesAnn(t, 'Path') ||
-        (carriesAnn(t, 'Named') && UI_SCOPES.some((s) => carriesAnn(t, s))),
-    )
-    // A REST or JAX-RS method's string is a response body, not a view name.
-    .map((t) => ({ ...asEntry(t), views: carriesAnn(t, 'RestController') || carriesAnn(t, 'Path') ? [] : viewsReturnedBy(t) }));
-  const repos = appTypes
-    .filter((t) => (t.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')))
-    .map(asEntry);
+}
 
-  // depth-5 walks need answers that are exact across the app, not partly filled by a fallback.
-  const exactTargets =
-    !!callStats.answered && callStats.ambiguous === 0 && callStats.unanswered < callStats.sites * 0.02;
-  // frontend: React/TS and server-rendered views
+/**
+ * The app's types, as the families read them. Entries are built once and picked for the entity, controller and
+ * repository passes here, before the wildcard-annotation pass, as the facts always were.
+ */
+function typeFacts({ model, dump, app }) {
+  const appTypes = [...model.types.values()].filter((t) => !app.isExcluded(t.file) && !isSrcTestPath(t.file));
+  const appEntries = appTypes.map(typeEntry);
+  const entities = appEntries.filter((e) => carriesAnn(e.type, 'Entity'));
+  // Controllers: Spring MVC, JAX-RS resources, and JSF backing beans (@Named with a UI scope).
+  const UI_SCOPES = ['ViewScoped', 'RequestScoped', 'SessionScoped', 'ConversationScoped'];
+  const isController = (t) =>
+    carriesAnn(t, 'RestController') ||
+    carriesAnn(t, 'Controller') ||
+    carriesAnn(t, 'Path') ||
+    (carriesAnn(t, 'Named') && UI_SCOPES.some((s) => carriesAnn(t, s)));
+  const controllers = appEntries
+    .filter((e) => isController(e.type))
+    // A REST or JAX-RS method's string is a response body, not a view name.
+    .map((e) => ({
+      ...e,
+      views:
+        carriesAnn(e.type, 'RestController') || carriesAnn(e.type, 'Path') ? [] : viewsReturnedBy(dump, e.type),
+    }));
+  const repos = appEntries.filter((e) =>
+    (e.type.supers ?? []).some((s) => /\b(Jpa|Crud|PagingAndSorting)?Repository\s*</.test(s.text ?? '')),
+  );
+  // Status enums with values (lifecycles): the model's kinds and the enum constants the dump lists.
+  const enums = appTypes
+    .filter((t) => t.kind === 'enum' && /(Status|State|Type|Mode|Tier|Role|Source)$/.test(t.name ?? ''))
+    .map((t) => ({ name: t.name, file: t.file, line: t.start, values: t.enumValues ?? [] }));
+  return { appTypes, appEntries, entities, controllers, repos, enums };
+}
+
+/** Entities and repositories on the model, after the wildcard-annotation pass has named what a catalog resolves. */
+function entityFactsOf({ model, selected, annIndex }) {
+  resolveWildcardAnnotations(model, annIndex);
+  return entityFacts(model, annIndex, typeIndex(selected));
+}
+
+/** Repository simple name → entity simple name, from the resolved type arguments. */
+function repoEntityMap(entFacts) {
+  return new Map([...entFacts.repos].map(([fqn, e]) => [fqn.split('.').pop(), e.split('.').pop()]));
+}
+
+/** `@Modifying` on a repository method: the annotation row the dump wrote, on the method that carries it. */
+function modifyingWrites(repos, repoEntity) {
+  return repos.flatMap((r) =>
+    (r.methods ?? []).flatMap((m) =>
+      (m.ann ?? [])
+        .filter((a) => a.name === 'Modifying')
+        .map((a) => ({ file: r.p, line: a.line ?? m.nameLine, entity: repoEntity.get(r.name) })),
+    ),
+  );
+}
+
+// --- frontend: sources, API calls and routes ------------------------------------------
+
+/** The frontend's source files with their text, and the server-rendered view files. */
+function frontendFiles({ files, R, read }) {
+  // A bundle, a minified file or a one-line source is built output, not what the team wrote.
   const built = (f) =>
-    /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) ||
-    read(f)
-      .split('\n')
-      .some((l) => l.length > 3000);
+    /\/static\/assets\/|-[\w]{8,}\.(js|css)$|\.min\.js$/.test(f) || read(f).split('\n').some((l) => l.length > 3000);
   const fe = files
     .filter(
       (f) =>
@@ -482,162 +612,12 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         !/templates\/(emails?|library)\//.test(f),
     )
     .map((p) => ({ p: R(p), text: read(p) }));
+  return { fe, views };
+}
 
-  // status enums with values (lifecycles): the model's kinds and the enum constants the dump lists.
-  const enums = appTypes
-    .filter((t) => t.kind === 'enum' && /(Status|State|Type|Mode|Tier|Role|Source)$/.test(t.name ?? ''))
-    .map((t) => ({ name: t.name, file: t.file, line: t.start, values: t.enumValues ?? [] }));
-
-  // Facts belong to the app, not the repository: the model spans every module (calls cross them), but a module the
-  // app excludes from its component scan is another deployable and its handlers are not this app's API.
-  const endpoints = extractEndpoints(model, selected, { include: (p) => !app.isExcluded(p) });
-  // The families below, all on resolved calls: outside clients, repository writes and cache state, then the
-  // transaction boundary that those together can leak through.
-  const outsideCalls = extractOutside(model, selected);
-  const stateFacts = extractState(model, selected);
-  const tx = extractTransactions(model, selected, {
-    outside: outsideCalls,
-    writes: stateFacts.filter((f) => f.family === 'state-write'),
-  });
-  const transactions = tx.facts;
-  // Recurring work that is not @Scheduled, and the paths that skip authentication: both are read from the model and
-  // from resource files (sureness.yml, Spring Security config), not inferred by the writer.
-  const recurring = extractSchedules(model, selected);
-  // Configured values by property key (application*.yml/.properties): topic and queue names come from here.
-  const channelConfig = new Map();
-  for (const f of files.filter((x) => /application[\w.-]*\.(ya?ml|properties)$/.test(x) && !isSrcTestPath(x))) {
-    const text = read(f);
-    if (/\.properties$/.test(f)) {
-      for (const m of text.matchAll(/^([\w.-]+)\s*[=:]\s*(.+)$/gm)) channelConfig.set(m[1].trim(), m[2].trim());
-    } else {
-      const stack = [];
-      for (const line of text.split('\n')) {
-        const m = /^(\s*)([\w.-]+):\s*(.*)$/.exec(line);
-        if (!m || /^\s*#/.test(line)) continue;
-        const indent = m[1].length;
-        while (stack.length && stack[stack.length - 1][0] >= indent) stack.pop();
-        const key = [...stack.map((x) => x[1]), m[2]].join('.');
-        if (m[3].trim() && !/^[|>]/.test(m[3].trim())) channelConfig.set(key, m[3].trim().replace(/^["']|["']$/g, ''));
-        else stack.push([indent, m[2]]);
-      }
-    }
-  }
-  const resourceFiles = files
-    .filter((f) => /\.(?:ya?ml|properties)$/.test(f) && /sureness|application|security/i.test(f))
-    .map((f) => ({ p: R(f), text: read(f) }));
-  // Security as facts: one rule per chain prefix (Spring Security chains + sureness.yml), the anonymous writes those
-  // rules expose without a method-level check, and where the tenant comes from.
-  const msIndex = annotationIndex(selected);
-  const methodSec = methodSecurityFacts(model, (fqn, on) => meanOf(msIndex, fqn, on)?.means ?? null);
-  const methodSecurityIndex = methodSec.index;
-  // The same rule appears in several copies of a config (startup, manager, e2e); one fact per prefix and access.
-  const ruleSeen = new Set();
-  const securityRules = [
-    ...springChains(model),
-    ...resourceFiles.filter((r) => /sureness\.ya?ml$/i.test(r.p) && !isSrcTestPath(r.p)).flatMap((r) => surenessRules(r.text, r.p)),
-    ...files
-      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !isSrcTestPath(f))
-      .flatMap((f) => shiroRules(read(f), R(f))),
-    ...shiroCodeRules(model),
-    ...files
-      .filter((f) => /web\.xml$/.test(f) && !isSrcTestPath(f))
-      .flatMap((f) => webXmlRules(read(f), R(f))),
-  ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
-  // Two warning kinds in one family: an anonymous prefix that exposes writes, and an identity the client asserts
-  // (a filter takes a header/cookie value as the caller with no verification call between).
-  const securityWarnings = [
-    ...anonymousWrites(securityRules, endpoints, methodSecurityIndex),
-    ...identityWarnings(model, isSrcTestOrItPath),
-  ];
-  const tenantFacts = tenantSources(model, isSrcTestOrItPath);
-  // Entities and tenancy on the model: fields (inherited too), relations and their owning side,
-  // repository → entity from resolved type arguments; the tenant key decided by counts.
-  // Flow entries are needed both by tenancy (worker callers) and by the flows themselves: compute once.
-  const flowEntryList = flowEntries(model, endpoints, selected);
-  const catalogIndex = annotationIndex(selected);
-  resolveWildcardAnnotations(model, catalogIndex);
-  const entFacts = entityFacts(model, catalogIndex, typeIndex(selected));
-  // Callers that are no-request code: jobs, listeners, async methods and worker loops.
-  const entryMethods = [
-    ...flowEntryList.filter((e) => e.kind === 'worker').map((e) => `${e.t.fqn}#${e.m.name}`),
-    ...[...model.types.values()].flatMap((t) =>
-      (t.methods ?? [])
-        .filter((m) => (m.ann ?? []).some((a) => /(Scheduled|Schedule|JmsListener|KafkaListener|RabbitListener|EventListener|Async)$/.test(a.name ?? '')))
-        .map((m) => `${t.fqn}#${m.name}`),
-    ),
-  ];
-  // Webhook endpoints are request handlers, but nothing behind them has a logged-in tenant: reads they alone call are
-  // judged like jobs (cross-tenant by design), not as unscoped request reads.
-  // The id names the method that runs, which for an inherited endpoint is the declaring class's method.
-  const methodIdOf = (e) => `${e.declaredIn ?? e.handlerFqn}#${String(e.handler).split('.').pop()}`;
-  const webhookIds = endpoints
-    .filter((e) => /webhook|callback|\bhooks?\b/i.test(e.path ?? ''))
-    .map(methodIdOf);
-  const requestMethods = endpoints.map(methodIdOf).filter((id) => !webhookIds.includes(id));
-  entryMethods.push(...webhookIds);
-  const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
-  // Where the user comes from, from what the code configures: the security chain's own calls (httpBasic(),
-  // oauth2ResourceServer().jwt(), formLogin()/sessionManagement()) and filters that authenticate from a header by
-  // setting the security context. Structural, not text matching.
-  // The citation is the call's own line, which the dump wrote: the source text is not consulted for it.
-  const citeOf = (t, c) => `${t.file}:${c.line}`;
-  const userSources = [];
-  const addUser = (kind, cite, why) => {
-    if (cite && !userSources.some((u) => u.kind === kind)) userSources.push({ kind, cites: [cite], why });
-  };
-  for (const t of model.types.values())
-    for (const m of t.methods ?? [])
-      for (const c of m.calls ?? []) {
-        if (c.name === 'httpBasic') addUser('basic auth', citeOf(t, c), `${t.name} configures httpBasic()`);
-        if (c.name === 'oauth2ResourceServer' || c.name === 'jwt')
-          addUser('JWT bearer token', citeOf(t, c), `${t.name} configures ${c.name}()`);
-        if (c.name === 'formLogin') addUser('HTTP session', citeOf(t, c), `${t.name} configures formLogin()`);
-        if (c.name === 'setAttribute' && (m.calls ?? []).some((x) => x.name === 'getSession'))
-          addUser('HTTP session', citeOf(t, c), `${t.name}#${m.name} stores the caller in the HttpSession`);
-        // `sessionCreationPolicy(STATELESS)` is a call whose argument names the policy: a stateless app has no session.
-        if (
-          c.name === 'sessionManagement' &&
-          !(m.calls ?? []).some((x) => /STATELESS|NEVER/.test((x.args ?? []).join(' ')))
-        )
-          addUser('HTTP session', citeOf(t, c), `${t.name} configures a stateful sessionManagement()`);
-        if (/^(setAuthentication|setContext)$/.test(c.name ?? '') && (/Filter$/.test(t.name) || (m.calls ?? []).some((x) => ['getHeader', 'getCookies'].includes(x.name))))
-          addUser('API token', citeOf(t, c), `${t.name}#${m.name} sets the authentication from the request`);
-        // A filter that reads the Authorization header and stores the caller (attribute, ThreadLocal, SecurityContext).
-        if (
-          /Filter$/.test(t.name) &&
-          (m.calls ?? []).some((x) => x.name === 'getHeader') &&
-          (m.calls ?? []).some((x) => ['setAttribute', 'set', 'setAuthentication'].includes(x.name)) &&
-          // The header the filter reads names the token: the dump folded the argument, no source text is read.
-          (m.calls ?? []).some((x) => (x.args ?? []).some((a) => /Authorization|Bearer|token/i.test(a)))
-        )
-          addUser('API token', citeOf(t, c), `${t.name}#${m.name} reads the token header and stores the caller`);
-      }
-
-  // Sureness declares its authentication types as processors; the catalog names them.
-  for (const { catalog } of selected)
-    for (const t of catalog.types ?? [])
-      if (t.means === 'auth-type' && [...model.types.values()].some((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn)) {
-        const holder = [...model.types.values()].find((x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn);
-        addUser(t.authType, `${holder.file}:${holder.nameLine}`, `${holder.name} is a Sureness ${t.authType} processor`);
-      }
-  for (const a of authSources(model, isSrcTestOrItPath))
-    if (!userSources.some((u) => u.kind === a.kind)) userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
-  const baseControllers = new Set([...model.implsOf.keys()].filter((fqn) => model.types.get(fqn)?.methods?.length && /Controller$/.test(model.types.get(fqn)?.name ?? '')));
-  const securityModelFact = buildSecurityModel({ rules: securityRules, endpoints, methodSecurity: methodSec.facts, tenancy, userSources, baseControllers });
-  // The tenant key at 10%, 20% and 30% shares is reported side by side, and the owner decides.
-  const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
-    share,
-    key: tenancyFacts(entFacts, { tenantSources: tenantFacts, model, minShare: share }).key,
-  }));
-  const withoutRequest = noRequestPaths({
-    model,
-    tenancy,
-    repos: entFacts.repos,
-    // Worker entries only matter when there is a key to reach; skipping the build keeps large keyless apps fast.
-    extra: tenancy.key ? flowEntryList.filter((e) => e.kind === 'worker').map((e) => ({ kind: 'worker', t: e.t, m: e.m })) : [],
-  });
-  const cov = coverage(model, endpoints, selected, { build: buildFiles, rels: files.map(R) });
-  const feCalls = fe.flatMap((f) =>
+/** The `/api` calls the frontend makes, each with the verb of the request options written next to it, if any. */
+function frontendApiCalls(fe) {
+  return fe.flatMap((f) =>
     f.source.split('\n').flatMap((l, i) => {
       const m = /["'`](\/api\/[^"'`\s]*)["'`]/.exec(l);
       if (!m) return [];
@@ -649,6 +629,12 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       return [{ path: normPath(m[1]), verb: vm?.[1]?.toUpperCase(), file: f.p, line: i + 1 }];
     }),
   );
+}
+
+/**
+ * Each frontend call joined to the endpoint it reaches: the same path (placeholders match any segment), then the verb.
+ */
+function joinApiCalls(calls, endpoints) {
   const epByPath = new Map();
   for (const e of endpoints) {
     if (!epByPath.has(e.path)) epByPath.set(e.path, []);
@@ -659,11 +645,28 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       b = call.split('/');
     return a.length === b.length && a.every((s, i) => s === '{}' || b[i] === '{}' || s === b[i]);
   };
-  const joined = feCalls.map((c) => {
+  return calls.map((c) => {
     const cands = epByPath.get(c.path) ?? endpoints.filter((e) => segMatch(e.path, c.path));
     const hit = cands.find((e) => !c.verb || e.verb === c.verb || e.verb === 'ANY') ?? cands[0];
     return { ...c, handler: hit ? `${hit.file}:${hit.line}` : null };
   });
+}
+
+/**
+ * Frontend routes: each `<Route path>` line, or each Angular route-array `path:` line, in the files that declare them.
+ */
+function frontendRoutes(fe) {
+  return fe.flatMap((f) => {
+    const ng = isAngularRoutes(f.source);
+    return f.source.split('\n').flatMap((l, i) => {
+      const p = routePath(l, ng);
+      return p == null ? [] : [{ path: p, file: f.p, line: i + 1 }];
+    });
+  });
+}
+
+/** Which views the controllers return, and which view files nothing returns or includes. */
+function viewFacts(controllers, views) {
   const viewUse = {};
   for (const c of controllers)
     for (const v of c.views)
@@ -677,13 +680,189 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     ),
   );
   const deadViews = viewNames
-    .filter((v) => !Object.keys(viewUse).some((k) => k === v.name || k.endsWith('/' + v.name)) && !included.has(v.name))
+    .filter(
+      (v) =>
+        !Object.keys(viewUse).some((k) => k === v.name || k.endsWith('/' + v.name)) && !included.has(v.name),
+    )
     .map((v) => v.file);
+  return { viewUse, deadViews };
+}
 
-  // runtime machinery, from the model: an annotation, a supertype, a call or a field's type — never a line of source.
+// --- security, tenancy and user sources -------------------------------------------------
+
+/**
+ * The rules the security configs state: Spring chains, sureness.yml, Shiro, the code's own calls and web.xml. One rule
+ * per chain prefix and access, however many copies of a config repeat it.
+ */
+function securityRulesOf(model, files, R, read) {
+  const resourceFiles = files
+    .filter((f) => /\.(?:ya?ml|properties)$/.test(f) && /sureness|application|security/i.test(f))
+    .map((f) => ({ p: R(f), text: read(f) }));
+  const ruleSeen = new Set();
+  return [
+    ...springChains(model),
+    ...resourceFiles
+      .filter((r) => /sureness\.ya?ml$/i.test(r.p) && !isSrcTestPath(r.p))
+      .flatMap((r) => surenessRules(r.text, r.p)),
+    ...files
+      .filter((f) => /shiro\.(ini|properties)$/i.test(f) && !isSrcTestPath(f))
+      .flatMap((f) => shiroRules(read(f), R(f))),
+    ...shiroCodeRules(model),
+    ...files
+      .filter((f) => /web\.xml$/.test(f) && !isSrcTestPath(f))
+      .flatMap((f) => webXmlRules(read(f), R(f))),
+  ].filter((r) => !ruleSeen.has(r.id) && ruleSeen.add(r.id));
+}
+
+/** Security as facts: the rules, the method-level security index, and the warnings the rules expose. */
+function securityOf({ model, files, R, read, annIndex }, endpoints) {
+  const methodSec = methodSecurityFacts(model, (fqn, on) => meanOf(annIndex, fqn, on)?.means ?? null);
+  const securityRules = securityRulesOf(model, files, R, read);
+  // Two warning kinds in one family: an anonymous prefix that exposes writes, and an identity the client asserts
+  // (a filter takes a header/cookie value as the caller with no verification call between).
+  const securityWarnings = [
+    ...anonymousWrites(securityRules, endpoints, methodSec.index),
+    ...identityWarnings(model, isSrcTestOrItPath),
+  ];
+  return { methodSec, securityRules, securityWarnings };
+}
+
+/**
+ * Where the user comes from, from what the code configures: the security chain's own calls (httpBasic(),
+ * oauth2ResourceServer().jwt(), formLogin(), sessionManagement()) and filters that authenticate from a header by
+ * setting the security context. Structural, not text matching; the citation is the call's own line.
+ */
+function userSourcesOf(model, selected) {
+  const userSources = [];
+  const addUser = (kind, cite, why) => {
+    if (cite && !userSources.some((u) => u.kind === kind)) userSources.push({ kind, cites: [cite], why });
+  };
+  const citeOf = (t, c) => `${t.file}:${c.line}`;
+  for (const t of model.types.values())
+    for (const m of t.methods ?? []) {
+      const calls = m.calls ?? [];
+      for (const c of calls) {
+        if (c.name === 'httpBasic') addUser('basic auth', citeOf(t, c), `${t.name} configures httpBasic()`);
+        if (c.name === 'oauth2ResourceServer' || c.name === 'jwt')
+          addUser('JWT bearer token', citeOf(t, c), `${t.name} configures ${c.name}()`);
+        if (c.name === 'formLogin') addUser('HTTP session', citeOf(t, c), `${t.name} configures formLogin()`);
+        if (c.name === 'setAttribute' && calls.some((x) => x.name === 'getSession'))
+          addUser('HTTP session', citeOf(t, c), `${t.name}#${m.name} stores the caller in the HttpSession`);
+        // `sessionCreationPolicy(STATELESS)` names the policy in its argument: a stateless app has no session.
+        if (c.name === 'sessionManagement' && !calls.some((x) => /STATELESS|NEVER/.test((x.args ?? []).join(' '))))
+          addUser('HTTP session', citeOf(t, c), `${t.name} configures a stateful sessionManagement()`);
+        if (
+          /^(setAuthentication|setContext)$/.test(c.name ?? '') &&
+          (/Filter$/.test(t.name) || calls.some((x) => ['getHeader', 'getCookies'].includes(x.name)))
+        )
+          addUser('API token', citeOf(t, c), `${t.name}#${m.name} sets the authentication from the request`);
+        // A filter that reads the Authorization header and stores the caller (attribute, ThreadLocal, SecurityContext).
+        if (
+          /Filter$/.test(t.name) &&
+          calls.some((x) => x.name === 'getHeader') &&
+          calls.some((x) => ['setAttribute', 'set', 'setAuthentication'].includes(x.name)) &&
+          // The header the filter reads names the token: the dump folded the argument, no source text is read.
+          calls.some((x) => (x.args ?? []).some((a) => /Authorization|Bearer|token/i.test(a)))
+        )
+          addUser('API token', citeOf(t, c), `${t.name}#${m.name} reads the token header and stores the caller`);
+      }
+    }
+  // Sureness declares its authentication types as processors; the catalog names them.
+  const types = [...model.types.values()];
+  for (const { catalog } of selected)
+    for (const t of catalog.types ?? []) {
+      if (t.means !== 'auth-type') continue;
+      const holder = types.find(
+        (x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn,
+      );
+      if (holder)
+        addUser(
+          t.authType,
+          `${holder.file}:${holder.nameLine}`,
+          `${holder.name} is a Sureness ${t.authType} processor`,
+        );
+    }
+  for (const a of authSources(model, isSrcTestOrItPath))
+    if (!userSources.some((u) => u.kind === a.kind))
+      userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
+  return userSources;
+}
+
+/**
+ * The tenant key and the paths that run without a request. Callers that are no-request code (jobs, listeners, async
+ * methods, worker loops, webhooks) are named as entry methods; the key is also reported at 10%, 20% and 30% shares.
+ */
+function tenancyOf(model, { endpoints, flowEntryList, entFacts, tenantFacts }) {
+  // Callers that are no-request code: jobs, listeners, async methods and worker loops.
+  const entryMethods = [
+    ...flowEntryList.filter((e) => e.kind === 'worker').map((e) => `${e.t.fqn}#${e.m.name}`),
+    ...[...model.types.values()].flatMap((t) =>
+      (t.methods ?? [])
+        .filter((m) =>
+          (m.ann ?? []).some((a) =>
+            /(Scheduled|Schedule|JmsListener|KafkaListener|RabbitListener|EventListener|Async)$/.test(a.name ?? ''),
+          ),
+        )
+        .map((m) => `${t.fqn}#${m.name}`),
+    ),
+  ];
+  // Webhook endpoints are request handlers, but nothing behind them has a logged-in tenant: reads they alone call are
+  // judged like jobs (cross-tenant by design), not as unscoped request reads.
+  // The id names the method that runs, which for an inherited endpoint is the declaring class's method.
+  const methodIdOf = (e) => `${e.declaredIn ?? e.handlerFqn}#${String(e.handler).split('.').pop()}`;
+  const webhookIds = endpoints.filter((e) => /webhook|callback|\bhooks?\b/i.test(e.path ?? '')).map(methodIdOf);
+  const requestMethods = endpoints.map(methodIdOf).filter((id) => !webhookIds.includes(id));
+  entryMethods.push(...webhookIds);
+  const tenancy = tenancyFacts(entFacts, { tenantSources: tenantFacts, model, entryMethods, requestMethods });
+  // The tenant key at 10%, 20% and 30% shares is reported side by side, and the owner decides.
+  const tenancyThresholds = [0.1, 0.2, 0.3].map((share) => ({
+    share,
+    key: tenancyFacts(entFacts, { tenantSources: tenantFacts, model, minShare: share }).key,
+  }));
+  const withoutRequest = noRequestPaths({
+    model,
+    tenancy,
+    repos: entFacts.repos,
+    // Worker entries only matter when there is a key to reach; skipping the build keeps large keyless apps fast.
+    extra: tenancy.key
+      ? flowEntryList.filter((e) => e.kind === 'worker').map((e) => ({ kind: 'worker', t: e.t, m: e.m }))
+      : [],
+  });
+  return { tenancy, tenancyThresholds, withoutRequest };
+}
+
+/** The security model: rules, endpoints, method security, tenancy and user sources, with the base controllers. */
+function securityModelOf(model, { endpoints, sec, tenancy, userSources }) {
+  const baseControllers = new Set(
+    [...model.implsOf.keys()].filter((fqn) => {
+      const t = model.types.get(fqn);
+      return t?.methods?.length && /Controller$/.test(t.name ?? '');
+    }),
+  );
+  return buildSecurityModel({
+    rules: sec.securityRules,
+    endpoints,
+    methodSecurity: sec.methodSec.facts,
+    tenancy,
+    userSources,
+    baseControllers,
+  });
+}
+
+// --- runtime, background and boot-adjacent families ----------------------------------------
+
+/** Runtime machinery, from the model: an annotation, a supertype, a call or a field's type, never a line of source. */
+function runtimeMachinery(appTypes, views) {
   const interceptors = modelEntries(appTypes, {
-    types: { ann: [/^(WebFilter|Interceptor)$/], supers: /(ContainerRequestFilter|ContainerResponseFilter|OncePerRequestFilter|HandlerInterceptor|Filter)$/ },
-    methods: { ann: [/^AroundInvoke$/], returns: /FilterRegistrationBean/, calls: /^(addInterceptor|addPathPatterns|excludePathPatterns)$/ },
+    types: {
+      ann: [/^(WebFilter|Interceptor)$/],
+      supers: /(ContainerRequestFilter|ContainerResponseFilter|OncePerRequestFilter|HandlerInterceptor|Filter)$/,
+    },
+    methods: {
+      ann: [/^AroundInvoke$/],
+      returns: /FilterRegistrationBean/,
+      calls: /^(addInterceptor|addPathPatterns|excludePathPatterns)$/,
+    },
   });
   const contextScopes = modelEntries(appTypes, {
     types: { ann: [/^(RequestScoped|SessionScoped|ConversationScoped|ViewScoped|Scope|ControllerAdvice)$/] },
@@ -695,42 +874,22 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
     ...new Set(
       appTypes
         .filter(
-          (t) => (t.supers ?? []).some((s) => /ExceptionMapper$/.test(s.fqn ?? s.text ?? '')) ||
+          (t) =>
+            (t.supers ?? []).some((s) => /ExceptionMapper$/.test(s.fqn ?? s.text ?? '')) ||
             (t.methods ?? []).some((m) => (m.ann ?? []).some((a) => a.name === 'ExceptionHandler')),
         )
         .map((t) => t.file),
     ),
   ];
-  const background = appTypes.flatMap((t) => scheduledOf(t).map((s) => ({ ...s, file: t.file, cls: t.name })));
-  const sockets = endpoints
-    .filter((e) => e.verb === 'STOMP')
-    .map((e) => ({ file: e.file, line: e.line, path: e.path }))
-    .concat(modelEntries(appTypes, { methods: { calls: /^(registerStompEndpoints|enableSimpleBroker)$/ } }));
-  const runners = appTypes
-    .filter(
-      (t) =>
-        (t.supers ?? []).some((s) => /(CommandLineRunner|ApplicationRunner)/.test(s.text ?? '')) || carriesAnn(t, 'Startup'),
-    )
-    .map((t) => ({ file: t.file, line: t.start }));
-  // Jakarta Batch: jobs are XML files under META-INF/batch-jobs; JobOperator.start("name") starts them.
-  const batchJobs = files
-    .filter((f) => /META-INF\/batch-jobs\/[\w.-]+\.xml$/.test(f))
-    .map((f) => {
-      const t = read(f),
-        id = /<job\b[^>]*\bid="([^"]+)"/.exec(t)?.[1] ?? path.basename(f, '.xml');
-      // `JobOperator.start("name")`: the dump's call row, with the job id as its folded argument.
-      const starts = appTypes.flatMap((t) =>
-        (t.methods ?? [])
-          .flatMap((m) => (m.calls ?? []).filter((c) => c.name === 'start' && (c.args ?? []).includes(`"${id}"`)))
-          .map((c) => `${t.file}:${c.line}`),
-      );
-      return {
-        kind: 'Batch job',
-        args: `${id}: ${[...t.matchAll(/<(batchlet|reader|processor|writer)\b[^>]*\bref="([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`).join(', ')}${starts.length ? `; started at ${starts.join(', ')}` : ''}`,
-        file: R(f),
-        line: 1,
-      };
-    });
+  const baseClasses = Object.entries(
+    appTypes.reduce((acc, t) => {
+      const b = String((t.supers ?? []).find((s) => s.kind !== 'interface')?.text ?? '').replace(/<.*/, '');
+      if (b && !/Repository$|Exception$|^Object$/.test(b)) acc[b] = (acc[b] ?? 0) + 1;
+      return acc;
+    }, {}),
+  )
+    .filter(([, n]) => n >= 3)
+    .map(([b, n]) => ({ base: b, subclasses: n }));
   // Session state: an attribute written or read on the HTTP session, and the @SessionAttributes declaration. A view
   // that reads `sessionScope.x` is not Java, and stays a view-file fact, not a runtime one.
   const sessionState = modelEntries(appTypes, {
@@ -743,117 +902,58 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       ),
     )
     .slice(0, 80);
-  const baseClasses = Object.entries(
-    appTypes.reduce((acc, t) => {
-      const b = String((t.supers ?? []).find((s) => s.kind !== 'interface')?.text ?? '').replace(/<.*/, '');
-      if (b && !/Repository$|Exception$|^Object$/.test(b)) acc[b] = (acc[b] ?? 0) + 1;
-      return acc;
-    }, {}),
-  )
-    .filter(([, n]) => n >= 3)
-    .map(([b, n]) => ({ base: b, subclasses: n }));
+  return { interceptors, contextScopes, exceptionHandlers, baseClasses, sessionState };
+}
 
-  // externals: SDK imports + config keys (keys only, never values)
-  const EXT = {
-    'com.stripe': 'Stripe',
-    'com.google.api': 'Google APIs',
-    'com.google.cloud': 'Google Cloud',
-    'software.amazon': 'AWS',
-    'com.amazonaws': 'AWS',
-    'com.sendgrid': 'SendGrid',
-    brevo: 'Brevo',
-    sendinblue: 'Brevo',
-    'jakarta.mail': 'SMTP mail',
-    'javax.mail': 'SMTP mail',
-    'org.springframework.mail': 'SMTP mail',
-    'org.springframework.kafka': 'Kafka',
-    'org.springframework.amqp': 'RabbitMQ',
-    redis: 'Redis',
-    'com.twilio': 'Twilio',
-    'io.minio': 'S3-compatible storage',
-    'com.openai': 'OpenAI',
-    okhttp3: '(HTTP client)',
-    'org.springframework.web.reactive.function.client': '(HTTP client: WebClient)',
-    'org.springframework.web.client.RestTemplate': '(HTTP client: RestTemplate)',
-    feign: '(HTTP client: Feign)',
-    'org.springframework.web.client.RestClient': '(HTTP client: RestClient)',
-    'java.net.http': '(HTTP client: java.net.http)',
-    'jakarta.jms': 'JMS',
-    'javax.jms': 'JMS',
-    'jakarta.ws.rs.client': '(HTTP client: JAX-RS)',
-    'javax.ws.rs.client': '(HTTP client: JAX-RS)',
-    'org.eclipse.microprofile.rest.client': '(HTTP client: MicroProfile)',
-  };
-  // The file's imports, as the dump's header reader wrote them: an SDK is installed when one of its packages is imported.
-  const importsOf = (relPath) => (sources.get(relPath)?.imports ?? []).map((i) => i.name);
-  const externals = {};
-  for (const j of java)
-    for (const [k, v] of Object.entries(EXT))
-      if (importsOf(j.p).some((name) => name.includes(k))) (externals[v] ??= []).push(j.p);
-  const configFiles = files.filter(
-    (f) =>
-      /(application|bootstrap)[\w-]*\.(properties|ya?ml)$/.test(f) &&
-      /resources/.test(f) &&
-      !/\/src\/test\/|[-_]e2e\b|\/e2e\//.test(f),
-  );
-  const configKeys = configFiles.map((f) => {
-    const t = read(f);
-    const keys = f.endsWith('.properties')
-      ? t
-          .split('\n')
-          .map((l, i) => [l.replace(/^#\s*/, ''), i + 1, /^\s*#/.test(l)])
-          .filter(([l]) => /^[\w.\-\[\]]+\s*[=:]/.test(l))
-          .map(([l, n, c]) => `${l.split(/[=:]/)[0].trim()}:${n}${c ? ' (commented)' : ''}`)
-      : t
-          .split('\n')
-          .map((l, i) => [l, i + 1])
-          .filter(([l]) => /^\s*[\w-]+:/.test(l))
-          .map(([l, n]) => `${l.trim().split(':')[0]}:${n}`);
-    const db = /jdbc:(\w+)/.exec(t);
-    return { file: R(f), db: db?.[1], keys };
-  });
-  // state: who writes each entity (repository mutations per caller), copies of state
-  // The repository → entity map comes from the model's resolved type arguments (entities.mjs); no name patterns.
-  const repoEntity = new Map([...entFacts.repos].map(([fqn, e]) => [fqn.split('.').pop(), e.split('.').pop()]));
-  // `@Modifying` on a repository method: the annotation row the dump wrote, on the method that carries it.
-  const modifying = repos.flatMap((r) =>
-    (r.methods ?? []).flatMap((m) =>
-      (m.ann ?? []).filter((a) => a.name === 'Modifying').map((a) => ({ file: r.p, line: a.line ?? m.nameLine, entity: repoEntity.get(r.name) })),
-    ),
-  );
-  const deep = javaFacts({
-    // Statuses are read from the dump's typed arguments and returns: the source text is not consulted.
-    dump,
-    model,
-    java: appTypes.map(asEntry),
-    repoEntity,
-    EXT,
-    enums,
-    entities,
-    shortlist: new Set([...entFacts.entities].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15).map((e) => e.name)),
-    endpoints,
-  });
-  const bootComputed = bootFacts({ root, files, rel: R, git, app });
+/** Jakarta Batch: jobs are XML files under META-INF/batch-jobs; JobOperator.start("name") starts them. */
+function batchJobsOf(appTypes, files, R, read) {
+  return files
+    .filter((f) => /META-INF\/batch-jobs\/[\w.-]+\.xml$/.test(f))
+    .map((f) => {
+      const text = read(f);
+      const id = /<job\b[^>]*\bid="([^"]+)"/.exec(text)?.[1] ?? path.basename(f, '.xml');
+      // `JobOperator.start("name")`: the dump's call row, with the job id as its folded argument.
+      const starts = appTypes.flatMap((t) =>
+        (t.methods ?? [])
+          .flatMap((m) => (m.calls ?? []).filter((c) => c.name === 'start' && (c.args ?? []).includes(`"${id}"`)))
+          .map((c) => `${t.file}:${c.line}`),
+      );
+      const steps = [...text.matchAll(/<(batchlet|reader|processor|writer)\b[^>]*\bref="([^"]+)"/g)].map(
+        (m) => `${m[1]} ${m[2]}`,
+      );
+      return {
+        kind: 'Batch job',
+        args: `${id}: ${steps.join(', ')}${starts.length ? `; started at ${starts.join(', ')}` : ''}`,
+        file: R(f),
+        line: 1,
+      };
+    });
+}
 
-  // boot: entry points, profile switches, how to run locally
-  // A runnable entry point: a `main` method (the dump's `isMain`) whose class is a Spring Boot app or whose body runs
-  // `SpringApplication`.
-  const mains = [...model.types.values()]
-    .filter((t) => !isSrcTestPath(t.file))
+/** Work that runs without a request, the sockets the app opens and the runners it starts with. */
+function backgroundOf({ files, R, read }, { appTypes, appEntries }, endpoints) {
+  const background = appEntries.flatMap((e) => e.scheduled.map((s) => ({ ...s, file: e.p, cls: e.name })));
+  const sockets = endpoints
+    .filter((e) => e.verb === 'STOMP')
+    .map((e) => ({ file: e.file, line: e.line, path: e.path }))
+    .concat(modelEntries(appTypes, { methods: { calls: /^(registerStompEndpoints|enableSimpleBroker)$/ } }));
+  const runners = appTypes
     .filter(
       (t) =>
-        t.methods.some(
-          (m) =>
-            m.isMain &&
-            (carriesAnn(t, 'SpringBootApplication') ||
-              carriesAnn(t, 'SpringBootConfiguration') ||
-              (m.calls ?? []).some((c) => /(^|\.)SpringApplication(Builder)?$/.test(c.recvFqn ?? ''))),
-        ),
+        (t.supers ?? []).some((s) => /(CommandLineRunner|ApplicationRunner)/.test(s.text ?? '')) ||
+        carriesAnn(t, 'Startup'),
     )
-    .flatMap((t) =>
-      t.methods.filter((m) => m.isMain).map((m) => ({ file: t.file, line: m.nameLine })),
-    );
-  const switches = modelEntries(appTypes, {
+    .map((t) => ({ file: t.file, line: t.start }));
+  return {
+    scheduledAsyncListeners: [...background, ...batchJobsOf(appTypes, files, R, read)],
+    sockets,
+    runners,
+  };
+}
+
+/** Profile and conditional switches: the annotations that choose a bean or profile, and the profile lines in config. */
+function switchesOf(appTypes, configFiles, R, read) {
+  return modelEntries(appTypes, {
     types: { ann: [/^(Profile|ConditionalOnProperty|ConditionalOnMissingBean)$/] },
     methods: { ann: [/^(Profile|ConditionalOnProperty|ConditionalOnMissingBean)$/] },
   }).concat(
@@ -861,48 +961,23 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       linesMatching(read(f), /profiles?\.active|on-profile/).map((m) => ({ file: R(f), ...m })),
     ),
   );
-  const feEntries = files
-    .filter(
-      (f) =>
-        /(^|\/)(vite\.config\.\w+|index\.html|src\/main\.[jt]sx?|src\/index\.[jt]sx?|angular\.json|proxy\.conf\.json)$/.test(
-          R(f),
-        ) && !/node_modules|resources\/(static|templates)/.test(R(f)),
-    )
-    .map((f) => ({
-      file: R(f),
-      lines: linesMatching(
-        read(f),
-        /port|proxy|target|createRoot|render\(|type="module"|bootstrapApplication|bootstrapModule|createApp|new App\(|mount\(|"main":|"browser":/,
-      ).slice(0, 8),
-    }));
-  const compose = files
-    .filter((f) => /(^|\/)(docker-)?compose[\w.-]*\.ya?ml$/.test(R(f)))
-    .map((f) => ({
-      file: R(f),
-      services: linesMatching(read(f), /^  [\w-]+:\s*$/).map((m) => `${m.text.replace(':', '')}:${m.line}`),
-    }));
-  const scripts = files
-    .filter((f) => /(^|\/)package\.json$/.test(R(f)) && R(f).split('/').length <= 3)
-    .map((f) => {
-      try {
-        return { file: R(f), scripts: JSON.parse(read(f)).scripts ?? {} };
-      } catch {
-        return { file: R(f), scripts: {} };
-      }
-    });
-  const profiles = configFiles.map((f) => R(f)).filter((f) => /application-[\w]+\./.test(f));
+}
 
-  // frontend routes
-  const routes = fe.flatMap((f) => {
-    const ng = isAngularRoutes(f.source);
-    return f.source.split('\n').flatMap((l, i) => {
-      const p = routePath(l, ng);
-      return p == null ? [] : [{ path: p, file: f.p, line: i + 1 }];
-    });
-  });
+/** The SDKs the app imports, each with the first six files that import it. The config keys are read elsewhere. */
+function externalsOf(java, sources) {
+  const importsOf = (relPath) => (sources.get(relPath)?.imports ?? []).map((i) => i.name);
+  const externals = {};
+  for (const j of java)
+    for (const [k, v] of Object.entries(EXT))
+      if (importsOf(j.p).some((name) => name.includes(k))) (externals[v] ??= []).push(j.p);
+  return Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)]));
+}
 
-  // docs
-  const docs = files
+// --- docs, git and activity ---------------------------------------------------------
+
+/** The docs in the repo: their size in KB and their first heading. */
+function docsOf(files, R, read) {
+  return files
     .filter((f) => /\.(md|adoc|rst)$/i.test(f))
     .map((f) => {
       const t = read(f);
@@ -912,52 +987,161 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         title: (/^#\s+(.+)$/m.exec(t)?.[1] ?? '').slice(0, 90),
       };
     });
+}
 
-  // git
-  const gitInfo = (() => {
-    const head = git(root, ['rev-parse', '--short', 'HEAD']);
-    if (!head) return null;
-    const dirty = !!git(root, ['status', '--porcelain', '--untracked-files=no']);
-    const headDate = git(root, ['log', '-1', '--format=%cI']);
-    const total = Number(git(root, ['rev-list', '--count', 'HEAD']));
-    return { head, dirty, headDate, totalCommits: total, window: gitWindow(root, headDate, total) };
-  })();
+/** The checkout's git state: HEAD, whether it has uncommitted changes, and the history window activity counts use. */
+function gitInfoOf(root) {
+  const head = git(root, ['rev-parse', '--short', 'HEAD']);
+  if (!head) return null;
+  const dirty = !!git(root, ['status', '--porcelain', '--untracked-files=no']);
+  const headDate = git(root, ['log', '-1', '--format=%cI']);
+  const total = Number(git(root, ['rev-list', '--count', 'HEAD']));
+  return { head, dirty, headDate, totalCommits: total, window: gitWindow(root, headDate, total) };
+}
 
-  // Flow ranking reads activity: how many commits in the window touched the entry's file. One git log, counted per
-  // file on demand (validate.mjs computes the same numbers for the map's regions).
-  const activityOf = (() => {
-    const win = gitInfo?.window;
-    if (!win) return () => 0;
-    // Path-limited history, in chunks: one git call per 25 entry files keeps the largest name-status page small, and
-    // the shared log is dropped between chunks.
-    // An inherited entry runs the declaring class's code, so that is the file whose churn matters.
-    const paths = [...new Set(flowEntryList.map((e) => (e.owner ?? e.t).file))];
-    const counts = new Map();
-    for (let i = 0; i < paths.length; i += 25) {
-      for (const [p, n] of activityByFile(root, win.since, paths.slice(i, i + 25)))
-        counts.set(p, (counts.get(p) ?? 0) + n);
-      forgetActivity();
-    }
-    return (file) => counts.get(file) ?? 0;
-  })();
+/**
+ * Commits in the window that touched each flow entry's file, counted per file on demand. The entries are read in
+ * chunks of 25 so the largest name-status page stays small; the shared log is dropped between chunks. An inherited
+ * entry runs the declaring class's code, so that is the file whose churn matters.
+ */
+function activityCounts(root, gitInfo, flowEntryList) {
+  const win = gitInfo?.window;
+  if (!win) return () => 0;
+  const paths = [...new Set(flowEntryList.map((e) => (e.owner ?? e.t).file))];
+  const counts = new Map();
+  for (let i = 0; i < paths.length; i += 25) {
+    for (const [p, n] of activityByFile(root, win.since, paths.slice(i, i + 25)))
+      counts.set(p, (counts.get(p) ?? 0) + n);
+    forgetActivity();
+  }
+  return (file) => counts.get(file) ?? 0;
+}
 
+// --- persistence and state -----------------------------------------------------------
+
+/** Outside clients, repository writes and cache state, then the transaction boundary those can leak through. */
+function persistenceFacts({ model, selected }) {
+  const outsideCalls = extractOutside(model, selected);
+  const stateFacts = extractState(model, selected);
+  const stateWrites = stateFacts.filter((f) => f.family === 'state-write');
+  const tx = extractTransactions(model, selected, { outside: outsideCalls, writes: stateWrites });
+  return { outsideCalls, stateFacts, stateWrites, transactions: tx.facts, transactionCounts: tx.counts };
+}
+
+// --- family groups: each returns the sections the facts document reads ----------------------
+
+/** The frontend: sources, the API calls joined to the endpoints they reach, routes, and the view facts. */
+function webFacts(ctx, types, endpoints) {
+  const { fe, views } = frontendFiles(ctx);
+  const joined = joinApiCalls(frontendApiCalls(fe), endpoints);
+  const viewOut = viewFacts(types.controllers, views);
+  return { fe, views, joined, viewOut, routes: frontendRoutes(fe) };
+}
+
+/** The tenant key, the user sources and the security model built from them. */
+function tenancyAndSecurity(model, selected, { endpoints, sec, flowEntryList, tenantFacts, entFacts }) {
+  const ten = tenancyOf(model, { endpoints, flowEntryList, entFacts, tenantFacts });
+  const userSources = userSourcesOf(model, selected);
+  const securityModelFact = securityModelOf(model, { endpoints, sec, tenancy: ten.tenancy, userSources });
+  return { ten, securityModelFact };
+}
+
+/** The runtime machinery the model shows, and the work that runs without a request. */
+function runtimeAndBackground(ctx, types, endpoints, views) {
+  return {
+    runtime: runtimeMachinery(types.appTypes, views),
+    background: backgroundOf(ctx, types, endpoints),
+  };
+}
+
+/** Lifecycles, schedules and status sets from the dump, and the writes the repositories with @Modifying make. */
+function javaFactsOf(ctx, types, entFacts, endpoints) {
+  const repoEntity = repoEntityMap(entFacts);
+  const deep = javaFacts({
+    // Statuses are read from the dump's typed arguments and returns: the source text is not consulted.
+    dump: ctx.dump,
+    model: ctx.model,
+    java: types.appEntries,
+    repoEntity,
+    EXT,
+    enums: types.enums,
+    entities: types.entities,
+    shortlist: new Set(
+      [...entFacts.entities].sort((a, b) => b.relations.length - a.relations.length).slice(0, 15).map((e) => e.name),
+    ),
+    endpoints,
+  });
+  return { deep, modifying: modifyingWrites(types.repos, repoEntity) };
+}
+
+/** How the app runs: the build's run facts, the entry points and the profile switches. */
+function bootOf(ctx, types, configFiles) {
+  const { root, model, files, R, read, app } = ctx;
+  return {
+    computed: bootFacts({ root, files, rel: R, git, app, read }),
+    ...bootEntries({ model, files, rel: R, read, configFiles }),
+    switches: switchesOf(types.appTypes, configFiles, R, read),
+  };
+}
+
+/** The SDK imports and the config keys (keys only, never values). */
+function externalsFacts(ctx, configFiles) {
+  return {
+    sdkImports: externalsOf(ctx.java, ctx.sources),
+    config: configKeyFacts(configFiles, ctx.R, ctx.read),
+  };
+}
+
+/** The flows, ranked with the git activity of their entry files; the activity is dropped once they are ranked. */
+function flowsOf({ model, selected, callStats }, { flowEntryList, persist, deep, entFacts, activityOf, sec, joined }) {
   const flows = buildFlows(model, {
     entries: flowEntryList,
-    exactTargets,
-    stateWrites: stateFacts.filter((x) => x.family === 'state-write'),
+    exactTargets: exactTargetsOf(callStats),
+    stateWrites: persist.stateWrites,
     statusSets: deep.statusSets,
-    outsideCalls,
-    transactions,
+    outsideCalls: persist.outsideCalls,
+    transactions: persist.transactions,
     entities: entFacts.entities,
     activityOf,
     selected,
-    securityRules,
+    securityRules: sec.securityRules,
     frontendPaths: joined.filter((j) => j.path).map((j) => ({ path: j.path, file: j.file })),
   });
   // The flow rank needs git activity for entry files only; the history text is not needed after it.
   forgetActivity();
+  return flows;
+}
 
-  const factsOut = {
+// --- facts assembly ----------------------------------------------------------------------
+
+/** The one line the CLI prints after a scan: what was found, and where the time went. */
+function summaryLine(f, out) {
+  const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  const since = f.git?.window?.since ?? 'none';
+  const gitText = f.git ? `${f.git.head}${f.git.dirty ? '+dirty' : ''} window=${since}` : 'none';
+  const timings = Object.entries(f.timings)
+    .map(([k, v]) => `${k} ${seconds(v)}`)
+    .join(' ');
+  const listeners = f.background.scheduledAsyncListeners.length;
+  return (
+    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ` +
+    `${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls ` +
+    `(${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ` +
+    `${listeners} scheduled/async/listeners, ${f.schedules.length} scheduled job(s), ` +
+    `${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ` +
+    `${f.docs.length} docs, git ${gitText} · ${timings}`
+  );
+}
+
+/**
+ * The facts document. Its sections keep their order: the digest and the writer read the file by these names. `F` holds
+ * the family results scan() built; `ctx` holds the inventory and the model.
+ */
+function assembleFacts(ctx, started, F) {
+  const { root, R, files, byExt, java, buildFiles, classpath, dump, dumpRun, callStats, dumpMs, classpathMs } = ctx;
+  const { types, persist, sec, ten, entFacts, web, boot, deep, runtime, background, externals } = F;
+  const { joined, fe, views, viewOut, routes } = web;
+  return {
     version: 2,
     root,
     scannedAt: new Date().toISOString().slice(0, 10),
@@ -977,8 +1161,8 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       ms: classpath.ms,
       ...(classpath.reason ? { reason: tildify(classpath.reason) } : {}),
     },
-    git: gitInfo,
-    docs,
+    git: F.gitInfo,
+    docs: F.docs,
     packages: Object.entries(
       java.reduce((a, j) => {
         const d = path.dirname(j.p);
@@ -990,8 +1174,8 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
       .sort((a, b) => a.dir.localeCompare(b.dir)),
     entities: {
       count: entFacts.entities.length,
-      enums,
-      repositories: repos.map((r) => ({ file: r.p, extends: r.extends })),
+      enums: types.enums,
+      repositories: types.repos.map((r) => ({ file: r.p, extends: r.extends })),
       model: entFacts.entities.map((e) => ({
         name: e.name,
         file: e.file,
@@ -1002,28 +1186,30 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         unique: e.uniqueFields,
         // Own fields only, for the invariant that a field's line sits inside its type (inherited lines live elsewhere).
         ownKeys: e.fields.filter((f) => f.owner === e.name && !f.relation).map((f) => `${f.name}:${f.type}:${f.line}`),
-        ownRelations: e.fields.filter((f) => f.owner === e.name && f.relation).map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
+        ownRelations: e.fields
+          .filter((f) => f.owner === e.name && f.relation)
+          .map((f) => `${f.relation.kind} ${f.relation.target?.split('.').pop() ?? f.type} ${f.name}:${f.line}`),
       })),
     },
     tenancy: {
-      key: tenancy.key,
-      confidence: tenancy.confidence,
-      counts: tenancy.counts,
-      candidates: tenancy.candidates.slice(0, 6),
-      coverage: tenancy.coverage,
-      unscoped: tenancy.unscoped,
-      unscopedWrites: tenancy.unscopedWrites,
-      globalLookups: tenancy.globalLookups,
-      crossTenant: tenancy.crossTenant,
-      unscopedByRepo: tenancy.unscopedByRepo,
-      bridged: tenancy.bridged,
-      bases: tenancy.bases,
-      thresholds: tenancyThresholds,
-      sources: tenancy.sources,
+      key: ten.tenancy.key,
+      confidence: ten.tenancy.confidence,
+      counts: ten.tenancy.counts,
+      candidates: ten.tenancy.candidates.slice(0, 6),
+      coverage: ten.tenancy.coverage,
+      unscoped: ten.tenancy.unscoped,
+      unscopedWrites: ten.tenancy.unscopedWrites,
+      globalLookups: ten.tenancy.globalLookups,
+      crossTenant: ten.tenancy.crossTenant,
+      unscopedByRepo: ten.tenancy.unscopedByRepo,
+      bridged: ten.tenancy.bridged,
+      bases: ten.tenancy.bases,
+      thresholds: ten.tenancyThresholds,
+      sources: ten.tenancy.sources,
     },
-    noRequestPaths: withoutRequest,
-    endpoints,
-    coverage: cov,
+    noRequestPaths: ten.withoutRequest,
+    endpoints: F.endpoints,
+    coverage: F.cov,
     frontend: {
       files: fe.length,
       routes,
@@ -1033,7 +1219,7 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
         .filter((j) => j.handler)
         .map((j) => `${j.verb ?? ''} ${j.path} ${j.file}:${j.line} -> ${j.handler}`),
     },
-    views: { count: views.length, returnedBy: viewUse, deadViews },
+    views: { count: views.length, returnedBy: viewOut.viewUse, deadViews: viewOut.deadViews },
     runtime: {
       // Whether Spoon answered this run, and how much of it: a scan without a dump is a scan without types.
       engine: dump
@@ -1049,42 +1235,106 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
             dump: dumpRun.dir,
           }
         : { spoon: false, reason: dumpRun.reason },
-      interceptors,
-      contextScopes,
-      exceptionHandlers,
-      baseClasses,
-      sessionState,
+      ...runtime,
     },
-    methodSecurity: methodSec.facts,
-    securityModel: securityModelFact,
-    channels: channelFacts(model, { config: channelConfig, extraConstants }),
-    background: { scheduledAsyncListeners: [...background, ...batchJobs], sockets, runners },
-    state: { modifying },
-    boot: { computed: bootComputed, mains, switches, profiles, frontend: feEntries, compose, scripts },
-    transactions,
-    transactionCounts: tx.counts,
-    outsideCalls,
-    stateWrites: stateFacts.filter((f) => f.family === 'state-write'),
-    stateCaches: stateFacts.filter((f) => f.family === 'state-cache'),
+    methodSecurity: sec.methodSec.facts,
+    securityModel: F.securityModelFact,
+    channels: F.channels,
+    background,
+    state: { modifying: F.modifying },
+    boot: {
+      computed: boot.computed,
+      mains: boot.mains,
+      switches: boot.switches,
+      profiles: boot.profiles,
+      frontend: boot.frontend,
+      compose: boot.compose,
+      scripts: boot.scripts,
+    },
+    transactions: persist.transactions,
+    transactionCounts: persist.transactionCounts,
+    outsideCalls: persist.outsideCalls,
+    stateWrites: persist.stateWrites,
+    stateCaches: persist.stateFacts.filter((f) => f.family === 'state-cache'),
     lifecycle: deep.lifecycle,
     schedules: deep.schedules,
-    recurring,
-    securityRules,
-    securityWarnings,
-    tenantSources: tenantFacts,
-    ...(tenantFacts.length ? {} : { tenantSourcesNote: 'no tenant source found within depth 2 (no ThreadLocal/request-attribute store reached from doFilter/preHandle)' }),
-    flows,
-    externals: {
-      sdkImports: Object.fromEntries(Object.entries(externals).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)])),
-      config: configKeys,
-    },
+    recurring: F.recurring,
+    securityRules: sec.securityRules,
+    securityWarnings: sec.securityWarnings,
+    tenantSources: F.tenantFacts,
+    ...(F.tenantFacts.length
+      ? {}
+      : {
+          tenantSourcesNote:
+            'no tenant source found within depth 2 ' +
+            '(no ThreadLocal/request-attribute store reached from doFilter/preHandle)',
+        }),
+    flows: F.flows,
+    externals,
   };
+}
+
+export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
+  const started = Date.now();
+  const inv = inventory(root);
+  const ctx = { ...inv, ...loadModel(inv) };
+  const { model, selected, app, files, R, read } = ctx;
+  const types = typeFacts(ctx);
+  const endpoints = extractEndpoints(model, selected, { include: (p) => !app.isExcluded(p) });
+  const web = webFacts(ctx, types, endpoints);
+  const persist = persistenceFacts(ctx);
+  const recurring = extractSchedules(model, selected);
+  const configFiles = configFilesOf(files);
+  const sec = securityOf(ctx, endpoints);
+  const tenantFacts = tenantSources(model, isSrcTestOrItPath);
+  // Flow entries serve tenancy (worker callers) and the flows: computed once, before the wildcard-annotation pass.
+  const flowEntryList = flowEntries(model, endpoints, selected);
+  const entFacts = entityFactsOf(ctx);
+  const { ten, securityModelFact } = tenancyAndSecurity(model, selected, {
+    endpoints,
+    sec,
+    flowEntryList,
+    tenantFacts,
+    entFacts,
+  });
+  const { runtime, background } = runtimeAndBackground(ctx, types, endpoints, web.views);
+  const externals = externalsFacts(ctx, configFiles);
+  const { deep, modifying } = javaFactsOf(ctx, types, entFacts, endpoints);
+  const boot = bootOf(ctx, types, configFiles);
+  const gitInfo = gitInfoOf(root);
+  const activityOf = activityCounts(root, gitInfo, flowEntryList);
+  const flows = flowsOf(ctx, { flowEntryList, persist, deep, entFacts, activityOf, sec, joined: web.joined });
+  const channels = channelFacts(model, { config: channelConfigOf(files, read), extraConstants });
+  const cov = coverage(model, endpoints, selected, { build: ctx.buildFiles, rels: files.map(R) });
+  const facts = assembleFacts(ctx, started, {
+    types,
+    endpoints,
+    persist,
+    recurring,
+    sec,
+    web,
+    ten,
+    securityModelFact,
+    runtime,
+    background,
+    externals,
+    deep,
+    modifying,
+    boot,
+    gitInfo,
+    docs: docsOf(files, R, read),
+    flows,
+    channels,
+    cov,
+    entFacts,
+    tenantFacts,
+  });
   // Tests that check resolution against hand-verified calls need the model; facts alone cannot show a receiver type.
-  if (withModel) Object.defineProperty(factsOut, 'model', { value: model, enumerable: false });
+  if (withModel) Object.defineProperty(facts, 'model', { value: model, enumerable: false });
   // The lifecycle set sites: the same rows the flows rank reads, kept for the excerpt file (the writer's flow steps and
   // setter context). Not part of facts.json — the digest already carries the sentence form of every one.
-  Object.defineProperty(factsOut, 'statusSets', { value: deep.statusSets, enumerable: false });
-  return factsOut;
+  Object.defineProperty(facts, 'statusSets', { value: deep.statusSets, enumerable: false });
+  return facts;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -1103,10 +1353,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(facts, null, 1));
   fs.writeFileSync(out.replace(/\.json$/, '.md'), digest);
-  const f = facts;
-  const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
-  console.log(
-    `wrote ${out} (${Math.round(fs.statSync(out).size / 1024)} KB): ${f.entities.count} entities, ${f.endpoints.length} endpoints, ${f.frontend.apiCalls} frontend API calls (${f.frontend.unmatchedApiCalls.length} unmatched), ${f.views.count} views, ${f.background.scheduledAsyncListeners.length} scheduled/async/listeners, ${f.schedules.length} scheduled job(s), ${f.securityRules.length} security rule(s), ${f.securityWarnings.length} security warning(s), ${f.docs.length} docs, git ${f.git ? f.git.head + (f.git.dirty ? '+dirty' : '') + ' window=' + (f.git.window?.since ?? 'none') : 'none'} · ${Object.entries(f.timings).map(([k, v]) => `${k} ${seconds(v)}`).join(' ')}`,
-  );
+  console.log(summaryLine(facts, out));
   if (retired) console.log(`previous map kept at ${retired}`);
 }

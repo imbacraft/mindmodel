@@ -11,6 +11,10 @@ export const isSrcTestOrItPath = (p) => /\/src\/(test|it)\//.test(p ?? '');
 // `src/test/` alone: the folder the Java model and the resource scans leave out.
 export const isSrcTestPath = (p) => /\/src\/test\//.test(p ?? '');
 
+// An annotation by the name as written or by the FQN it resolved to: `@Entity` and `@jakarta.persistence.Entity` count.
+export const carriesAnn = (t, name) =>
+  (t.ann ?? []).some((a) => a.name === name || String(a.fqn ?? '').endsWith(`.${name}`));
+
 {
   assert.equal(simple('a.b.Order'), 'Order');
   assert.equal(simple('Order'), 'Order');

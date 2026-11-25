@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert';
 import { configKeys } from './config.mjs';
-import { simple } from '../model/names.mjs';
+import { carriesAnn, isSrcTestPath, simple } from '../model/names.mjs';
+import { linesMatching } from '../model/strings.mjs';
 import { dumpFor } from '../run.mjs';
 
 // What makes a `main` an app's entry point: a Spring Boot annotation on its type, or a Spring Boot initialiser it
@@ -287,8 +288,80 @@ function eeBoot(pom, B, mvn, prefix = '') {
   assert.equal(eeBoot('<project><packaging>jar</packaging></project>', 'pom.xml', 'mvn'), null);
 }
 
-export function bootFacts({ root, files, rel, git, app }) {
-  const read = (p) => fs.readFileSync(p, 'utf8');
+// A runnable entry point: a `main` method (the dump's `isMain`) whose class is a Spring Boot app or whose body runs
+// `SpringApplication`.
+function mainsOf(model) {
+  return [...model.types.values()]
+    .filter((t) => !isSrcTestPath(t.file))
+    .filter((t) =>
+      t.methods.some(
+        (m) =>
+          m.isMain &&
+          (carriesAnn(t, 'SpringBootApplication') ||
+            carriesAnn(t, 'SpringBootConfiguration') ||
+            (m.calls ?? []).some((c) => /(^|\.)SpringApplication(Builder)?$/.test(c.recvFqn ?? ''))),
+      ),
+    )
+    .flatMap((t) => t.methods.filter((m) => m.isMain).map((m) => ({ file: t.file, line: m.nameLine })));
+}
+
+// The frontend's entry files (bundler configs, index pages, proxies), with the lines that say how they run.
+const FE_ENTRY_FILE = new RegExp(
+  [
+    '(^|\\/)(vite\\.config\\.\\w+|index\\.html|src\\/main\\.[jt]sx?|src\\/index\\.[jt]sx?|',
+    'angular\\.json|proxy\\.conf\\.json)$',
+  ].join(''),
+);
+const FE_ENTRY_LINE = new RegExp(
+  [
+    'port|proxy|target|createRoot|render\\(|type="module"|bootstrapApplication|bootstrapModule|createApp|new App\\(',
+    'mount\\(|"main":|"browser":',
+  ].join('|'),
+);
+function frontendEntries(files, rel, read) {
+  return files
+    .filter((f) => FE_ENTRY_FILE.test(rel(f)) && !/node_modules|resources\/(static|templates)/.test(rel(f)))
+    .map((f) => ({ file: rel(f), lines: linesMatching(read(f), FE_ENTRY_LINE).slice(0, 8) }));
+}
+
+// Compose files and the services each one declares, as `name:line`.
+function composeServices(files, rel, read) {
+  return files
+    .filter((f) => /(^|\/)(docker-)?compose[\w.-]*\.ya?ml$/.test(rel(f)))
+    .map((f) => ({
+      file: rel(f),
+      services: linesMatching(read(f), /^  [\w-]+:\s*$/).map((m) => `${m.text.replace(':', '')}:${m.line}`),
+    }));
+}
+
+// The scripts of package.json files at the root or one folder down; an unreadable file has none.
+function packageScripts(files, rel, read) {
+  return files
+    .filter((f) => /(^|\/)package\.json$/.test(rel(f)) && rel(f).split('/').length <= 3)
+    .map((f) => {
+      try {
+        return { file: rel(f), scripts: JSON.parse(read(f)).scripts ?? {} };
+      } catch {
+        return { file: rel(f), scripts: {} };
+      }
+    });
+}
+
+/**
+ * How the app runs and what it reads: the `main` entry points, the frontend entry files, compose services, package
+ * scripts and the profile files. Every answer is read from the dump's rows or from the files as text.
+ */
+export function bootEntries({ model, files, rel, read, configFiles }) {
+  return {
+    mains: mainsOf(model),
+    profiles: configFiles.map((f) => rel(f)).filter((f) => /application-[\w]+\./.test(f)),
+    frontend: frontendEntries(files, rel, read),
+    compose: composeServices(files, rel, read),
+    scripts: packageScripts(files, rel, read),
+  };
+}
+
+export function bootFacts({ root, files, rel, git, app, read = (p) => fs.readFileSync(p, 'utf8') }) {
   const lineOf = (text, re) => {
     const i = text.split('\n').findIndex((l) => re.test(l));
     return i < 0 ? null : i + 1;
