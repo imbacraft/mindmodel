@@ -136,23 +136,34 @@ const dirty = (dir) => {
 const entryOf = (list, name) => list.find((a) => a.name === name) ?? {};
 const commitOf = (list, name) => entryOf(list, name).commit ?? 'unknown';
 
+// Tests run strict, but no test checkout can build a classpath offline (Gradle is not implemented, Maven cannot fetch
+// a parent POM), so "no classpath" is the one allowed degradation. Anything else the scan gave up on fails the test,
+// whether the facts were scanned now or served from the cache.
+const ALLOWED = /^no classpath \(/;
+const tolerant = (fn) => () => withDegradation(fn).value;
+function refuseDegraded(label, facts) {
+  const unexpected = (facts?.runtime?.degraded ?? []).filter((r) => !ALLOWED.test(r));
+  if (unexpected.length) throw new Error(`${label}: the scan degraded: ${unexpected.join('; ')}`);
+  return facts;
+}
+
 // `withModel` needs the in-memory model, which is not serialisable: those callers scan (once per file) and share the
 // result themselves.
 export function cachedScan(name, dir, { withModel = false } = {}) {
-  if (withModel) return withScanSlot(() => scan(dir, { withModel }));
-  if (dirty(dir)) return withScanSlot(() => scan(dir));
-  return memo(`app-${name}`, `${commitOf(cfg.apps, name)}:${envKey()}`, () => scan(dir));
+  if (withModel) return withScanSlot(tolerant(() => scan(dir, { withModel })));
+  const run = tolerant(() => scan(dir));
+  const facts = dirty(dir) ? withScanSlot(run) : memo(`app-${name}`, `${commitOf(cfg.apps, name)}:${envKey()}`, run);
+  return refuseDegraded(`app ${name}`, facts);
 }
 
 export function cachedSystemScan(name, dir) {
-  if (dirty(dir)) return withScanSlot(() => systemScan(dir));
-  return memo(`system-${name}`, `${commitOf(cfg.systems, name)}:${envKey()}`, () => systemScan(dir));
+  const run = tolerant(() => systemScan(dir));
+  const sys = dirty(dir) ? withScanSlot(run) : memo(`system-${name}`, `${commitOf(cfg.systems, name)}:${envKey()}`, run);
+  for (const s of sys.services ?? []) refuseDegraded(`system ${name}, service ${s.name}`, s.facts);
+  return sys;
 }
 
-// A fixture is read in place: its bytes are the key, and the scan runs on a copy (a scan writes beside the code). A
-// fixture carries no dependency jars, so "no classpath" is its one allowed degradation; anything else the scan gave up
-// on fails the test, whether the facts were scanned now or served from the cache.
-const FIXTURE_ALLOWED = /^no classpath \(/;
+// A fixture is read in place: its bytes are the key, and the scan runs on a copy (a scan writes beside the code).
 export function cachedFixtureScan(name) {
   const dir = path.join(here, 'fixtures', name);
   const scratch = () => {
@@ -164,8 +175,5 @@ export function cachedFixtureScan(name) {
       fs.rmSync(copy, { recursive: true, force: true });
     }
   };
-  const facts = memo(`fixture-${name}`, `${hashTree([dir])}:${envKey()}`, scratch);
-  const unexpected = (facts.runtime?.degraded ?? []).filter((r) => !FIXTURE_ALLOWED.test(r));
-  if (unexpected.length) throw new Error(`fixture ${name}: the scan degraded: ${unexpected.join('; ')}`);
-  return facts;
+  return refuseDegraded(`fixture ${name}`, memo(`fixture-${name}`, `${hashTree([dir])}:${envKey()}`, scratch));
 }
