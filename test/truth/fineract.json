@@ -164,11 +164,9 @@
   "recv": "AcmeJobName.ACME_NOOP_JOB",
   "recvFqn": "com.acme.fineract.loan.job.AcmeJobName",
   "recvHow": "field",
-  "how": "direct",
-  "targets": [
-   "com.acme.fineract.loan.job.AcmeJobName#name()"
-  ],
-  "note": "enum synthetics: name() is written by javac, not by the source"
+  "how": "external",
+  "targets": [],
+  "note": "name() is java.lang.Enum's final method: the enum cannot declare it, so no declaration in the checkout is reached"
  },
  {
   "file": "fineract-account-transfer/src/main/java/org/apache/fineract/portfolio/account/api/AccountTransfersApiResource.java",

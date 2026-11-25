@@ -162,6 +162,7 @@ public final class CallsWriter {
             }
         }
         Recv recv = calls.recv(type, receiver, fieldType != null, unnamed);
+        boolean inherited = targets.isEmpty() && calls.inheritedFromEnum(recv, name, argc);
         head(g, methodId, ctx.ids().id(call), "call", pos, name);
         g.writeNumberField("argc", argc);
         writeRecv(g, recv.invented() ? null : recv.type(), ctx, call.getTarget(), Calls.kind(call),
@@ -170,8 +171,9 @@ public final class CallsWriter {
         g.writeBooleanField("uniqueImpl", Calls.uniqueImpl(ref, targets));
         writeArgs(g, ctx, call.getArguments());
         inLambda(g, call);
-        g.writeStringField("origin", callOrigin(calls, targets, item, ref, recv));
-        if (targets.isEmpty()) g.writeStringField("reason", callReason(recv, call.getTarget()));
+        g.writeStringField("origin", callOrigin(calls, targets, item, ref, recv, inherited));
+        if (targets.isEmpty()) g.writeStringField("reason", inherited ? "library-signature"
+                : callReason(recv, call.getTarget()));
     }
 
     /**
@@ -337,12 +339,13 @@ public final class CallsWriter {
     }
 
     private static String callOrigin(Calls calls, List<Target> targets, Lombok.Item generated,
-            CtExecutableReference<?> ref, Recv recv) {
+            CtExecutableReference<?> ref, Recv recv, boolean inherited) {
         if (!targets.isEmpty()) {
             if (generated != null) return generated.origin();
             return calls.declaredIn(ref) ? "java" : "arity";
         }
         if (recv.builder()) return "lombok";
+        if (inherited) return "library";
         if (recv.invented()) return "unresolved";
         if (recv.generatedField() || calls.libraryTarget(ref)) return "library";
         return recv.type() == null || recv.declared() ? "unresolved" : "library";

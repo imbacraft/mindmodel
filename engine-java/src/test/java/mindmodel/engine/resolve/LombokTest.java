@@ -108,20 +108,41 @@ class LombokTest {
         assertEquals("compiler", member.path("generated").asText());
     }
 
+    /**
+     * name(), ordinal() and the other java.lang.Enum methods are inherited: no declaration in the checkout, so no
+     * target, but the call is a library's answer, not unresolved. The receiver is still the project enum.
+     */
     @Test
     void enumNameAndOrdinalAreInheritedNotGenerated() throws Exception {
         Map<String, String> sources = Map.of(
                 "demo/Color.java", "package demo; public enum Color { RED }",
                 "demo/Use.java", "package demo; public class Use { String f(Color c) {"
-                        + " return c.name() + c.ordinal(); } }");
+                        + " return c.name() + c.ordinal() + Color.RED.name() + c.compareTo(c); } }");
         List<JsonNode> calls = DumpRun.of(dir, sources).rows("calls");
 
-        for (String name : List.of("name", "ordinal")) {
-            JsonNode call = DumpRun.one(calls, "name", name);
+        List<String> names = List.of("name", "name", "ordinal", "compareTo");
+        List<JsonNode> inherited = calls.stream().filter(c -> names.contains(c.path("name").asText())).toList();
+        assertEquals(4, inherited.size(), inherited.toString());
+        for (JsonNode call : inherited) {
+            String name = call.path("name").asText();
             assertEquals(List.of(), call.path("targets").findValuesAsText("id"), name + " is java.lang.Enum's");
-            // Without a classpath Spoon has no declaration for Enum.name(), so the origin is unresolved, not lombok.
-            assertNotEquals("lombok", call.path("origin").asText(), name);
+            assertEquals("library", call.path("origin").asText(), name);
+            assertEquals("demo.Color", call.path("recv").path("typeFqn").asText(), name);
         }
+        JsonNode viaField = inherited.stream().filter(c -> "Color.RED".equals(c.path("recv").path("text").asText()))
+                .findFirst().orElseThrow();
+        assertEquals("field", viaField.path("recv").path("how").asText());
+    }
+
+    /** The same rule does not reach a name a project type inherits from a library it does not declare. */
+    @Test
+    void inheritedNameOnANonEnumStaysUnresolved() throws Exception {
+        Map<String, String> sources = Map.of(
+                "demo/Plain.java", "package demo; public class Plain { }",
+                "demo/Use.java", "package demo; public class Use { String f(Plain p) { return p.name(); } }");
+        JsonNode call = DumpRun.one(DumpRun.of(dir, sources).rows("calls"), "name", "name");
+
+        assertEquals("unresolved", call.path("origin").asText());
     }
 
     @Test

@@ -182,6 +182,20 @@ public final class Calls {
                 && index.declared().contains(Names.qualified(method.getDeclaringType()));
     }
 
+    /** The public instance methods of java.lang.Enum: every enum inherits them, and no enum here declares them. */
+    private static final Set<String> ENUM_INHERITED = Set.of("name/0", "ordinal/0", "compareTo/1", "equals/1",
+            "hashCode/0", "toString/0", "getDeclaringClass/0", "describeConstable/0");
+
+    /**
+     * True when a call with no declaration here reaches a java.lang.Enum method on a receiver that is a project enum:
+     * the library answers it, so its origin is {@code library}. Without a classpath Spoon cannot see Enum, so the
+     * receiver's type and the method's shape are the evidence.
+     */
+    public boolean inheritedFromEnum(Recv recv, String name, int argc) {
+        CtType<?> owner = recv.declared() ? index.types().get(recv.type()) : null;
+        return owner != null && owner.isEnum() && ENUM_INHERITED.contains(Names.shape(name, argc));
+    }
+
     /** True when a call's resolved declaration is a library's, or has no declaring type at all. */
     public boolean libraryTarget(CtExecutableReference<?> ref) {
         CtMethod<?> method = declaration(ref);

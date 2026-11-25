@@ -129,9 +129,9 @@
   "recv": "call",
   "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.TransportStatus",
   "recvHow": "chain",
-  "how": "unresolved",
+  "how": "external",
   "targets": [],
-  "note": "the receiver is an enum-typed value; the call resolves to a JDK method, which a no-classpath engine cannot name"
+  "note": "the receiver is an enum-typed value; equals is java.lang.Enum's final method, so the library answers and no checkout declaration is reached"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/domain/model/cargo/Delivery.java",
@@ -153,9 +153,9 @@
   "recv": "routingStatus",
   "recvFqn": "org.eclipse.cargotracker.domain.model.cargo.RoutingStatus",
   "recvHow": "field",
-  "how": "unresolved",
+  "how": "external",
   "targets": [],
-  "note": "the receiver is an enum-typed value; the call resolves to a JDK method, which a no-classpath engine cannot name"
+  "note": "the receiver is an enum-typed value; equals is java.lang.Enum's final method, so the library answers and no checkout declaration is reached"
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/application/internal/DefaultBookingService.java",
