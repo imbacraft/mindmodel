@@ -1,14 +1,13 @@
 package mindmodel.engine.dump;
 
-import java.util.Map;
-import java.util.Set;
-
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLocalVariable;
 import spoon.reflect.code.CtTypeAccess;
+import spoon.reflect.code.CtThisAccess;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.declaration.CtMethod;
+import spoon.reflect.declaration.CtType;
 import spoon.reflect.reference.CtTypeParameterReference;
 import spoon.reflect.reference.CtTypeReference;
 
@@ -20,16 +19,11 @@ import spoon.reflect.reference.CtTypeReference;
  */
 final class Chains {
 
-    /** `owner#name/argc -> return type` for generated members; `owner#name` is the arity-blind fallback. */
-    private final Map<String, String> generated;
-    /** Builder types the synthesis invents (`Foo.Builder`): not declared, and not a library either. */
-    private final Set<String> builders;
-
+    private final Lombok.Index generated;
     private final Failures failures;
 
-    Chains(Map<String, String> generated, Set<String> builders, Failures failures) {
+    Chains(Lombok.Index generated, Failures failures) {
         this.generated = generated;
-        this.builders = builders;
         this.failures = failures;
     }
 
@@ -37,9 +31,9 @@ final class Chains {
         if (expression == null) return null;
         if (expression instanceof CtInvocation<?> call) return result(call);
         if (expression instanceof CtTypeAccess<?> access) return Names.qualified(access.getAccessedType());
-        if (expression instanceof spoon.reflect.code.CtThisAccess<?> self) {
+        if (expression instanceof CtThisAccess<?> self) {
             // Inside a lambda Spoon writes the implicit `this`, but its type is the lambda, not the enclosing class.
-            var owner = self.getParent(spoon.reflect.declaration.CtType.class);
+            var owner = self.getParent(CtType.class);
             if (owner != null) return Names.qualified(owner);
         }
         // `var x = ...`: Spoon 11.5 leaves some locals typed Object, but the initializer it inferred from is still
@@ -88,7 +82,7 @@ final class Chains {
 
     /** A builder type the synthesis invented, rather than something the source declares. */
     boolean isBuilder(String fqn) {
-        return fqn != null && builders.contains(fqn);
+        return fqn != null && generated.builders().contains(fqn);
     }
 
     /** The raw type an invocation evaluates to, or null when no source of truth can say. */
@@ -103,8 +97,7 @@ final class Chains {
         int argc = call.getArguments().size();
         String fromLibrary = LibraryTypes.returnType(owner, ref.getSimpleName(), argc);
         if (fromLibrary != null) return fromLibrary;
-        String fromLombok = generated.get(owner + "#" + ref.getSimpleName() + "/" + argc);
-        if (fromLombok == null) fromLombok = generated.get(owner + "#" + ref.getSimpleName());
-        return LibraryTypes.raw(fromLombok);
+        Lombok.Item item = generated.method(owner, ref.getSimpleName(), argc);
+        return item == null ? null : LibraryTypes.raw(item.typeFqn());
     }
 }

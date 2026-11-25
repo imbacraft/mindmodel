@@ -2,7 +2,8 @@ package mindmodel.engine.dump;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeMap;
@@ -39,9 +40,9 @@ public final class LibraryStubs {
     }
 
     /** Writes the section. Returns how many rows it holds (resolved and unreadable together). */
-    public static int write(List<CtType<?>> projectTypes, java.util.Collection<CtType<?>> known, Path out)
+    public static int write(List<CtType<?>> projectTypes, Collection<CtType<?>> known, Path out)
             throws IOException {
-        Set<String> declared = new java.util.HashSet<>();
+        Set<String> declared = new HashSet<>();
         // A generated source's types are declared here as much as any: naming one is not naming a library.
         for (CtType<?> t : known) declared.add(Names.qualified(t));
         // Every name the project writes down, sorted so the section never depends on Spoon's iteration order.
@@ -96,7 +97,7 @@ public final class LibraryStubs {
 
     private static void type(JsonGenerator g, String fqn, CtType<?> t) throws IOException {
         g.writeStringField("fqn", fqn);
-        g.writeStringField("kind", kind(t));
+        g.writeStringField("kind", Types.kind(t));
         g.writeStringField("origin", "library");
         g.writeArrayFieldStart("supers");
         for (CtTypeReference<?> s : t.getSuperInterfaces()) g.writeString(Names.qualified(s));
@@ -109,7 +110,7 @@ public final class LibraryStubs {
             g.writeStringField("name", f.getSimpleName());
             // With generic arguments: `java.lang.ThreadLocal<com.acme.Ctx>` is what makes a holder's element readable.
             g.writeStringField("type", Names.typeText(f.getType()));
-            g.writeStringField("typeFqn", rawName(f.getType()));
+            g.writeStringField("typeFqn", f.getType() == null ? "" : Names.qualified(f.getType()));
             g.writeArrayFieldStart("modifiers");
             for (ModifierKind m : f.getModifiers()) g.writeString(m.name().toLowerCase());
             g.writeEndArray();
@@ -122,9 +123,7 @@ public final class LibraryStubs {
             g.writeStringField("name", m.getSimpleName());
             g.writeStringField("returns", Names.typeText(m.getType()));
             g.writeArrayFieldStart("params");
-            List<String> types = new ArrayList<>();
-            for (CtParameter<?> p : m.getParameters()) types.add(Names.typeText(p.getType()));
-            for (String type : types) g.writeString(type);
+            for (CtParameter<?> p : m.getParameters()) g.writeString(Names.typeText(p.getType()));
             g.writeEndArray();
             g.writeArrayFieldStart("modifiers");
             for (ModifierKind kind : m.getModifiers()) g.writeString(kind.name().toLowerCase());
@@ -143,16 +142,4 @@ public final class LibraryStubs {
         g.writeStringField("reason", why.length() > 200 ? why.substring(0, 200) : why);
     }
 
-    private static String rawName(CtTypeReference<?> ref) {
-        if (ref == null) return "";
-        String fqn = Names.qualified(ref);
-        return fqn.replaceAll("<.*", "");
-    }
-
-    private static String kind(CtType<?> t) {
-        if (t.isInterface()) return "interface";
-        if (t.isEnum()) return "enum";
-        if (t.isAnnotationType()) return "annotation";
-        return "class";
-    }
 }

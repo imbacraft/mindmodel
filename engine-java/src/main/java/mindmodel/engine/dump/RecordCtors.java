@@ -1,8 +1,10 @@
 package mindmodel.engine.dump;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import spoon.reflect.declaration.CtConstructor;
 import spoon.reflect.declaration.CtRecord;
@@ -64,15 +66,15 @@ final class RecordCtors {
     }
 
     /** The line the implicit constructor belongs to: the compact constructor if written, else the record header. */
-    static Positions.Pos citation(CtRecord record, CtConstructor<?> ctor, Path root) {
-        Positions.Pos own = ctor == null ? null : Positions.of(ctor, root);
-        return own != null ? own : Positions.of(record, root);
+    static Positions.Pos citation(CtRecord record, CtConstructor<?> ctor, Positions positions) {
+        Positions.Pos own = ctor == null ? null : positions.of(ctor);
+        return own != null ? own : positions.of(record);
     }
 
     /** The canonical constructor's access: its own modifiers, or the record's visibility when Spoon modelled none. */
-    static java.util.Set<ModifierKind> modifiers(CtRecord record, CtConstructor<?> ctor) {
+    static Set<ModifierKind> modifiers(CtRecord record, CtConstructor<?> ctor) {
         if (ctor != null) return ctor.getModifiers();
-        java.util.Set<ModifierKind> out = new java.util.LinkedHashSet<>();
+        Set<ModifierKind> out = new LinkedHashSet<>();
         for (ModifierKind kind : record.getModifiers())
             if (kind == ModifierKind.PUBLIC || kind == ModifierKind.PROTECTED || kind == ModifierKind.PRIVATE)
                 out.add(kind);
@@ -83,7 +85,7 @@ final class RecordCtors {
     private static List<String> typeTexts(List<CtTypeReference<?>> types) {
         List<String> out = new ArrayList<>();
         for (CtTypeReference<?> type : types) out.add(Names.typeText(type));
-        java.util.Collections.sort(out);
+        Collections.sort(out);
         return out;
     }
 }

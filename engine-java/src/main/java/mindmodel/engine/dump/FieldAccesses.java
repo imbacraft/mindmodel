@@ -8,8 +8,10 @@ import java.util.List;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 
+import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldAccess;
 import spoon.reflect.code.CtFieldWrite;
+import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtFieldReference;
 
 /**
@@ -34,19 +36,18 @@ final class FieldAccesses {
     }
 
     /** Collects the accesses of one body into `rows`; `methodId` is the member the body belongs to. */
-    static void collect(List<Row> rows, Walk.Body body, String methodId, Path root, Refs refs) {
+    static void collect(List<Row> rows, Walk.Body body, String methodId, Positions positions, Refs refs) {
         for (CtFieldAccess<?> access : body.fields()) {
-            Positions.Pos pos = Positions.of(access, root);
+            Positions.Pos pos = positions.of(access);
             if (pos == null) continue;
             CtFieldReference<?> ref = access.getVariable();
-            String field = Refs.fieldId(ref);
-            String op = access instanceof CtFieldWrite<?> ? "write" : "read";
+            boolean write = access instanceof CtFieldWrite<?>;
             // A write says what the method put there; a read says which field it read.
-            Refs.Ref value = access instanceof CtFieldWrite<?> write ? refs.of(valueOf(write)) : refs.of(access);
+            Refs.Ref value = write ? refs.of(valueOf((CtFieldWrite<?>) access)) : refs.of(access);
             // The field's declared type's arguments: `GenericRepo<T>` is [T], and a reader that binds the parameter
             // knows what the field holds at that site.
-            rows.add(new Row(methodId, field, isStatic(ref), op, pos, value,
-                    refs.typeArgs(ref == null ? null : ref.getType())));
+            rows.add(new Row(methodId, Refs.fieldId(ref), isStatic(ref, refs.failures()), write ? "write" : "read",
+                    pos, value, refs.typeArgs(ref == null ? null : ref.getType(), access)));
         }
     }
 
@@ -71,18 +72,20 @@ final class FieldAccesses {
     }
 
     /** The value an assignment gives a field write, or the write itself when it is not a plain assignment. */
-    private static spoon.reflect.code.CtExpression<?> valueOf(CtFieldWrite<?> write) {
+    private static CtExpression<?> valueOf(CtFieldWrite<?> write) {
         if (write.getParent() instanceof spoon.reflect.code.CtAssignment<?, ?> assignment
                 && assignment.getAssigned() == write)
             return assignment.getAssignment();
         return write;
     }
 
-    private static boolean isStatic(CtFieldReference<?> ref) {
+    /** Whether the field is static; a field whose modifiers Spoon cannot read is not static, and the run counts it. */
+    private static boolean isStatic(CtFieldReference<?> ref, Failures failures) {
         if (ref == null) return false;
         try {
-            return ref.getModifiers().contains(spoon.reflect.declaration.ModifierKind.STATIC);
+            return ref.getModifiers().contains(ModifierKind.STATIC);
         } catch (RuntimeException e) {
+            failures.count("fields.modifiersUnreadable");
             return false;
         }
     }

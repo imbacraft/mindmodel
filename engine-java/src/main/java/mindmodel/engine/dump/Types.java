@@ -9,7 +9,6 @@ import spoon.reflect.declaration.CtClass;
 import spoon.reflect.declaration.CtRecord;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.declaration.CtTypeParameter;
-import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtTypeReference;
 
 /** types.ndjson: every declared type with its supertypes, annotations and position. */
@@ -18,22 +17,16 @@ public final class Types {
     private Types() {
     }
 
-    public static void write(List<CtType<?>> types, Path root, Path out) throws IOException {
+    public static void write(List<CtType<?>> types, Positions positions, Path out) throws IOException {
         try (Ndjson w = new Ndjson(out)) {
-            for (CtType<?> t : types) w.row(g -> writeRow(g, t, root));
+            for (CtType<?> t : types) w.row(g -> writeRow(g, t, positions));
         }
     }
 
-    private static void writeRow(JsonGenerator g, CtType<?> t, Path root) throws IOException {
+    private static void writeRow(JsonGenerator g, CtType<?> t, Positions positions) throws IOException {
         g.writeStringField("fqn", Names.qualified(t));
         g.writeStringField("kind", kind(t));
-        // Sorted: an immutable set's iteration order is salted per JVM, and the dump must be byte-identical across runs.
-        java.util.List<String> modifiers = new java.util.ArrayList<>();
-        for (ModifierKind m : t.getModifiers()) modifiers.add(m.toString());
-        java.util.Collections.sort(modifiers);
-        g.writeArrayFieldStart("modifiers");
-        for (String m : modifiers) g.writeString(m);
-        g.writeEndArray();
+        Ndjson.modifiers(g, t.getModifiers());
         if (t.getDeclaringType() == null) g.writeNullField("enclosing");
         else g.writeStringField("enclosing", Names.qualified(t.getDeclaringType()));
         g.writeArrayFieldStart("typeParams");
@@ -45,8 +38,7 @@ public final class Types {
         for (CtTypeReference<?> i : t.getSuperInterfaces()) supertype(g, "interface", i);
         g.writeEndArray();
         Anns.write(g, t.getAnnotations());
-        Positions.Pos pos = Positions.of(t, root);
-        Ndjson.pos(g, pos);
+        Ndjson.pos(g, positions.of(t));
     }
 
     private static void supertype(JsonGenerator g, String kind, CtTypeReference<?> ref) throws IOException {

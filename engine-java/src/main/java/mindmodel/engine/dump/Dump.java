@@ -3,15 +3,20 @@ package mindmodel.engine.dump;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.core.JsonEncoding;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import spoon.reflect.declaration.CtExecutable;
-import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
 
 import mindmodel.engine.SourceModel;
@@ -32,11 +37,15 @@ public final class Dump {
     private record Row(CtType<?> type, Positions.Pos pos) {
     }
 
+    /** The model the dump reads, and the classpath entry it had to drop to build it (null when it dropped none). */
+    private record Read(SourceModel model, String dropped) {
+    }
+
     private static final Comparator<Row> ORDER = Comparator
-            .comparing((Row r) -> r.pos == null ? "" : r.pos.file())
-            .thenComparingInt(r -> r.pos == null ? 0 : r.pos.line())
-            .thenComparingInt(r -> r.pos == null ? 0 : r.pos.col())
-            .thenComparing(r -> Names.qualified(r.type));
+            .comparing((Row r) -> r.pos() == null ? "" : r.pos().file())
+            .thenComparingInt(r -> r.pos() == null ? 0 : r.pos().line())
+            .thenComparingInt(r -> r.pos() == null ? 0 : r.pos().col())
+            .thenComparing(r -> Names.qualified(r.type()));
 
     public static void run(Path given, Path listPath, Path outDir, int compliance, List<String> classpath,
             List<String> generatedDirs) throws IOException {
@@ -46,47 +55,68 @@ public final class Dump {
         java.nio.file.Files.createDirectories(outDir);
         List<String> inputs = SourceModel.relativeFiles(root,
                 java.nio.file.Files.readAllLines(listPath, StandardCharsets.UTF_8));
-        SourceModel model;
-        String dropped = null;
-        try {
-            model = SourceModel.build(root, inputs, compliance, classpath, generatedDirs);
-        } catch (Exception | LinkageError failure) {
-            // A classpath is an improvement, never a condition: a jar the reader cannot take (a class file from a newer
-            // Java, a corrupt entry) is dropped and the dump is rebuilt without it, exactly as it ran before.
-            if (classpath.isEmpty()) throw failure;
-            dropped = failure.getClass().getSimpleName()
-                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
-            if (dropped.length() > 200) dropped = dropped.substring(0, 200);
-            model = SourceModel.build(root, inputs, compliance, List.of(), generatedDirs);
-        }
-        List<Row> rows = new ArrayList<>();
-        java.util.Set<String> seen = new java.util.HashSet<>();
-        for (CtType<?> t : model.allTypes()) collect(model, t, rows, seen, root);
-        // A file whose type came out as a bare shell is read again in its own model: the shell is a name and nothing
-        // else, so the declaration has to be read where no static import has laid the shell first.
-        List<String> unread = recover(root, model, inputs, compliance, rows, seen);
-        rows.sort(ORDER);
-        List<CtType<?>> types = new ArrayList<>();
-        for (Row r : rows) types.add(r.type());
+        Read read = readModel(root, inputs, compliance, classpath, generatedDirs);
+        SourceModel model = read.model();
+        Positions positions = new Positions(root);
+        Failures failures = new Failures();
+        Declared declared = declaredTypes(model, inputs, compliance, positions);
+        List<CtType<?>> types = declared.types();
         // The generated sources are in the model for resolution only: a reader of call targets must know their
         // members, but not one row is written for them.
         List<CtType<?>> known = new ArrayList<>(types);
         for (CtType<?> t : model.allTypes()) if (model.isGenerated(t) && declared(t)) known.add(t);
-        java.util.Map<String, List<Lombok.Item>> synth = Lombok.synthesize(types, root);
-        Types.write(types, root, outDir.resolve("types.ndjson"));
-        // One walk per body: the call rows carry the ids the other sections name, so calls are written first.
+        Map<String, List<Lombok.Item>> synth = Lombok.synthesize(types, positions, failures);
+        Types.write(types, positions, outDir.resolve("types.ndjson"));
+        // Every body is walked once; the call rows carry the ids the other sections name, so calls are written first.
+        Walk.Bodies bodies = new Walk.Bodies(types, positions);
         CallIds ids = new CallIds();
-        Failures failures = new Failures();
         Refs refs = new Refs(ids, failures);
-        Sites.Written written = Sites.write(types, known, synth, root, outDir.resolve("calls.ndjson"), ids, refs);
-        Members.write(types, synth, root, outDir.resolve("members.ndjson"), written.returns(), failures);
+        Sites.Written written = Sites.write(types, known, Lombok.Index.of(synth), bodies, positions,
+                outDir.resolve("calls.ndjson"), ids, refs);
+        Members.write(types, synth, bodies, positions, outDir.resolve("members.ndjson"), written.returns(), failures);
         FieldAccesses.write(written.fields(), outDir.resolve("fields.ndjson"));
         // The library types the classpath let Spoon read: shallow rows, no positions, never cited (LibraryStubs).
-        int libraries = mindmodel.engine.dump.LibraryStubs.write(types, known, outDir.resolve("library.ndjson"));
-        int failed = Files.write(inputs, types, model.packages(), problems(model, root, unread), root,
-                outDir.resolve("files.ndjson"), failures);
+        int libraries = LibraryStubs.write(types, known, outDir.resolve("library.ndjson"));
+        int failed = Files.write(inputs, types, model.packages(), problems(model, positions, declared.unread()),
+                positions, outDir.resolve("files.ndjson"), failures);
         meta(root, inputs, types, failed, compliance, outDir.resolve("meta.json"), classpath, generatedDirs,
-                model.generatedFiles(), libraries, dropped, failures);
+                model.generatedFiles(), libraries, read.dropped(), failures);
+    }
+
+    /** The declared types in dump order, and the files whose types stayed bare shells after the second read. */
+    private record Declared(List<CtType<?>> types, List<String> unread) {
+    }
+
+    private static Declared declaredTypes(SourceModel model, List<String> inputs, int compliance, Positions positions)
+            throws IOException {
+        List<Row> rows = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (CtType<?> t : model.allTypes()) collect(model, t, rows, seen, positions);
+        // A file whose type came out as a bare shell is read again in its own model: the shell is a name and nothing
+        // else, so the declaration has to be read where no static import has laid the shell first.
+        List<String> unread = recover(model, inputs, compliance, rows, seen, positions);
+        rows.sort(ORDER);
+        List<CtType<?>> types = new ArrayList<>();
+        for (Row r : rows) types.add(r.type());
+        return new Declared(types, unread);
+    }
+
+    /**
+     * The model over the inputs, with the classpath when it reads. A classpath is an improvement, never a condition: a
+     * jar the reader cannot take (a class file from a newer Java, a corrupt entry) is dropped, and the model is rebuilt
+     * without it, exactly as it ran before. The drop is recorded in meta.json.
+     */
+    private static Read readModel(Path root, List<String> inputs, int compliance, List<String> classpath,
+            List<String> generatedDirs) {
+        try {
+            return new Read(SourceModel.build(root, inputs, compliance, classpath, generatedDirs), null);
+        } catch (Exception | LinkageError failure) {
+            if (classpath.isEmpty()) throw failure;
+            String dropped = failure.getClass().getSimpleName()
+                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
+            if (dropped.length() > 200) dropped = dropped.substring(0, 200);
+            return new Read(SourceModel.build(root, inputs, compliance, List.of(), generatedDirs), dropped);
+        }
     }
 
     /**
@@ -96,16 +126,16 @@ public final class Dump {
      *
      * @return the files still unread after that, to be reported rather than filled in.
      */
-    private static List<String> recover(Path root, SourceModel model, List<String> inputs, int compliance,
-            List<Row> rows, java.util.Set<String> seen) throws IOException {
+    private static List<String> recover(SourceModel model, List<String> inputs, int compliance, List<Row> rows,
+            Set<String> seen, Positions positions) throws IOException {
         List<String> ghosts = model.unreadFiles();
         if (ghosts.isEmpty()) return List.of();
         // The shells carry no position but they do carry their names, which is what the imports were written with.
-        java.util.Set<String> skip = new java.util.HashSet<>(model.filesImporting(model.unreadNames()));
+        Set<String> skip = new HashSet<>(model.filesImporting(model.unreadNames()));
         List<String> rest = new ArrayList<>(inputs);
         rest.removeAll(skip);
-        SourceModel own = SourceModel.build(root, rest, compliance, List.of(), model.generatedDirs());
-        for (CtType<?> t : own.allTypes()) collect(own, t, rows, seen, root);
+        SourceModel own = SourceModel.build(positions.root(), rest, compliance, List.of(), model.generatedDirs());
+        for (CtType<?> t : own.allTypes()) collect(own, t, rows, seen, positions);
         return own.unreadFiles();
     }
 
@@ -113,12 +143,13 @@ public final class Dump {
      * A type and its nested types; anonymous and local classes are not types of their own (D2 keeps their calls). A
      * generated type is never one of them: it is in the model for resolution, and the dump writes nothing for it.
      */
-    private static void collect(SourceModel model, CtType<?> t, List<Row> rows, java.util.Set<String> seen, Path root) {
+    private static void collect(SourceModel model, CtType<?> t, List<Row> rows, Set<String> seen,
+            Positions positions) {
         // A type Spoon resolved but never read has no position: it is a library or a shadow, not a declaration here.
         if (t.getPosition() == null || !t.getPosition().isValidPosition()) return;
         if (!declared(t) || model.isGenerated(t)) return;
-        if (seen.add(Names.qualified(t))) rows.add(new Row(t, Positions.of(t, root)));
-        for (CtType<?> nested : t.getNestedTypes()) collect(model, nested, rows, seen, root);
+        if (seen.add(Names.qualified(t))) rows.add(new Row(t, positions.of(t)));
+        for (CtType<?> nested : t.getNestedTypes()) collect(model, nested, rows, seen, positions);
     }
 
     /** A type the map may name: not anonymous, not a class declared inside a method body. */
@@ -128,9 +159,9 @@ public final class Dump {
     }
 
     /** Parse errors by project-relative file, so the dump names what it could not read. */
-    private static java.util.Map<String, List<String>> problems(SourceModel model, Path root, List<String> unread) {
-        java.util.Map<String, List<String>> out = new java.util.LinkedHashMap<>();
-        Path base = root.toAbsolutePath().normalize();
+    private static Map<String, List<String>> problems(SourceModel model, Positions positions, List<String> unread) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        Path base = positions.root();
         for (var problem : model.problems()) {
             char[] name = problem.getOriginatingFileName();
             if (name == null) continue;
@@ -141,7 +172,7 @@ public final class Dump {
             Path file = Path.of(new String(name)).toAbsolutePath().normalize();
             if (!file.startsWith(base) || model.isGeneratedFile(file)) continue;
             String rel = base.relativize(file).toString().replace('\\', '/');
-            out.computeIfAbsent(rel, k -> new ArrayList<>()).add(problem.getMessage());
+            out.computeIfAbsent(rel, k -> new ArrayList<>()).add(message);
         }
         // A file whose type is still a bare shell after the second read: the row says so rather than claiming a type.
         for (String rel : unread) out.computeIfAbsent(rel, k -> new ArrayList<>()).add("type-without-position");
@@ -192,18 +223,19 @@ public final class Dump {
      * changed jar set changes the digest. Paths only — the jars themselves are never read twice.
      */
     private static String jarDigest(List<String> classpath) throws IOException {
+        MessageDigest md;
         try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            for (String entry : classpath) {
-                java.nio.file.Path p = java.nio.file.Path.of(entry);
-                long size = java.nio.file.Files.isRegularFile(p) ? java.nio.file.Files.size(p) : 0;
-                md.update((entry + ":" + size + "\n").getBytes(StandardCharsets.UTF_8));
-            }
-            StringBuilder hex = new StringBuilder();
-            for (byte b : md.digest()) hex.append(String.format("%02x", b));
-            return hex.toString();
-        } catch (java.security.NoSuchAlgorithmException e) {
-            return "";
+            md = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("the JDK has no SHA-256", e);
         }
+        for (String entry : classpath) {
+            Path p = Path.of(entry);
+            long size = java.nio.file.Files.isRegularFile(p) ? java.nio.file.Files.size(p) : 0;
+            md.update((entry + ":" + size + "\n").getBytes(StandardCharsets.UTF_8));
+        }
+        StringBuilder hex = new StringBuilder();
+        for (byte b : md.digest()) hex.append(String.format("%02x", b));
+        return hex.toString();
     }
 }

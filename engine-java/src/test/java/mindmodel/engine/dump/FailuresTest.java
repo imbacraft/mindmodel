@@ -57,14 +57,17 @@ class FailuresTest {
         assertEquals(0, turn.path("targets").size());
     }
 
-    /** The field's type and the call's receiver are both Widget, both unresolved: two refs.typeUnresolved. */
+    /**
+     * Each place the dump declines to name Widget is one count: the field's declared type, the read of the field in
+     * spin(), and the receiver of turn(). Three refs.typeUnresolved.
+     */
     @Test
     void missingImportIsCountedAsARefsFailure() throws Exception {
         Map<String, Integer> counts = new HashMap<>();
         DumpRun.of(dir, MISSING_IMPORT).meta().path("counts").fields()
                 .forEachRemaining(e -> counts.put(e.getKey(), e.getValue().asInt()));
 
-        assertEquals(2, counts.getOrDefault("refs.typeUnresolved", 0), "counts: " + counts);
+        assertEquals(3, counts.getOrDefault("refs.typeUnresolved", 0), "counts: " + counts);
     }
 
     @Test

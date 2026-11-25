@@ -1,13 +1,11 @@
 package mindmodel.engine.dump;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
 import spoon.reflect.declaration.CtExecutable;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
-import spoon.reflect.visitor.filter.TypeFilter;
 
 /**
  * Methods written inside an anonymous or local class, which belong to no declared type but are body work of the method
@@ -19,10 +17,13 @@ final class Anonymous {
     private Anonymous() {
     }
 
-    /** The anonymous and local methods a declared executable writes. */
-    static List<CtMethod<?>> methods(CtExecutable<?> owner) {
+    /**
+     * The anonymous and local methods a declared executable writes, out of the methods found in its body: a method
+     * declared by the executable's own type is not one of them.
+     */
+    static List<CtMethod<?>> within(CtExecutable<?> owner, List<CtMethod<?>> candidates) {
         List<CtMethod<?>> out = new ArrayList<>();
-        for (CtMethod<?> method : owner.getElements(new TypeFilter<>(CtMethod.class))) {
+        for (CtMethod<?> method : candidates) {
             CtType<?> declaring = method.getDeclaringType();
             if (declaring == null || declaring == owner.getParent(CtType.class)) continue;
             if (inside(owner, declaring)) out.add(method);
@@ -31,11 +32,9 @@ final class Anonymous {
     }
 
     /** The id of one such method: the type's spelling, plus the line that keeps it unique. */
-    static String id(CtType<?> owner, CtMethod<?> method, Path root) {
-        List<spoon.reflect.reference.CtTypeReference<?>> params = new ArrayList<>();
-        for (var p : method.getParameters()) params.add(p.getType());
-        Positions.Pos pos = Positions.of(method, root);
-        return Names.methodId(owner, method.getSimpleName(), params) + "@" + (pos == null ? 0 : pos.line());
+    static String id(CtType<?> owner, CtMethod<?> method, Positions positions) {
+        Positions.Pos pos = positions.of(method);
+        return Names.executableId(owner, method) + "@" + (pos == null ? 0 : pos.line());
     }
 
     /** Written inside `owner`'s body: an anonymous class, or a class declared inside a method, by source position. */

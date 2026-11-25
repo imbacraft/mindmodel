@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
 
 import com.fasterxml.jackson.core.JsonGenerator;
@@ -43,37 +44,21 @@ public final class Files {
 
     /** @return how many input files carry at least one error. */
     public static int write(List<String> inputs, List<CtType<?>> types, Map<String, String> packages,
-            Map<String, List<String>> problems, Path root, Path out, Failures failures) throws IOException {
+            Map<String, List<String>> problems, Positions positions, Path out, Failures failures) throws IOException {
         // A file's package is the one its own header declares, read from its compilation unit. Taking it from a type
         // borrowed the type's file instead: a file that declares no type (all of it commented out) has a package and no
         // type, and a file whose type Spoon built as a bare shell has neither — the row has to say which file it is.
         Map<String, String> pkgOf = new LinkedHashMap<>();
         Map<String, List<Import>> written = new LinkedHashMap<>();
         for (CtType<?> t : types) {
-            Positions.Pos p = Positions.of(t, root);
+            Positions.Pos p = positions.of(t);
             if (p == null) continue;
             pkgOf.putIfAbsent(p.file(), t.getPackage() == null ? "" : t.getPackage().getQualifiedName());
             if (!written.containsKey(p.file())) written.put(p.file(), fromUnit(t, failures));
         }
         List<String> rows = new ArrayList<>(new TreeSet<>(inputs));
+        Map<String, Imports> imports = importsOf(rows, written, positions.root());
         int failed = 0;
-        Map<String, List<Import>> importsOf = new LinkedHashMap<>();
-        Map<String, String> origin = new LinkedHashMap<>();
-        for (String path : rows) {
-            List<Import> header = header(root, path);
-            List<Import> unit = written.get(path);
-            // The header is what the file says; Spoon's list is what the parse kept. Agreement is the common case.
-            if (header != null) {
-                importsOf.put(path, header);
-                origin.put(path, unit != null && unit.equals(header) ? "spoon" : "header");
-            } else if (unit != null) {
-                importsOf.put(path, unit);
-                origin.put(path, "spoon");
-            } else {
-                importsOf.put(path, List.of());
-                origin.put(path, "unresolved");
-            }
-        }
         try (Ndjson w = new Ndjson(out)) {
             for (String path : rows) {
                 String pkg = packages.getOrDefault(path, pkgOf.get(path));
@@ -82,12 +67,33 @@ public final class Files {
                 // read. A file whose unit exists was parsed, whether it declares a type or nothing but comments.
                 if (!packages.containsKey(path)) errors.add("not-read");
                 if (!errors.isEmpty()) failed++;
-                List<Import> imports = importsOf.get(path);
-                String from = origin.get(path);
-                w.row(g -> row(g, path, pkg, errors, imports, from));
+                Imports own = imports.get(path);
+                w.row(g -> row(g, path, pkg, errors, own.list(), own.origin()));
             }
         }
         return failed;
+    }
+
+    /** A file's imports and where they were read from: `spoon` or `header`, or `unresolved` when neither could say. */
+    private record Imports(List<Import> list, String origin) {
+    }
+
+    /**
+     * The header is what the file says; Spoon's list is what the parse kept. Agreement is the common case, and a header
+     * the reader cannot take falls back to Spoon's list.
+     */
+    private static Map<String, Imports> importsOf(List<String> rows, Map<String, List<Import>> written, Path root) {
+        Map<String, Imports> out = new LinkedHashMap<>();
+        for (String path : rows) {
+            List<Import> header = header(root, path);
+            List<Import> unit = written.get(path);
+            if (header != null) {
+                out.put(path, new Imports(header, unit != null && unit.equals(header) ? "spoon" : "header"));
+            }
+            else if (unit != null) out.put(path, new Imports(unit, "spoon"));
+            else out.put(path, new Imports(List.of(), "unresolved"));
+        }
+        return out;
     }
 
     /** Spoon's own import list for the file a type was read from, or null when there is no compilation unit. */
@@ -121,10 +127,10 @@ public final class Files {
         if (reference instanceof CtTypeReference<?> type) return Names.qualified(type);
         if (reference instanceof spoon.reflect.reference.CtFieldReference<?> field)
             return field.getDeclaringType() == null ? field.getSimpleName()
-                    : Names.qualified(field.getDeclaringType()) + "." + field.getSimpleName();
+                    : Names.dotted(Names.qualified(field.getDeclaringType()), field.getSimpleName());
         if (reference instanceof spoon.reflect.reference.CtExecutableReference<?> executable)
             return executable.getDeclaringType() == null ? executable.getSimpleName()
-                    : Names.qualified(executable.getDeclaringType()) + "." + executable.getSimpleName();
+                    : Names.dotted(Names.qualified(executable.getDeclaringType()), executable.getSimpleName());
         return reference.getSimpleName();
     }
 
@@ -167,8 +173,8 @@ public final class Files {
      * `import static a.b.C.Nested;` could be either, so both spellings are returned. Read by the same header reader that
      * answers the imports row — a static import Spoon cannot resolve never reaches its own list.
      */
-    public static java.util.Set<String> staticOwners(Path root, String path) {
-        java.util.Set<String> out = new TreeSet<>();
+    public static Set<String> staticOwners(Path root, String path) {
+        Set<String> out = new TreeSet<>();
         List<Import> lines = header(root, path);
         if (lines == null) return out;
         for (Import item : lines) {

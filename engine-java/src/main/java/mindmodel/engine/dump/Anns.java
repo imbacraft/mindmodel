@@ -49,32 +49,22 @@ public final class Anns {
         String spoon = Names.qualified(a.getAnnotationType());
         if (spoon.contains(".") && !(ownerPkg + ".").equals(spoon.substring(0, spoon.lastIndexOf('.') + 1)))
             return spoon;
-        var p = a.getPosition();
-        if (p != null && p.isValidPosition() && p.getCompilationUnit() != null) {
-            String source = p.getCompilationUnit().getOriginalSourceCode();
-            if (source != null && p.getSourceStart() >= 0 && p.getSourceEnd() < source.length()) {
-                String text = source.substring(p.getSourceStart(), p.getSourceEnd() + 1);
-                int open = text.indexOf('(');
-                String name = (open >= 0 ? text.substring(0, open) : text).replace("@", "").replaceAll("\\s+", "");
-                if (!name.isEmpty()) return name;
-            }
+        String source = Names.sourceOf(a);
+        if (source != null) {
+            int open = source.indexOf('(');
+            String name = (open >= 0 ? source.substring(0, open) : source).replace("@", "").replaceAll("\\s+", "");
+            if (!name.isEmpty()) return name;
         }
         return a.getAnnotationType().getSimpleName();
     }
 
     /** The source between the annotation's parentheses, verbatim; empty when it has none. */
     private static String rawArgs(CtAnnotation<?> a) {
-        var p = a.getPosition();
-        if (p == null || !p.isValidPosition() || p.getCompilationUnit() == null) return "";
-        String source = p.getCompilationUnit().getOriginalSourceCode();
+        String source = Names.sourceOf(a);
         if (source == null) return "";
-        int start = p.getSourceStart();
-        int end = p.getSourceEnd();
-        if (start < 0 || end <= start || end >= source.length()) return "";
-        String text = source.substring(start, end + 1);
-        int open = text.indexOf('(');
-        int close = text.lastIndexOf(')');
-        return open >= 0 && close > open ? text.substring(open + 1, close).trim() : "";
+        int open = source.indexOf('(');
+        int close = source.lastIndexOf(')');
+        return open >= 0 && close > open ? source.substring(open + 1, close).trim() : "";
     }
 
     public static void writeValue(JsonGenerator g, Values.Value v) throws IOException {

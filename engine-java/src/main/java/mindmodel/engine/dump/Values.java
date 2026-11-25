@@ -37,11 +37,15 @@ public final class Values {
         // Sorted keys: Spoon hands the elements in hash order, so the same source would otherwise serialise to
         // different bytes on different runs, and the dump would stop being comparable.
         Map<String, Value> out = new TreeMap<>();
-        for (Map.Entry<String, CtExpression> e : annotation.getValues().entrySet()) {
-            Value v = of(e.getValue());
-            out.put(e.getKey(), v == null ? new Value("unresolved", null) : v);
-        }
+        for (Map.Entry<String, CtExpression> e : annotation.getValues().entrySet())
+            out.put(e.getKey(), orUnresolved(e.getValue()));
         return out;
+    }
+
+    /** The value of an expression, or the unresolved value when Spoon cannot evaluate it: never a guess, never a gap. */
+    public static Value orUnresolved(CtExpression<?> expression) {
+        Value v = of(expression);
+        return v == null ? new Value("unresolved", null) : v;
     }
 
     public static Value of(CtExpression<?> expression) {
@@ -78,10 +82,7 @@ public final class Values {
 
     private static Value array(CtNewArray<?> array) {
         List<Value> items = new ArrayList<>();
-        for (CtExpression<?> element : array.getElements()) {
-            Value v = of(element);
-            items.add(v == null ? new Value("unresolved", null) : v);
-        }
+        for (CtExpression<?> element : array.getElements()) items.add(orUnresolved(element));
         return new Value("array", items);
     }
 
@@ -93,9 +94,11 @@ public final class Values {
     private static Value field(CtFieldReference<?> ref) {
         CtTypeReference<?> owner = ref.getDeclaringType();
         CtType<?> type = owner == null ? null : owner.getTypeDeclaration();
-        if (type != null && type.isEnum()) return new Value("enum", Names.qualified(type) + "." + ref.getSimpleName());
+        if (type != null && type.isEnum())
+            return new Value("enum", Names.dotted(Names.qualified(type), ref.getSimpleName()));
         CtField<?> declaration = ref == null ? null : ref.getFieldDeclaration();
-        if (declaration != null && declaration.getDefaultExpression() != null) return of(declaration.getDefaultExpression());
+        if (declaration != null && declaration.getDefaultExpression() != null)
+            return of(declaration.getDefaultExpression());
         return null;
     }
 

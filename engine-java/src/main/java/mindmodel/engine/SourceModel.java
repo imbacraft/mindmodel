@@ -1,9 +1,11 @@
 package mindmodel.engine;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,8 @@ public final class SourceModel {
     private final Launcher launcher;
     /** The generated-source roots, as given: in the model for resolution, and never dumped. */
     private final List<String> generatedDirs;
+    /** Whether each file is a generated one: asked once per file, however many elements the file holds. */
+    private final Map<File, Boolean> generatedByFile = new HashMap<>();
 
     private SourceModel(Path root, List<String> files, Launcher launcher, List<String> generatedDirs) {
         this.root = root;
@@ -109,8 +113,8 @@ public final class SourceModel {
     public boolean isGenerated(spoon.reflect.declaration.CtElement element) {
         if (element == null || element.getPosition() == null || !element.getPosition().isValidPosition())
             return false;
-        java.io.File file = element.getPosition().getFile();
-        return file != null && isGeneratedFile(file.toPath());
+        File file = element.getPosition().getFile();
+        return file != null && generatedByFile.computeIfAbsent(file, f -> isGeneratedFile(f.toPath()));
     }
 
     /** True when a file was read from a generated root rather than as project source. */

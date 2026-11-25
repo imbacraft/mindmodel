@@ -2,17 +2,34 @@ package mindmodel.engine.dump;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
+import spoon.reflect.code.CtLambda;
+import spoon.reflect.code.CtLocalVariable;
+import spoon.reflect.code.CtSuperAccess;
+import spoon.reflect.code.CtThisAccess;
+import spoon.reflect.code.CtTypeAccess;
+import spoon.reflect.code.CtVariableRead;
+import spoon.reflect.declaration.CtClass;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtExecutable;
 import spoon.reflect.declaration.CtMethod;
+import spoon.reflect.declaration.CtRecord;
+import spoon.reflect.declaration.CtRecordComponent;
 import spoon.reflect.declaration.CtType;
+import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtExecutableReference;
 import spoon.reflect.reference.CtTypeParameterReference;
 import spoon.reflect.reference.CtTypeReference;
@@ -37,119 +54,165 @@ public final class Sites {
     private Sites() {
     }
 
-    /** Subtypes of every declared type, and each type's methods by name and arity: a call to an interface lists them. */
-    private record Index(java.util.Set<String> declared, java.util.Map<String, java.util.Set<String>> subtypes,
-                         java.util.Map<String, java.util.Set<String>> supertypes,
-            java.util.Map<String, java.util.Map<String, String>> methods,
-            java.util.Map<String, java.util.Map<String, String>> generated,
-            java.util.Map<String, String> generatedFields,
-            java.util.Map<String, java.util.Map<String, String>> arity,
-            // `ownerFqn#T -> bound fqn`, only where every subtype that names the type writes the same argument.
-            java.util.Map<String, String> bound) {
-    }
-
     /** One target of a call: the declaration Spoon resolved, or an override of it in a subtype declared here. */
     record Target(String id, String kind) {
     }
 
-    private static Index index(List<CtType<?>> types, java.util.Map<String, List<Lombok.Item>> synth,
-            Failures failures) {
-        java.util.Set<String> declared = new java.util.HashSet<>();
-        java.util.Map<String, java.util.Map<String, String>> methods = new java.util.HashMap<>();
-        java.util.Map<String, java.util.Map<String, String>> arity = new java.util.HashMap<>();
-        for (CtType<?> t : types) {
-            declared.add(Names.qualified(t));
-            java.util.Map<String, String> byShape = new java.util.HashMap<>();
-            java.util.Map<String, String> byArity = new java.util.HashMap<>();
-            java.util.Set<String> ambiguous = new java.util.HashSet<>();
-            for (CtExecutable<?> e : executables(t)) {
-                if (syntheticEnum(t, e.getSimpleName())) continue;
-                String id = Names.methodId(t, e instanceof spoon.reflect.declaration.CtConstructor<?>
-                        ? t.getSimpleName() : e.getSimpleName(), paramTypes(t, e));
-                byShape.putIfAbsent(e.getSimpleName() + "/" + e.getParameters().size(), id);
-                // Name and arity, unique only: two members with the same shape are not a fact.
-                int n = e.getParameters().size();
-                String shape = e.getSimpleName() + "/" + n;
-                if (byArity.containsKey(shape)) ambiguous.add(shape);
-                else byArity.put(shape, id);
-                if (n > 0 && e.getParameters().get(n - 1).isVarArgs()) {
-                  String varargsShape = e.getSimpleName() + "/" + (n - 1);
-                  if (!byArity.containsKey(varargsShape)) byArity.put(varargsShape, id);
-                }
-            }
-            for (String shape : ambiguous) byArity.remove(shape);
-            if (t instanceof spoon.reflect.declaration.CtRecord record) {
-                int n = record.getRecordComponents().size();
-                String shape = "<init>/" + n;
-                // Spoon 11.5 models no canonical constructor for a nested record: the constructor member is still
-                // declared, so a `new` of that arity resolves to it unless another constructor shares the arity.
-                if (!byArity.containsKey(shape) && !ambiguous.contains(shape))
-                    byArity.put(shape, RecordCtors.id(record));
-            }
-            if (t instanceof spoon.reflect.declaration.CtRecord record)
-                for (var component : record.getRecordComponents())
-                    byShape.put(component.getSimpleName() + "/0",
-                            Names.methodId(t, component.getSimpleName(), List.of()));
-            methods.put(Names.qualified(t), byShape);
-            arity.put(Names.qualified(t), byArity);
+    /** What one dump knows beyond its sections: each body's returns, and every field read and write. */
+    record Written(Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccesses.Row> fields) {
+    }
+
+    /**
+     * The declarations of the dumped types and their relations, as a call is answered from them. `byShape` and
+     * `byArity` are keyed by owner, then by `name/argc`; `bound` is `owner#T -> bound fqn`, only where every subtype that
+     * names the type writes the same argument.
+     */
+    private record Index(Set<String> declared, Map<String, Set<String>> subtypes,
+            Map<String, Set<String>> supertypes, Map<String, Map<String, String>> byShape,
+            Map<String, Map<String, String>> byArity, Lombok.Index generated, Map<String, String> bound) {
+    }
+
+    /** What every site row is written with: the index, the run's readers and sinks, and the returns and fields so far. */
+    private record Ctx(Index index, Chains chains, CallIds ids, Refs refs, Positions positions,
+            Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccesses.Row> fields) {
+    }
+
+    /** A site with the position it was read at, so the position is computed once. */
+    private record Site(CtElement element, Positions.Pos pos) {
+    }
+
+    /**
+     * The receiver of one call, judged: its type when the checkout declares it, whether it is a builder Lombok invented,
+     * and whether Spoon invented the name. An invented receiver has no type the dump may give.
+     */
+    private record Recv(String type, boolean declared, boolean builder, boolean invented, boolean generatedField) {
+
+        static Recv of(Ctx ctx, CtType<?> written, String type, boolean generatedField) {
+            boolean declared = type != null && ctx.index().declared().contains(type);
+            boolean builder = ctx.chains().isBuilder(type);
+            boolean invented = Refs.isInvented(type, declared || builder || generatedField, written);
+            if (invented) ctx.refs().failures().count(Refs.UNRESOLVED);
+            return new Recv(type, declared, builder, invented, generatedField);
         }
-        java.util.Map<String, java.util.Set<String>> subtypes = new java.util.HashMap<>();
-        for (CtType<?> t : types) {
+    }
+
+    /**
+     * Writes calls.ndjson and hands the rest of each body to the sections that read it: the returns to the member rows,
+     * the field accesses to fields.ndjson. One walk per body feeds all three.
+     *
+     * <p>`types` are the dumped ones; `known` adds the generated sources' signatures, which the index needs so a call
+     * into a generated mapper is typed like any other, and which are never walked.
+     */
+    static Written write(List<CtType<?>> types, List<CtType<?>> known, Lombok.Index generated, Walk.Bodies bodies,
+            Positions positions, Path out, CallIds ids, Refs refs) throws IOException {
+        Ctx ctx = new Ctx(index(known, generated, refs.failures()), new Chains(generated, refs.failures()), ids, refs,
+                positions, new IdentityHashMap<>(), FieldAccesses.rows());
+        try (Ndjson w = new Ndjson(out)) {
+            for (CtType<?> type : types) {
+                for (CtExecutable<?> executable : Walk.executables(type))
+                    writeBody(w, ctx, type, executable, Names.executableId(type, executable), bodies.of(executable));
+                // A method of an anonymous class is body work of the member that writes it, filed under the type.
+                for (Walk.Anon anon : bodies.anonymous(type))
+                    writeBody(w, ctx, type, anon.method(), anon.id(), bodies.of(anon.method()));
+            }
+        }
+        return new Written(ctx.returns(), ctx.fields());
+    }
+
+    // ---- the index: what a call can be answered from ----
+
+    private static Index index(List<CtType<?>> known, Lombok.Index generated, Failures failures) {
+        Set<String> declared = new HashSet<>();
+        Map<String, Map<String, String>> byShape = new HashMap<>();
+        Map<String, Map<String, String>> byArity = new HashMap<>();
+        for (CtType<?> t : known) {
             String fqn = Names.qualified(t);
-            java.util.Set<String> seen = new java.util.HashSet<>();
-            java.util.ArrayDeque<CtType<?>> queue = new java.util.ArrayDeque<>();
+            declared.add(fqn);
+            Map<String, String> shapes = new HashMap<>();
+            Map<String, String> arities = new HashMap<>();
+            shapes(t, shapes, arities);
+            byShape.put(fqn, shapes);
+            byArity.put(fqn, arities);
+        }
+        return new Index(declared, subtypes(known, declared), supertypes(known, declared), byShape, byArity, generated,
+                bindings(known, declared, failures));
+    }
+
+    /**
+     * One type's members by name and arity. `byShape` keeps the first member of each shape; `byArity` keeps only the
+     * shapes that name one member, and a varargs method also answers to one argument fewer.
+     */
+    private static void shapes(CtType<?> t, Map<String, String> byShape, Map<String, String> byArity) {
+        Set<String> ambiguous = new HashSet<>();
+        for (CtExecutable<?> e : Walk.executables(t)) {
+            if (syntheticEnum(t, e.getSimpleName())) continue;
+            String id = Names.executableId(t, e);
+            int n = e.getParameters().size();
+            String shape = Names.shape(e.getSimpleName(), n);
+            byShape.putIfAbsent(shape, id);
+            if (byArity.containsKey(shape)) ambiguous.add(shape);
+            else byArity.put(shape, id);
+            if (n > 0 && e.getParameters().get(n - 1).isVarArgs())
+                byArity.putIfAbsent(Names.shape(e.getSimpleName(), n - 1), id);
+        }
+        for (String shape : ambiguous) byArity.remove(shape);
+        if (t instanceof CtRecord record) recordShapes(record, byShape, byArity, ambiguous);
+    }
+
+    /**
+     * A record's canonical constructor by arity, and each component's accessor by name. Spoon 11.5 models no canonical
+     * constructor for a nested record: the constructor member is still declared, so a `new` of that arity resolves to
+     * it unless another constructor shares the arity.
+     */
+    private static void recordShapes(CtRecord record, Map<String, String> byShape, Map<String, String> byArity,
+            Set<String> ambiguous) {
+        String init = Names.shape("<init>", record.getRecordComponents().size());
+        if (!byArity.containsKey(init) && !ambiguous.contains(init)) byArity.put(init, RecordCtors.id(record));
+        for (CtRecordComponent component : record.getRecordComponents())
+            byShape.put(Names.shape(component.getSimpleName(), 0),
+                    Names.methodId(record, component.getSimpleName(), List.of()));
+    }
+
+    /** Subtypes of every declared type, transitively: a call to an interface lists the types that implement it. */
+    private static Map<String, Set<String>> subtypes(List<CtType<?>> known, Set<String> declared) {
+        Map<String, Set<String>> subtypes = new HashMap<>();
+        for (CtType<?> t : known) {
+            String fqn = Names.qualified(t);
+            Set<String> seen = new HashSet<>();
+            ArrayDeque<CtType<?>> queue = new ArrayDeque<>();
             queue.add(t);
             while (!queue.isEmpty()) {
-                CtType<?> current = queue.poll();
-                List<spoon.reflect.reference.CtTypeReference<?>> supers = new ArrayList<>(current.getSuperInterfaces());
-                if (current instanceof spoon.reflect.declaration.CtClass<?> c && c.getSuperclass() != null)
-                    supers.add(c.getSuperclass());
-                for (var s : supers) {
+                for (CtTypeReference<?> s : supers(queue.poll())) {
                     String superFqn = Names.qualified(s);
                     if (!declared.contains(superFqn) || !seen.add(superFqn)) continue;
-                    subtypes.computeIfAbsent(superFqn, k -> new java.util.TreeSet<>()).add(fqn);
+                    subtypes.computeIfAbsent(superFqn, k -> new TreeSet<>()).add(fqn);
                     CtType<?> declaration = s.getTypeDeclaration();
                     if (declaration != null) queue.add(declaration);
                 }
             }
         }
-        java.util.Map<String, java.util.Map<String, String>> generated = new java.util.HashMap<>();
-        java.util.Map<String, String> generatedFields = new java.util.HashMap<>();
-        for (var e : synth.entrySet())
-            for (Lombok.Item item : e.getValue()) {
-                if ("method".equals(item.kind()))
-                    generated.computeIfAbsent(item.owner(), k -> new java.util.HashMap<>())
-                            .putIfAbsent(item.name() + "/" + item.params().size(), item.id());
-                else if ("field".equals(item.kind()))
-                    generatedFields.put(item.owner() + "#" + item.name(), item.type() == null ? "" : item.type());
-            }
-        // `Foo.<T>builder()` is written with a type argument Spoon counts as an argument: a generated member whose
-        // name has exactly one shape on its owner is also reachable without the count.
-        for (var e : synth.entrySet()) {
-            java.util.Map<String, java.util.List<String>> byName = new java.util.HashMap<>();
-            for (Lombok.Item item : e.getValue())
-                if ("method".equals(item.kind()))
-                    byName.computeIfAbsent(item.name(), k -> new java.util.ArrayList<>()).add(item.id());
-            for (var named : byName.entrySet())
-                if (named.getValue().size() == 1)
-                    generated.computeIfAbsent(e.getKey(), k -> new java.util.HashMap<>())
-                            .putIfAbsent(named.getKey(), named.getValue().get(0));
-        }
-        // The other direction: which declared types a type inherits from, for a call written without a receiver.
-        java.util.Map<String, java.util.Set<String>> supertypes = new java.util.HashMap<>();
-        for (CtType<?> t : types) {
-            java.util.Set<String> supers = new java.util.TreeSet<>();
-            List<spoon.reflect.reference.CtTypeReference<?>> written = new ArrayList<>(t.getSuperInterfaces());
-            if (t instanceof spoon.reflect.declaration.CtClass<?> c && c.getSuperclass() != null)
-                written.add(c.getSuperclass());
-            for (var superRef : written) {
+        return subtypes;
+    }
+
+    /** The other direction: which declared types a type inherits from, for a call written without a receiver. */
+    private static Map<String, Set<String>> supertypes(List<CtType<?>> known, Set<String> declared) {
+        Map<String, Set<String>> supertypes = new HashMap<>();
+        for (CtType<?> t : known) {
+            Set<String> supers = new TreeSet<>();
+            for (CtTypeReference<?> superRef : supers(t)) {
                 String superFqn = Names.qualified(superRef);
                 if (declared.contains(superFqn)) supers.add(superFqn);
             }
             supertypes.put(Names.qualified(t), supers);
         }
-        return new Index(declared, subtypes, supertypes, methods, generated, generatedFields, arity,
-                bindings(types, declared, failures));
+        return supertypes;
+    }
+
+    /** A type's written supertypes: its interfaces, then its superclass when it is a class with one. */
+    private static List<CtTypeReference<?>> supers(CtType<?> t) {
+        List<CtTypeReference<?>> out = new ArrayList<>(t.getSuperInterfaces());
+        if (t instanceof CtClass<?> c && c.getSuperclass() != null) out.add(c.getSuperclass());
+        return out;
     }
 
     /**
@@ -158,27 +221,22 @@ public final class Sites {
      * subtypes disagree binds nothing. Only arguments declared here count: a member reached through a parameter bound
      * to a type outside the checkout is still unresolved, because nothing in this dump can say what that type is.
      */
-    private static java.util.Map<String, String> bindings(List<CtType<?>> types, java.util.Set<String> declared,
-            Failures failures) {
-        java.util.Map<String, java.util.Set<String>> seen = new java.util.HashMap<>();
-        for (CtType<?> t : types) {
+    private static Map<String, String> bindings(List<CtType<?>> known, Set<String> declared, Failures failures) {
+        Map<String, Set<String>> seen = new HashMap<>();
+        for (CtType<?> t : known) {
             try {
-                List<CtTypeReference<?>> supers = new ArrayList<>(t.getSuperInterfaces());
-                if (t instanceof spoon.reflect.declaration.CtClass<?> c && c.getSuperclass() != null)
-                    supers.add(c.getSuperclass());
-                for (CtTypeReference<?> superRef : supers) bindingOf(superRef, declared, seen);
+                for (CtTypeReference<?> superRef : supers(t)) bindingOf(superRef, declared, seen);
             } catch (RuntimeException e) {
                 // One type Spoon cannot read must not cost the dump the bindings of every other type.
                 failures.count("sites.bindingsUnresolved");
             }
         }
-        java.util.Map<String, String> out = new java.util.HashMap<>();
+        Map<String, String> out = new HashMap<>();
         for (var e : seen.entrySet()) if (e.getValue().size() == 1) out.put(e.getKey(), e.getValue().iterator().next());
         return out;
     }
 
-    private static void bindingOf(CtTypeReference<?> superRef, java.util.Set<String> declared,
-            java.util.Map<String, java.util.Set<String>> seen) {
+    private static void bindingOf(CtTypeReference<?> superRef, Set<String> declared, Map<String, Set<String>> seen) {
         CtType<?> declaration = superRef.getTypeDeclaration();
         if (declaration == null || !declared.contains(Names.qualified(declaration))) return;
         List<CtTypeReference<?>> args = superRef.getActualTypeArguments();
@@ -188,8 +246,8 @@ public final class Sites {
             if (arg == null || arg instanceof CtTypeParameterReference) continue;
             String fqn = Names.qualified(arg);
             if (!declared.contains(fqn)) continue;
-            String key = Names.qualified(declaration) + "#" + params.get(i).getSimpleName();
-            seen.computeIfAbsent(key, k -> new java.util.TreeSet<>()).add(fqn);
+            String key = Names.member(Names.qualified(declaration), params.get(i).getSimpleName());
+            seen.computeIfAbsent(key, k -> new TreeSet<>()).add(fqn);
         }
     }
 
@@ -203,260 +261,194 @@ public final class Sites {
         for (CtType<?> owner = type; owner != null; owner = owner.getDeclaringType())
             for (var formal : owner.getFormalCtTypeParameters())
                 if (formal.getSimpleName().equals(parameter.getSimpleName()))
-                    return index.bound().get(Names.qualified(owner) + "#" + parameter.getSimpleName());
+                    return index.bound().get(Names.member(Names.qualified(owner), parameter.getSimpleName()));
         return null;
     }
 
-    /**
-     * Writes calls.ndjson and hands the rest of each body to the sections that read it: the returns to the member rows,
-     * the field accesses to fields.ndjson. One walk per body feeds all three.
-     *
-     * <p>`types` are the dumped ones; `known` adds the generated sources' signatures, which the index needs so a call
-     * into a generated mapper is typed like any other, and which are never walked.
-     */
-    static Written write(List<CtType<?>> types, List<CtType<?>> known, java.util.Map<String, List<Lombok.Item>> synth,
-            Path root, Path out, CallIds ids, Refs refs) throws IOException {
-        Index index = index(known, synth, refs.failures());
-        // What Lombok writes, in the two shapes a chain needs: a member's return type, and the builder types it invents.
-        java.util.Map<String, String> generatedTypes = new java.util.HashMap<>();
-        java.util.Set<String> builders = new java.util.HashSet<>();
-        for (var entry : synth.entrySet()) {
-            java.util.Map<String, java.util.List<String>> byName = new java.util.HashMap<>();
-            for (Lombok.Item item : entry.getValue()) {
-                String type = item.typeFqn() != null ? item.typeFqn() : item.type();
-                if ("method".equals(item.kind())) {
-                    generatedTypes.put(item.owner() + "#" + item.name() + "/" + item.params().size(), type);
-                    if (type != null) byName.computeIfAbsent(item.name(), k -> new java.util.ArrayList<>()).add(type);
-                } else if ("field".equals(item.kind())) generatedTypes.put(item.owner() + "#" + item.name(), type);
-                if (type != null && type.endsWith(".Builder")) builders.add(type);
-            }
-            // `Foo.<T>builder()`: Spoon counts the written type argument, so a single-shape name is also reachable bare.
-            for (var named : byName.entrySet())
-                if (named.getValue().size() == 1)
-                    generatedTypes.putIfAbsent(entry.getKey() + "#" + named.getKey(), named.getValue().get(0));
-        }
-        Chains chains = new Chains(generatedTypes, builders, refs.failures());
-        java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns = new java.util.IdentityHashMap<>();
-        List<FieldAccesses.Row> fields = FieldAccesses.rows();
-        try (Ndjson w = new Ndjson(out)) {
-            for (CtType<?> type : types) {
-                for (CtExecutable<?> executable : executables(type))
-                    writeBody(w, type, executable, methodIdOf(type, executable), root, index, chains, ids, refs,
-                            returns, fields);
-                // A method of an anonymous class is body work of the member that writes it, filed under the type.
-                for (spoon.reflect.declaration.CtTypeMember member : type.getTypeMembers())
-                    if (member instanceof CtExecutable<?> body)
-                        for (CtMethod<?> inner : Anonymous.methods(body))
-                            writeBody(w, type, inner, Anonymous.id(type, inner, root), root, index, chains, ids, refs,
-                                    returns, fields);
-            }
-        }
-        return new Written(returns, fields);
-    }
+    // ---- the rows: one body at a time ----
 
-    /** What one dump knows beyond its sections: each body's returns, and every field read and write. */
-    record Written(java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccesses.Row> fields) {
-    }
-
-    /** A site with the position it was read at, so the position is computed once. */
-    private record Site(CtElement element, Positions.Pos pos) {
-    }
-
-    private static void writeBody(Ndjson w, CtType<?> type, CtExecutable<?> executable, String methodId, Path root,
-            Index index, Chains chains, CallIds ids, Refs refs,
-            java.util.Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccesses.Row> fields)
-            throws IOException {
-        Walk.Body body = Walk.scan(executable);
+    private static void writeBody(Ndjson w, Ctx ctx, CtType<?> type, CtExecutable<?> executable, String methodId,
+            Walk.Body body) throws IOException {
         // The body's own writes first: a returned local can still name the value it was assigned.
-        refs.scope(body.writes());
+        ctx.refs().scope(body.writes());
         // Ids for the whole body before its rows: a row's argument may name a call written after it.
         List<Site> sites = new ArrayList<>();
         for (CtElement element : body.sites()) {
             // Spoon inserts an implicit super() with no source position; it is not a call anyone wrote.
-            Positions.Pos pos = Positions.of(element, root);
+            Positions.Pos pos = ctx.positions().of(element);
             if (pos == null) continue;
-            ids.assign(element, methodId, pos);
+            ctx.ids().assign(element, methodId, pos);
             sites.add(new Site(element, pos));
         }
-        for (Site site : sites) writeSite(w, type, site.element(), site.pos(), methodId, index, chains, ids, refs);
-        returns.put(executable, Returns.plan(executable, body, refs));
-        FieldAccesses.collect(fields, body, methodId, root, refs);
+        for (Site site : sites) writeSite(w, ctx, type, methodId, site);
+        ctx.returns().put(executable, Returns.plan(executable, body, ctx.refs()));
+        FieldAccesses.collect(ctx.fields(), body, methodId, ctx.positions(), ctx.refs());
     }
 
-    private static void writeSite(Ndjson w, CtType<?> type, CtElement site, Positions.Pos pos, String methodId,
-            Index index, Chains chains, CallIds ids, Refs refs) throws IOException {
+    private static void writeSite(Ndjson w, Ctx ctx, CtType<?> type, String methodId, Site site) throws IOException {
         try {
-            if (site instanceof CtInvocation<?> call) w.row(g -> row(g, type, methodId, call, pos, index, chains, ids, refs));
-            else if (site instanceof CtExecutableReferenceExpression<?, ?> ref)
-                w.row(g -> methodRefRow(g, type, methodId, ref, pos, index, chains, ids, refs));
+            if (site.element() instanceof CtInvocation<?> call)
+                w.row(g -> callRow(g, ctx, type, methodId, call, site.pos()));
+            else if (site.element() instanceof CtExecutableReferenceExpression<?, ?> ref)
+                w.row(g -> methodRefRow(g, ctx, type, methodId, ref, site.pos()));
         } catch (RuntimeException e) {
             // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
-            w.row(g -> errorRow(g, methodId, site, pos, e, refs.failures()));
+            w.row(g -> errorRow(g, methodId, site.element(), site.pos(), e, ctx.refs().failures()));
         }
     }
 
-    /** `values()`/`valueOf(String)` on an enum are compiler-written: never a member, never a target. */
-    private static boolean syntheticEnum(CtType<?> owner, String name) {
-        return owner.isEnum() && ("values".equals(name) || "valueOf".equals(name));
-    }
-
-    static List<CtExecutable<?>> executables(CtType<?> type) {
-        List<CtExecutable<?>> out = new ArrayList<>();
-        for (var member : type.getTypeMembers())
-            if (member instanceof spoon.reflect.declaration.CtConstructor<?> ctor) out.add(ctor);
-            else if (member instanceof CtMethod<?> method) out.add(method);
-        return out;
-    }
-
-    private static void row(JsonGenerator g, CtType<?> type, String methodId, CtInvocation<?> call, Positions.Pos pos,
-            Index index, Chains chains, CallIds ids, Refs refs) throws IOException {
+    /** One call site: its receiver, what it resolves to, and its arguments. */
+    private static void callRow(JsonGenerator g, Ctx ctx, CtType<?> type, String methodId, CtInvocation<?> call,
+            Positions.Pos pos) throws IOException {
         CtExecutableReference<?> ref = call.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
         int argc = call.getArguments().size();
-        String targetText = refs.textOf(call.getTarget());
-        // Lombok's `log` is a field nobody declared: the target is a bare name, and the synthesis knows its type.
-        String fieldType = targetText != null && targetText.matches("[A-Za-z_$][\\w$]*")
-                ? index.generatedFields().get(Names.qualified(type) + "#" + targetText) : null;
-        // The receiver, chains included: a library call's return type is the only way to type what follows it.
-        String receiverName = call.getTarget() == null ? null : chains.receiver(call.getTarget());
-        if (receiverName == null && fieldType == null && ref != null && ref.getDeclaringType() != null)
-            receiverName = Names.qualified(ref.getDeclaringType());
-        // A call written without a receiver resolves against the class it is written in (or what that class inherits).
-        if (receiverName == null && fieldType == null && call.getTarget() == null)
-            receiverName = Names.qualified(type);
-        if (fieldType != null) receiverName = fieldType;
-        // A receiver declared as a type parameter (`T row`) is typed as the argument this checkout writes for it, and
-        // stays untyped when there is none: a member reached through an open parameter is unresolved.
-        if (receiverName == null && fieldType == null && call.getTarget() != null)
-            receiverName = boundType(index, type, call.getTarget().getType());
-
-        List<Target> targets = targets(ref, index, receiverName, name, argc);
+        String targetText = ctx.refs().textOf(call.getTarget());
+        String fieldType = generatedFieldType(ctx.index(), type, targetText);
+        String receiver = receiverOf(ctx, type, call, fieldType);
+        List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
         boolean generated = false;
         if (targets.isEmpty()) {
             // Unqualified call: its receiver is the class being written, so a generated sibling is the target.
-            String generatedOwner = receiverName != null ? receiverName : Names.qualified(type);
-            java.util.Map<String, String> members = index.generated().getOrDefault(generatedOwner, java.util.Map.of());
-            String id = members.get(name + "/" + argc);
-            if (id == null) id = members.get(name);
-            if (id != null) {
-                targets = List.of(new Target(id, "declared"));
+            String owner = receiver != null ? receiver : Names.qualified(type);
+            Lombok.Item item = ctx.index().generated().method(owner, name, argc);
+            if (item != null) {
+                targets = List.of(new Target(item.id(), "declared"));
                 generated = true;
-                receiverName = generatedOwner;
+                receiver = owner;
             }
         }
-
-        g.writeStringField("method", methodId);
-        g.writeStringField("id", ids.id(call));
-        g.writeStringField("file", pos.file());
-        g.writeNumberField("line", pos.line());
-        g.writeNumberField("col", pos.col());
-        g.writeStringField("name", name);
+        Recv recv = Recv.of(ctx, type, receiver, fieldType != null);
+        head(g, methodId, ctx.ids().id(call), pos, name);
         g.writeNumberField("argc", argc);
-        g.writeObjectFieldStart("recv");
-        if (receiverName == null) g.writeNullField("type");
-        else g.writeStringField("type", receiverName);
-        writeTypeArgs(g, call.getTarget() == null ? null : call.getTarget().getType(), refs);
-        g.writeStringField("kind", kind(call));
-        g.writeStringField("how", how(call.getTarget()));
-        // The receiver as written (`cargoRepository`, `this.x`, `a.b()`), which is how a reader names the site.
-        if (targetText == null) g.writeNullField("text");
-        else g.writeStringField("text", targetText);
-        g.writeEndObject();
+        writeRecv(g, recv.invented() ? null : recv.type(), ctx, call.getTarget(), kind(call), how(call.getTarget()),
+                targetText);
         writeTargets(g, targets);
         g.writeBooleanField("uniqueImpl", uniqueImpl(ref, targets));
-        // Every argument, as data: `text` is for display, `kind` and its fields are the fact.
-        g.writeArrayFieldStart("args");
-        for (CtExpression<?> argument : call.getArguments()) {
-            g.writeStartObject();
-            Refs.write(g, refs.of(argument));
-            g.writeEndObject();
-        }
-        g.writeEndArray();
-        if (call.getParent(spoon.reflect.code.CtLambda.class) != null) g.writeBooleanField("inLambda", true);
+        writeArgs(g, ctx, call.getArguments());
+        inLambda(g, call);
+        g.writeStringField("origin", callOrigin(ctx, targets, generated, ref, recv));
+        if (targets.isEmpty()) g.writeStringField("reason", callReason(recv, call.getTarget()));
+    }
 
-        boolean receiverDeclared = receiverName != null && index.declared().contains(receiverName);
-        boolean builderReceiver = chains.isBuilder(receiverName);
-        boolean invented = receiverName != null && fieldType == null && !receiverDeclared && !builderReceiver
-                && samePackage(receiverName, type);
-        // A receiver type Spoon invented (a missing import) is an unresolved type, and the run says how many it met.
-        if (invented) refs.failures().count("refs.typeUnresolved");
-        // `arity` is a member lookup by name and count inside a project type, not a compiler answer: it says so.
-        boolean compiler = ref != null && ref.getDeclaration() instanceof CtMethod<?> declaredMethod
-                && declaredMethod.getDeclaringType() != null
-                && index.declared().contains(Names.qualified(declaredMethod.getDeclaringType()));
-        // A generated field (Lombok's `log`) is a library receiver even when Spoon never saw the field declaration.
-        boolean generatedField = fieldType != null;
-        boolean libraryTarget = ref != null && ref.getDeclaration() instanceof CtMethod<?> declaredCall
-                && (declaredCall.getDeclaringType() == null
-                        || !index.declared().contains(Names.qualified(declaredCall.getDeclaringType())));
-        g.writeStringField("origin", !targets.isEmpty() ? generated ? "lombok" : compiler ? "java" : "arity"
-                : builderReceiver ? "lombok"
-                : invented ? "unresolved"
-                : generatedField || libraryTarget ? "library"
-                : receiverName == null || receiverDeclared ? "unresolved" : "library");
-        if (targets.isEmpty())
-            g.writeStringField("reason", builderReceiver ? "lombok-builder"
-                    : invented ? "unresolved-name"
-                    : receiverName == null ? (varLocal(call.getTarget()) ? "var-unresolved" : "no-callee")
-                    : receiverDeclared ? "no-declaration-here" : "library-signature");
+    /**
+     * The receiver's type as the call site gives it: a Lombok field's type for a bare name Lombok declared, else the
+     * chain or expression's type, else the declaring type of the method, else the class the call is written in.
+     */
+    private static String receiverOf(Ctx ctx, CtType<?> type, CtInvocation<?> call, String fieldType) {
+        CtExecutableReference<?> ref = call.getExecutable();
+        CtExpression<?> target = call.getTarget();
+        String receiver = target == null ? null : ctx.chains().receiver(target);
+        if (receiver == null && fieldType == null && ref != null && ref.getDeclaringType() != null)
+            receiver = Names.qualified(ref.getDeclaringType());
+        // A call written without a receiver resolves against the class it is written in (or what that class inherits).
+        if (receiver == null && fieldType == null && target == null) receiver = Names.qualified(type);
+        if (fieldType != null) receiver = fieldType;
+        // A receiver declared as a type parameter (`T row`) is typed as the argument this checkout writes for it, and
+        // stays untyped when there is none: a member reached through an open parameter is unresolved.
+        if (receiver == null && fieldType == null && target != null)
+            receiver = boundType(ctx.index(), type, target.getType());
+        return receiver;
+    }
+
+    /** The type of a bare name Lombok declared as a field (`log`), or null: only the synthesis knows such a name. */
+    private static String generatedFieldType(Index index, CtType<?> type, String targetText) {
+        if (targetText == null || !targetText.matches("[A-Za-z_$][\\w$]*")) return null;
+        Lombok.Item field = index.generated().fields().get(Names.member(Names.qualified(type), targetText));
+        return field == null ? null : field.typeFqn();
     }
 
     /**
      * A method reference (`Cookie::getValue`, `cookie::getValue`) as a call row: the same receiver type and target as a
      * call would have, with `via: methodRef` and the referenced method's arity. It has no arguments of its own.
      */
-    private static void methodRefRow(JsonGenerator g, CtType<?> type, String methodId,
-            CtExecutableReferenceExpression<?, ?> expression, Positions.Pos pos, Index index, Chains chains,
-            CallIds ids, Refs refs) throws IOException {
+    private static void methodRefRow(JsonGenerator g, Ctx ctx, CtType<?> type, String methodId,
+            CtExecutableReferenceExpression<?, ?> expression, Positions.Pos pos) throws IOException {
         CtExecutableReference<?> ref = expression.getExecutable();
         String name = ref == null ? "?" : ref.getSimpleName();
         var declaration = ref == null ? null : ref.getDeclaration();
         int argc = declaration instanceof CtMethod<?> method ? method.getParameters().size() : 0;
         CtExpression<?> target = expression.getTarget();
-        String receiverName = target == null ? null : chains.receiver(target);
-        if (receiverName == null && ref != null && ref.getDeclaringType() != null)
-            receiverName = Names.qualified(ref.getDeclaringType());
-        if (receiverName == null) receiverName = Names.qualified(type);
-        List<Target> targets = targets(ref, index, receiverName, name, argc);
+        String receiver = target == null ? null : ctx.chains().receiver(target);
+        if (receiver == null && ref != null && ref.getDeclaringType() != null)
+            receiver = Names.qualified(ref.getDeclaringType());
+        if (receiver == null) receiver = Names.qualified(type);
+        List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
+        Recv recv = Recv.of(ctx, type, receiver, false);
+        boolean unknownVar = varLocal(target);
+        head(g, methodId, ctx.ids().id(expression), pos, name);
+        g.writeStringField("via", "methodRef");
+        g.writeNumberField("argc", argc);
+        writeRecv(g, recv.invented() ? null : recv.type(), ctx, target,
+                ref != null && ref.isStatic() ? "static" : "instance", target == null ? "static" : how(target),
+                ctx.refs().textOf(expression));
+        writeTargets(g, targets);
+        g.writeBooleanField("uniqueImpl", uniqueImpl(ref, targets));
+        writeArgs(g, ctx, List.of());
+        inLambda(g, expression);
+        g.writeStringField("origin", !targets.isEmpty() ? "java"
+                : recv.declared() || unknownVar || recv.invented() ? "unresolved" : "library");
+        if (targets.isEmpty())
+            g.writeStringField("reason", recv.invented() ? "unresolved-name"
+                    : recv.declared() ? "no-declaration-here" : unknownVar ? "var-unresolved" : "library-signature");
+    }
 
+    /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
+    private static void errorRow(JsonGenerator g, String methodId, CtElement site, Positions.Pos pos,
+            RuntimeException e, Failures failures) throws IOException {
+        String name = "?";
+        try {
+            CtExecutableReference<?> ref = site instanceof CtInvocation<?> call ? call.getExecutable()
+                    : site instanceof CtExecutableReferenceExpression<?, ?> expression ? expression.getExecutable()
+                    : null;
+            name = ref == null ? "?" : ref.getSimpleName();
+        } catch (RuntimeException ignored) {
+            // The name is worth having but not worth failing for: the row keeps `?`, and the run says so.
+            failures.count("sites.nameUnresolved");
+        }
+        head(g, methodId, null, pos, name);
+        g.writeNumberField("argc", site instanceof CtInvocation<?> call ? call.getArguments().size() : 0);
+        g.writeObjectFieldStart("recv");
+        g.writeNullField("type");
+        g.writeStringField("kind", "unknown");
+        g.writeEndObject();
+        g.writeArrayFieldStart("targets");
+        g.writeEndArray();
+        g.writeBooleanField("uniqueImpl", false);
+        g.writeArrayFieldStart("args");
+        g.writeEndArray();
+        g.writeStringField("origin", "error");
+        g.writeStringField("reason", e.getClass().getSimpleName() + ": " + e.getMessage());
+    }
+
+    /** The fields every site row starts with. */
+    private static void head(JsonGenerator g, String methodId, String id, Positions.Pos pos, String name)
+            throws IOException {
         g.writeStringField("method", methodId);
-        g.writeStringField("id", ids.id(expression));
+        g.writeStringField("id", id);
         g.writeStringField("file", pos.file());
         g.writeNumberField("line", pos.line());
         g.writeNumberField("col", pos.col());
         g.writeStringField("name", name);
-        g.writeStringField("via", "methodRef");
-        g.writeNumberField("argc", argc);
+    }
+
+    /**
+     * The receiver object: its type (null when judged invented), its type arguments as the site writes them, how it is
+     * reached, and the text it is written as, which is how a reader names the site.
+     */
+    private static void writeRecv(JsonGenerator g, String type, Ctx ctx, CtExpression<?> target, String kind,
+            String how, String text) throws IOException {
         g.writeObjectFieldStart("recv");
-        g.writeStringField("type", receiverName);
-        writeTypeArgs(g, target == null ? null : target.getType(), refs);
-        g.writeStringField("kind", ref != null && ref.isStatic() ? "static" : "instance");
-        g.writeStringField("how", target == null ? "static" : how(target));
-        String text = refs.textOf(expression);
+        if (type == null) g.writeNullField("type");
+        else g.writeStringField("type", type);
+        g.writeArrayFieldStart("typeArgs");
+        for (String arg : ctx.refs().typeArgs(target == null ? null : target.getType(), target)) g.writeString(arg);
+        g.writeEndArray();
+        g.writeStringField("kind", kind);
+        g.writeStringField("how", how);
         if (text == null) g.writeNullField("text");
         else g.writeStringField("text", text);
         g.writeEndObject();
-        writeTargets(g, targets);
-        g.writeBooleanField("uniqueImpl", uniqueImpl(ref, targets));
-        g.writeArrayFieldStart("args");
-        g.writeEndArray();
-        if (expression.getParent(spoon.reflect.code.CtLambda.class) != null)
-            g.writeBooleanField("inLambda", true);
-        boolean receiverDeclared = index.declared().contains(receiverName);
-        boolean unknownVar = varLocal(target);
-        g.writeStringField("origin", !targets.isEmpty() ? "java"
-                : receiverDeclared || unknownVar ? "unresolved" : "library");
-        if (targets.isEmpty())
-            g.writeStringField("reason",
-                    receiverDeclared ? "no-declaration-here"
-                            : unknownVar ? "var-unresolved" : "library-signature");
-    }
-
-    /** True when a receiver is a `var` local: an unresolved one is an unknown, not a missing callee. */
-    private static boolean varLocal(CtExpression<?> target) {
-        if (!(target instanceof spoon.reflect.code.CtVariableRead<?> read)) return false;
-        var declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
-        return declaration instanceof spoon.reflect.code.CtLocalVariable<?> local && local.isInferred();
     }
 
     /** `targets`: the declaration and each override of it, in that order, each with which of the two it is. */
@@ -471,14 +463,113 @@ public final class Sites {
         g.writeEndArray();
     }
 
-    /**
-     * The type arguments of a written type, as names: a project or library type qualified, a type parameter by the
-     * letter its author wrote. Sorted by nothing — the order is Java's — and empty when the type has no arguments.
-     */
-    private static void writeTypeArgs(JsonGenerator g, CtTypeReference<?> type, Refs refs) throws IOException {
-        g.writeArrayFieldStart("typeArgs");
-        for (String name : refs.typeArgs(type)) g.writeString(name);
+    /** Every argument, as data: `text` is for display, `kind` and its fields are the fact. */
+    private static void writeArgs(JsonGenerator g, Ctx ctx, List<CtExpression<?>> args) throws IOException {
+        g.writeArrayFieldStart("args");
+        for (CtExpression<?> argument : args) {
+            g.writeStartObject();
+            Refs.write(g, ctx.refs().of(argument));
+            g.writeEndObject();
+        }
         g.writeEndArray();
+    }
+
+    private static void inLambda(JsonGenerator g, CtElement site) throws IOException {
+        if (site.getParent(CtLambda.class) != null) g.writeBooleanField("inLambda", true);
+    }
+
+    private static String callOrigin(Ctx ctx, List<Target> targets, boolean generated, CtExecutableReference<?> ref,
+            Recv recv) {
+        if (!targets.isEmpty()) {
+            if (generated) return "lombok";
+            return declaredIn(ctx, ref) ? "java" : "arity";
+        }
+        if (recv.builder()) return "lombok";
+        if (recv.invented()) return "unresolved";
+        if (recv.generatedField() || libraryTarget(ctx, ref)) return "library";
+        return recv.type() == null || recv.declared() ? "unresolved" : "library";
+    }
+
+    private static String callReason(Recv recv, CtExpression<?> target) {
+        if (recv.builder()) return "lombok-builder";
+        if (recv.invented()) return "unresolved-name";
+        if (recv.type() == null) return varLocal(target) ? "var-unresolved" : "no-callee";
+        return recv.declared() ? "no-declaration-here" : "library-signature";
+    }
+
+    /** True when a call's resolved declaration belongs to a type declared in this checkout: Spoon answered. */
+    private static boolean declaredIn(Ctx ctx, CtExecutableReference<?> ref) {
+        CtMethod<?> method = declaration(ref);
+        return method != null && method.getDeclaringType() != null
+                && ctx.index().declared().contains(Names.qualified(method.getDeclaringType()));
+    }
+
+    /** True when a call's resolved declaration is a library's, or has no declaring type at all. */
+    private static boolean libraryTarget(Ctx ctx, CtExecutableReference<?> ref) {
+        CtMethod<?> method = declaration(ref);
+        return method != null && (method.getDeclaringType() == null
+                || !ctx.index().declared().contains(Names.qualified(method.getDeclaringType())));
+    }
+
+    private static CtMethod<?> declaration(CtExecutableReference<?> ref) {
+        return ref != null && ref.getDeclaration() instanceof CtMethod<?> method ? method : null;
+    }
+
+    /** True when a receiver is a `var` local: an unresolved one is an unknown, not a missing callee. */
+    private static boolean varLocal(CtExpression<?> target) {
+        if (!(target instanceof CtVariableRead<?> read)) return false;
+        var declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
+        return declaration instanceof CtLocalVariable<?> local && local.isInferred();
+    }
+
+    /**
+     * The declaration, then every implementation of it: a call through an interface reaches each subclass method with
+     * the same name and arity, which is the graph a flow has to walk. The declaration is `declared`, each subtype
+     * method `override`: which of the two a reader may follow is its policy, and this file only says which is which.
+     */
+    private static List<Target> targets(CtExecutableReference<?> ref, Index index, String receiver, String name,
+            int argc) {
+        List<Target> out = new ArrayList<>();
+        if (ref == null) return out;
+        if (!(ref.getDeclaration() instanceof CtMethod<?> method)) return byArity(index, receiver, name, argc);
+        CtType<?> owner = method.getDeclaringType();
+        if (owner == null || !index.declared().contains(Names.qualified(owner))) return out;
+        // The method's own position can be synthetic (a record accessor); the owner's is the check that matters.
+        if (owner.getPosition() == null || !owner.getPosition().isValidPosition()) return out;
+        if (syntheticEnum(owner, method.getSimpleName())) return out;
+        out.add(new Target(Names.executableId(owner, method), "declared"));
+        boolean open = owner.isInterface() || owner.getModifiers().contains(ModifierKind.ABSTRACT);
+        if (!open) return out;
+        String shape = Names.shape(method.getSimpleName(), method.getParameters().size());
+        for (String subtype : index.subtypes().getOrDefault(Names.qualified(owner), Set.of()))
+            addTarget(out, index.byShape().getOrDefault(subtype, Map.of()).get(shape), "override");
+        return out;
+    }
+
+    /**
+     * A call Spoon refuses to pick an overload for. Inside a project type, name and arity are still a fact when they
+     * leave exactly one member, marked by origin and never dressed up as a compiler answer. The call may sit on an
+     * inherited member: the nearest declaration wins, one level at a time.
+     */
+    private static List<Target> byArity(Index index, String receiver, String name, int argc) {
+        List<Target> out = new ArrayList<>();
+        if (receiver == null || !index.declared().contains(receiver)) return out;
+        List<String> level = List.of(receiver);
+        Set<String> seen = new HashSet<>();
+        while (!level.isEmpty() && out.isEmpty()) {
+            List<String> next = new ArrayList<>();
+            for (String owner : level) {
+                if (!seen.add(owner)) continue;
+                addTarget(out, index.byArity().getOrDefault(owner, Map.of()).get(Names.shape(name, argc)), "declared");
+                next.addAll(index.supertypes().getOrDefault(owner, Set.of()));
+            }
+            level = next;
+        }
+        return out;
+    }
+
+    private static void addTarget(List<Target> out, String id, String kind) {
+        if (id != null && out.stream().noneMatch(t -> t.id().equals(id))) out.add(new Target(id, kind));
     }
 
     /**
@@ -494,50 +585,9 @@ public final class Sites {
         return declaration instanceof CtMethod<?> method && method.getBody() == null;
     }
 
-    /** The receiver and the type it is declared with share a package: a name Spoon invented, not a library type. */
-    private static boolean samePackage(String fqn, CtType<?> type) {
-        if (type.getPackage() == null) return false;
-        int dot = fqn.lastIndexOf('.');
-        return dot > 0 && type.getPackage().getQualifiedName().equals(fqn.substring(0, dot));
-    }
-
-    static String methodIdOf(CtType<?> type, CtExecutable<?> owner) {
-        String name = owner instanceof spoon.reflect.declaration.CtConstructor<?>
-                ? type.getSimpleName() : owner.getSimpleName();
-        return Names.methodId(type, name, paramTypes(type, owner));
-    }
-
-    /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
-    private static void errorRow(JsonGenerator g, String methodId, CtElement site, Positions.Pos pos,
-            RuntimeException e, Failures failures) throws IOException {
-        String name = "?";
-        try {
-            CtExecutableReference<?> ref = site instanceof CtInvocation<?> call ? call.getExecutable()
-                    : site instanceof CtExecutableReferenceExpression<?, ?> expression ? expression.getExecutable()
-                    : null;
-            name = ref == null ? "?" : ref.getSimpleName();
-        } catch (RuntimeException ignored) {
-            // the name is worth having but not worth failing for
-            failures.count("sites.nameUnresolved");
-        }
-        g.writeStringField("method", methodId);
-        g.writeNullField("id");
-        g.writeStringField("file", pos.file());
-        g.writeNumberField("line", pos.line());
-        g.writeNumberField("col", pos.col());
-        g.writeStringField("name", name);
-        g.writeNumberField("argc", site instanceof CtInvocation<?> call ? call.getArguments().size() : 0);
-        g.writeObjectFieldStart("recv");
-        g.writeNullField("type");
-        g.writeStringField("kind", "unknown");
-        g.writeEndObject();
-        g.writeArrayFieldStart("targets");
-        g.writeEndArray();
-        g.writeBooleanField("uniqueImpl", false);
-        g.writeArrayFieldStart("args");
-        g.writeEndArray();
-        g.writeStringField("origin", "error");
-        g.writeStringField("reason", e.getClass().getSimpleName() + ": " + e.getMessage());
+    /** `values()`/`valueOf(String)` on an enum are compiler-written: never a member, never a target. */
+    private static boolean syntheticEnum(CtType<?> owner, String name) {
+        return owner.isEnum() && ("values".equals(name) || "valueOf".equals(name));
     }
 
     /**
@@ -546,17 +596,16 @@ public final class Sites {
      */
     private static String how(CtExpression<?> target) {
         if (target == null) return "implicit";
-        if (target instanceof spoon.reflect.code.CtTypeAccess<?>) return "static";
-        if (target instanceof spoon.reflect.code.CtSuperAccess<?>) return "super";
-        if (target instanceof spoon.reflect.code.CtThisAccess<?>) return "this";
+        if (target instanceof CtTypeAccess<?>) return "static";
+        if (target instanceof CtSuperAccess<?>) return "super";
+        if (target instanceof CtThisAccess<?>) return "this";
         if (target instanceof CtInvocation<?>) return "chain";
-        if (target instanceof spoon.reflect.code.CtVariableRead<?> read) {
+        if (target instanceof CtVariableRead<?> read) {
             var declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
             if (declaration instanceof spoon.reflect.declaration.CtField<?>) return "field";
             if (declaration instanceof spoon.reflect.declaration.CtParameter<?> parameter)
                 // A lambda's parameter is a parameter to Spoon; the facts distinguish it, so the dump does too.
-                return parameter.getParent() instanceof spoon.reflect.code.CtLambda<?> ? "lambda" : "param";
-            if (declaration instanceof spoon.reflect.code.CtLocalVariable<?>) return "local";
+                return parameter.getParent() instanceof CtLambda<?> ? "lambda" : "param";
             return "local";
         }
         return "expr";
@@ -565,65 +614,8 @@ public final class Sites {
     private static String kind(CtInvocation<?> call) {
         CtExecutableReference<?> ref = call.getExecutable();
         if (call.getTarget() == null) return ref != null && ref.isStatic() ? "static" : "implicit";
-        if (call.getTarget() instanceof spoon.reflect.code.CtSuperAccess<?>) return "super";
-        if (call.getTarget() instanceof spoon.reflect.code.CtTypeAccess<?>) return "static";
+        if (call.getTarget() instanceof CtSuperAccess<?>) return "super";
+        if (call.getTarget() instanceof CtTypeAccess<?>) return "static";
         return "instance";
-    }
-
-    /**
-     * The declaration, then every implementation of it: a call through an interface reaches each subclass method with
-     * the same name and arity, which is the graph a flow has to walk. The declaration is `declared`, each subtype
-     * method `override`: which of the two a reader may follow is its policy, and this file only says which is which.
-     */
-    private static List<Target> targets(CtExecutableReference<?> ref, Index index, String receiver,
-            String name, int argc) {
-        List<Target> out = new ArrayList<>();
-        if (ref == null) return out;
-        var declaration = ref.getDeclaration();
-        if (!(declaration instanceof CtMethod<?> method)) {
-            // Spoon refuses an overload it cannot pick; inside a project type, name and arity are still a fact when they
-            // leave exactly one member. Marked by origin, never dressed up as a compiler answer.
-            if (receiver == null || !index.declared().contains(receiver)) return out;
-            // The call may sit on an inherited member: nearest declaration wins, one level at a time.
-            java.util.List<String> level = java.util.List.of(receiver);
-            java.util.Set<String> seen = new java.util.HashSet<>();
-            while (!level.isEmpty() && out.isEmpty()) {
-                java.util.List<String> next = new java.util.ArrayList<>();
-                for (String owner : level) {
-                    if (!seen.add(owner)) continue;
-                    String id = index.arity().getOrDefault(owner, java.util.Map.of()).get(name + "/" + argc);
-                    if (id != null && out.stream().noneMatch(t -> t.id().equals(id)))
-                        out.add(new Target(id, "declared"));
-                    next.addAll(index.supertypes().getOrDefault(owner, java.util.Set.of()));
-                }
-                level = next;
-            }
-            return out;
-        }
-        CtType<?> owner = method.getDeclaringType();
-        if (owner == null || !index.declared().contains(Names.qualified(owner))) return out;
-        // The method's own position can be synthetic (a record accessor); the owner's is the check that matters.
-        if (owner.getPosition() == null || !owner.getPosition().isValidPosition()) return out;
-        if (syntheticEnum(owner, method.getSimpleName())) return out;
-        out.add(new Target(Names.methodId(owner, method.getSimpleName(), paramTypes(owner, method)), "declared"));
-        boolean open = owner.isInterface() || owner.getModifiers().contains(spoon.reflect.declaration.ModifierKind.ABSTRACT);
-        if (!open) return out;
-        String shape = method.getSimpleName() + "/" + method.getParameters().size();
-        for (String subtype : index.subtypes().getOrDefault(Names.qualified(owner), java.util.Set.of())) {
-            String id = index.methods().getOrDefault(subtype, java.util.Map.of()).get(shape);
-            if (id != null && out.stream().noneMatch(t -> t.id().equals(id))) out.add(new Target(id, "override"));
-        }
-        return out;
-    }
-
-    private static List<CtTypeReference<?>> paramTypes(CtType<?> owner, CtExecutable<?> executable) {
-        // A record's canonical constructor is identified by its components, in declaration order: Spoon lists them in
-        // another order, and a row written under that order would not match the member the dump declares.
-        if (owner instanceof spoon.reflect.declaration.CtRecord record
-                && executable instanceof spoon.reflect.declaration.CtConstructor<?> ctor
-                && RecordCtors.isCanonical(record, ctor)) return RecordCtors.componentTypes(record);
-        List<CtTypeReference<?>> out = new ArrayList<>();
-        for (var p : executable.getParameters()) out.add(p.getType());
-        return out;
     }
 }

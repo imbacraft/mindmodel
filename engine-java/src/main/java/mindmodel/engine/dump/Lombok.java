@@ -1,8 +1,9 @@
 package mindmodel.engine.dump;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,7 @@ import java.util.Set;
 import spoon.reflect.declaration.CtAnnotation;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtField;
+import spoon.reflect.declaration.CtRecord;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.declaration.ModifierKind;
 
@@ -25,68 +27,137 @@ import spoon.reflect.declaration.ModifierKind;
  */
 public final class Lombok {
 
-    private Lombok() {
-    }
-
     /** One generated member, written exactly like a declared one. */
     public record Item(String owner, String kind, String name, String id, String type, String typeFqn,
             List<String> params, Set<ModifierKind> modifiers, Positions.Pos pos, String from) {
     }
 
+    /**
+     * The generated members, by the keys a call or a chain names them with: `owner#name/argc` and, for a name with one
+     * shape, `owner#name`; fields by `owner#name`; and the builder types the synthesis invents.
+     */
+    public record Index(Map<String, Item> methods, Map<String, Item> fields, Set<String> builders) {
+
+        /** Indexes the synthesized members by the type they were synthesized for. */
+        public static Index of(Map<String, List<Item>> synth) {
+            Map<String, Item> methods = new HashMap<>();
+            Map<String, Item> fields = new HashMap<>();
+            Set<String> builders = new HashSet<>();
+            for (Map.Entry<String, List<Item>> entry : synth.entrySet()) {
+                Map<String, List<Item>> byName = new HashMap<>();
+                for (Item item : entry.getValue()) {
+                    if (item.typeFqn() != null && item.typeFqn().endsWith(".Builder")) builders.add(item.typeFqn());
+                    if ("field".equals(item.kind())) {
+                        fields.put(Names.member(item.owner(), item.name()), item);
+                    } else if ("method".equals(item.kind())) {
+                        methods.putIfAbsent(Names.member(item.owner(), Names.shape(item.name(), item.params().size())),
+                                item);
+                        byName.computeIfAbsent(item.name(), k -> new ArrayList<>()).add(item);
+                    }
+                }
+                // `Foo.<T>builder()` is written with a type argument Spoon counts as an argument: a generated member
+                // whose name has exactly one shape on its owner is also reachable without the count.
+                for (Map.Entry<String, List<Item>> named : byName.entrySet())
+                    if (named.getValue().size() == 1)
+                        methods.putIfAbsent(Names.member(entry.getKey(), named.getKey()), named.getValue().get(0));
+            }
+            return new Index(methods, fields, builders);
+        }
+
+        /** The generated method a call names: by name and argument count, else by name alone; null when none. */
+        public Item method(String owner, String name, int argc) {
+            Item item = methods.get(Names.member(owner, Names.shape(name, argc)));
+            return item != null ? item : methods.get(Names.member(owner, name));
+        }
+    }
+
     private static final Set<String> LOGGERS = Set.of("Slf4j", "Log4j2", "Log", "CommonsLog", "JBossLog", "XSlf4j");
 
-    public static Map<String, List<Item>> synthesize(List<CtType<?>> types, Path root) {
+    private Lombok() {
+    }
+
+    /**
+     * The synthesized members of every type, keyed by the type's name, in a stable order. The positions and the failure
+     * counts are the run's own: a reference a generated member names is judged by the same rule as a declared one.
+     */
+    public static Map<String, List<Item>> synthesize(List<CtType<?>> types, Positions positions, Failures failures) {
         Map<String, List<Item>> out = new LinkedHashMap<>();
         for (CtType<?> type : types) {
             List<Item> items = new ArrayList<>();
-            if (!(type instanceof spoon.reflect.declaration.CtRecord)) {
-                itemsOf(type, root, items);
-            }
-            items.sort(Comparator.comparing((Item i) -> i.pos == null ? "" : i.pos.file())
-                    .thenComparingInt(i -> i.pos == null ? 0 : i.pos.line())
+            Sink sink = new Sink(items, positions, failures);
+            // A record's members are the compiler's and the dump's own (RecordCtors): no annotation writes them here.
+            if (!(type instanceof CtRecord)) itemsOf(type, sink);
+            items.sort(Comparator.comparing((Item i) -> i.pos() == null ? "" : i.pos().file())
+                    .thenComparingInt(i -> i.pos() == null ? 0 : i.pos().line())
                     .thenComparing(Item::kind).thenComparing(Item::id));
             if (!items.isEmpty()) out.put(Names.qualified(type), items);
         }
         return out;
     }
 
-    private static void itemsOf(CtType<?> type, Path root, List<Item> items) {
+    /** Where one type's generated members go, and the run's positions and failure counts they are judged with. */
+    private record Sink(List<Item> items, Positions positions, Failures failures) {
+
+        void add(String owner, String kind, String name, String type, List<String> params, Set<ModifierKind> modifiers,
+                CtElement posOf, String from) {
+            String id = Names.member(owner, name + "(" + String.join(",", params) + ")");
+            items.add(new Item(owner, kind, name, id, type, typeFqn(posOf, type), params, modifiers,
+                    positions.of(posOf), from));
+        }
+
+        /**
+         * The generated member's type as the compiler names it, for chain typing; the written text stays `type`. A
+         * getter's type is the field's type, which Refs names by the one rule for an unresolved type.
+         */
+        private String typeFqn(CtElement posOf, String written) {
+            if (written == null || written.isEmpty()) return null;
+            // Checked first: a written `Outer.In` has a dot but is not the dotted name the compiler gives.
+            if (posOf instanceof CtField<?> field && field.getType() != null
+                    && written.equals(Names.typeText(field.getType())))
+                return Refs.joinKey(field.getType(), field, failures);
+            // A builder type, the owner it builds, or a name left as written (`String`, `int`): the reader resolves them.
+            return written;
+        }
+    }
+
+    private static void itemsOf(CtType<?> type, Sink sink) {
         String owner = Names.qualified(type);
         // Every enum carries these from the compiler: no source declares them, and the dump reports what is written.
-        if (type.isEnum()) enumMethods(type, owner, root, items);
+        if (type.isEnum()) enumMethods(type, owner, sink);
         boolean data = has(type, "Data");
         boolean value = has(type, "Value");
         boolean getters = data || value || has(type, "Getter");
         boolean setters = data || has(type, "Setter");
-        accessors(type, owner, value, getters, setters, root, items);
-        constructors(type, owner, data, value, root, items);
-        if (has(type, "Builder") || has(type, "SuperBuilder")) builder(type, owner, root, items);
-        if (data || value || has(type, "ToString")) method(type, owner, "toString", "String", List.of(), root, items);
+        accessors(type, owner, value, getters, setters, sink);
+        constructors(type, owner, data, value, sink);
+        if (has(type, "Builder") || has(type, "SuperBuilder")) builder(type, owner, sink);
+        if (data || value || has(type, "ToString"))
+            method(type, owner, "toString", "String", List.of(), "ToString", sink);
         if (data || value || has(type, "EqualsAndHashCode")) {
-            method(type, owner, "equals", "boolean", List.of("Object"), root, items);
-            method(type, owner, "hashCode", "int", List.of(), root, items);
+            method(type, owner, "equals", "boolean", List.of("Object"), "EqualsAndHashCode", sink);
+            method(type, owner, "hashCode", "int", List.of(), "EqualsAndHashCode", sink);
         }
         for (String logger : LOGGERS)
             if (has(type, logger)) {
                 String name = logger.startsWith("Slf") ? "log" : logger.toLowerCase();
-                item(owner, "field", name, "org.slf4j.Logger", List.of(),
-                        Set.of(ModifierKind.PRIVATE, ModifierKind.STATIC, ModifierKind.FINAL), type, logger, root, items);
+                sink.add(owner, "field", name, "org.slf4j.Logger", List.of(),
+                        Set.of(ModifierKind.PRIVATE, ModifierKind.STATIC, ModifierKind.FINAL), type, logger);
                 break;
             }
     }
 
     /** The four members javac writes for an enum: `name()`, `ordinal()`, `values()` and `valueOf(String)`. */
-    private static void enumMethods(CtType<?> type, String owner, Path root, List<Item> items) {
+    private static void enumMethods(CtType<?> type, String owner, Sink sink) {
         Set<ModifierKind> pub = Set.of(ModifierKind.PUBLIC);
-        item(owner, "method", "name", "String", List.of(), pub, type, "enum", root, items);
-        item(owner, "method", "ordinal", "int", List.of(), pub, type, "enum", root, items);
-        item(owner, "method", "values", owner, List.of(), pub, type, "enum", root, items);
-        item(owner, "method", "valueOf", owner, List.of("String"), pub, type, "enum", root, items);
+        sink.add(owner, "method", "name", "String", List.of(), pub, type, "enum");
+        sink.add(owner, "method", "ordinal", "int", List.of(), pub, type, "enum");
+        sink.add(owner, "method", "values", owner, List.of(), pub, type, "enum");
+        sink.add(owner, "method", "valueOf", owner, List.of("String"), pub, type, "enum");
     }
 
     /** Getters for every field, setters for the mutable ones; a field's own annotation adds to the type's. */
     private static void accessors(CtType<?> type, String owner, boolean value, boolean getters, boolean setters,
-            Path root, List<Item> items) {
+            Sink sink) {
         for (CtField<?> field : type.getFields()) {
             if (field.getModifiers().contains(ModifierKind.STATIC)) continue;
             String name = field.getSimpleName();
@@ -94,18 +165,16 @@ public final class Lombok {
             if (getters || has(field, "Getter")) {
                 String getter = typeText.equals("boolean") || typeText.equals("Boolean") ? "is" + cap(name)
                         : "get" + cap(name);
-                item(owner, "method", getter, typeText, List.of(), Set.of(ModifierKind.PUBLIC), field, "Getter", root,
-                        items);
+                sink.add(owner, "method", getter, typeText, List.of(), Set.of(ModifierKind.PUBLIC), field, "Getter");
             }
             boolean mutable = !value && !field.getModifiers().contains(ModifierKind.FINAL);
             if ((setters || has(field, "Setter")) && mutable)
-                item(owner, "method", "set" + cap(name), "void", List.of(typeText), Set.of(ModifierKind.PUBLIC), field,
-                        "Setter", root, items);
+                sink.add(owner, "method", "set" + cap(name), "void", List.of(typeText), Set.of(ModifierKind.PUBLIC),
+                        field, "Setter");
         }
     }
 
-    private static void constructors(CtType<?> type, String owner, boolean data, boolean value, Path root,
-            List<Item> items) {
+    private static void constructors(CtType<?> type, String owner, boolean data, boolean value, Sink sink) {
         List<String> required = new ArrayList<>();
         List<String> all = new ArrayList<>();
         for (CtField<?> field : type.getFields()) {
@@ -114,40 +183,32 @@ public final class Lombok {
             if (field.getModifiers().contains(ModifierKind.FINAL)) required.add(Names.typeText(field.getType()));
         }
         if (has(type, "NoArgsConstructor"))
-            item(owner, "constructor", type.getSimpleName(), null, List.of(), Set.of(ModifierKind.PUBLIC), type,
-                    "NoArgsConstructor", root, items);
+            sink.add(owner, "constructor", type.getSimpleName(), null, List.of(), Set.of(ModifierKind.PUBLIC), type,
+                    "NoArgsConstructor");
         if ((has(type, "RequiredArgsConstructor") || data) && !required.isEmpty() && !all.isEmpty())
-            item(owner, "constructor", type.getSimpleName(), null, required, Set.of(ModifierKind.PUBLIC), type,
-                    "RequiredArgsConstructor", root, items);
+            sink.add(owner, "constructor", type.getSimpleName(), null, required, Set.of(ModifierKind.PUBLIC), type,
+                    "RequiredArgsConstructor");
         if ((has(type, "AllArgsConstructor") || value) && !all.isEmpty())
-            item(owner, "constructor", type.getSimpleName(), null, all, Set.of(ModifierKind.PUBLIC), type,
-                    "AllArgsConstructor", root, items);
+            sink.add(owner, "constructor", type.getSimpleName(), null, all, Set.of(ModifierKind.PUBLIC), type,
+                    "AllArgsConstructor");
     }
 
     /** builder(), Builder.setX(...) and Builder.build(); the builder type is a member owner, not a dumped type. */
-    private static void builder(CtType<?> type, String owner, Path root, List<Item> items) {
+    private static void builder(CtType<?> type, String owner, Sink sink) {
         String builderFqn = owner + ".Builder";
-        item(owner, "method", "builder", builderFqn, List.of(), Set.of(ModifierKind.PUBLIC, ModifierKind.STATIC), type,
-                "Builder", root, items);
+        sink.add(owner, "method", "builder", builderFqn, List.of(), Set.of(ModifierKind.PUBLIC, ModifierKind.STATIC),
+                type, "Builder");
         for (CtField<?> field : type.getFields()) {
             if (field.getModifiers().contains(ModifierKind.STATIC)) continue;
-            item(builderFqn, "method", field.getSimpleName(), builderFqn, List.of(Names.typeText(field.getType())),
-                    Set.of(ModifierKind.PUBLIC), field, "Builder", root, items);
+            sink.add(builderFqn, "method", field.getSimpleName(), builderFqn, List.of(Names.typeText(field.getType())),
+                    Set.of(ModifierKind.PUBLIC), field, "Builder");
         }
-        item(builderFqn, "method", "build", owner, List.of(), Set.of(ModifierKind.PUBLIC), type, "Builder", root, items);
+        sink.add(builderFqn, "method", "build", owner, List.of(), Set.of(ModifierKind.PUBLIC), type, "Builder");
     }
 
     private static void method(CtType<?> type, String owner, String name, String returns, List<String> params,
-            Path root, List<Item> items) {
-        item(owner, "method", name, returns, params, Set.of(ModifierKind.PUBLIC), type, "EqualsAndHashCode", root,
-                items);
-    }
-
-    private static void item(String owner, String kind, String name, String type, List<String> params,
-            Set<ModifierKind> modifiers, CtElement posOf, String from, Path root, List<Item> items) {
-        String id = owner + "#" + name + "(" + String.join(",", params) + ")";
-        items.add(new Item(owner, kind, name, id, type, qualified(posOf, type), params, modifiers,
-                Positions.of(posOf, root), from));
+            String from, Sink sink) {
+        sink.add(owner, "method", name, returns, params, Set.of(ModifierKind.PUBLIC), type, from);
     }
 
     /**
@@ -155,19 +216,6 @@ public final class Lombok {
      * an annotation imported through a wildcard (`import lombok.*`), and gives it the annotated type's own package;
      * the file's imports are then the evidence, and they are as good as the annotation's own name.
      */
-    /** The generated member's type as the compiler names it, for chain typing; the written text stays `type`. */
-    private static String qualified(CtElement element, String written) {
-        if (written == null || written.isEmpty()) return null;
-        // Already the compiler's spelling: a builder type, the owner it builds, a fully qualified type.
-        if (written.indexOf('.') >= 0) return written;
-        // A getter's type is the field's type, written as the author wrote it here.
-        if (element instanceof CtField<?> field && field.getType() != null
-                && written.equals(Names.typeText(field.getType())))
-            return field.getType().getQualifiedName();
-        // Anything else (`String`, `int`) is left as written; the reader resolves java.lang and drops primitives.
-        return written;
-    }
-
     private static boolean has(CtElement element, String simpleName) {
         for (CtAnnotation<?> a : element.getAnnotations()) {
             if (!a.getAnnotationType().getSimpleName().equals(simpleName)) continue;

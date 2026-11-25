@@ -55,7 +55,9 @@ final class Returns {
         try {
             collect(executable, body, refs, entries);
         } catch (RuntimeException e) {
-            // One body Spoon cannot read must not end a 5,000-file dump: the row then simply has no returns.
+            // One body Spoon cannot read must not end a 5,000-file dump: the row then simply has no returns, and the
+            // run says so.
+            refs.failures().count("returns.unreadable");
             return List.of();
         }
         entries.sort(Comparator.comparingInt(Entry::line).thenComparingInt(Entry::col).thenComparing(Entry::kind));
