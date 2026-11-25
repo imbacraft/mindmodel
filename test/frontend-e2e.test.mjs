@@ -3,14 +3,8 @@
 // keeps `src/test/` out of the Java model. Fixture: one SPA call plus Cypress and Playwright helpers.
 import test from 'node:test';
 import assert from 'node:assert';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { isE2ePath, scan } from '../engine/scan.mjs';
-
-const here = path.dirname(fileURLToPath(import.meta.url));
-const fixture = path.join(here, '../test-support/fixtures/frontend-e2e');
+import { isE2ePath } from '../engine/scan.mjs';
+import { cachedFixtureScan } from '../test-support/scan-cache.mjs';
 
 test('a test folder, or the Cypress `*.cy.*` naming, marks end-to-end code', () => {
   for (const p of [
@@ -30,15 +24,8 @@ test('a test folder, or the Cypress `*.cy.*` naming, marks end-to-end code', () 
 });
 
 test('only the SPA call is in frontend.apiCalls', () => {
-  // The scan writes `mindmodel/.work` beside the code, so it reads a copy: the fixture stays clean.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmodel-e2e-'));
-  fs.cpSync(fixture, dir, { recursive: true });
-  let facts;
-  try {
-    facts = scan(dir);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  // The scan writes `mindmodel/.work` beside the code, so the cached scan runs on a copy: the fixture stays clean.
+  const facts = cachedFixtureScan('frontend-e2e');
   // The Cypress helper (`/api/admin/users`) and the Playwright seed (`/api/seed/reset`) are gone; the SPA call stays.
   assert.deepStrictEqual(facts.frontend.unmatchedApiCalls, ['GET /api/orders src/App.tsx:3']);
   assert.equal(facts.frontend.apiCalls, 1);

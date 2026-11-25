@@ -10,9 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { cachedScan } from '../test-support/scan-cache.mjs';
 import { open } from '../engine/dump.mjs';
 import { parseCite } from '../engine/validate.mjs';
+import { corpusSkip, dirOf, loadApps, requireCheckout } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const cfg = JSON.parse(fs.readFileSync(path.join(here, 'apps.json'), 'utf8'));
+const cfg = loadApps(here);
 const root = (process.env.MINDMODEL_TEST_APPS ?? cfg.root).replace(/^~/, os.homedir());
 
 // Every array of citations in a map, wherever it sits.
@@ -31,9 +32,10 @@ function citesOf(map) {
 
 const show = (bad, what, name) => assert.deepStrictEqual(bad.slice(0, 10), [], `${name}: ${bad.length} ${what}`);
 
-for (const app of cfg.apps.filter((a) => fs.existsSync(path.join(root, a.name)))) {
-  test(`invariants ${app.name}`, (t) => {
-    const dir = path.join(root, app.name);
+for (const app of cfg.apps) {
+  const dir = dirOf({ ...cfg, root }, app);
+  test(`invariants ${app.name}`, { skip: corpusSkip(app, dir) }, (t) => {
+    requireCheckout(dir);
     const facts = cachedScan(app.name, dir);
     // The dump the scan itself read: a fact is checked against the answer it was built from, never against source text.
     const dumpDir = path.join(dir, 'mindmodel/.work/dump');

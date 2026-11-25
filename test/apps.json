@@ -9,6 +9,7 @@
     },
     {
       "name": "fineract",
+      "slow": true,
       "commit": "37ac25564468e88464d9c6191179d8bf50cf0b7e"
     },
     {

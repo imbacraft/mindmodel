@@ -33,20 +33,27 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
   next to the code they check, which run on import.
 
 ## Testing
-- **Run the full suite once, at the end of a piece of work — not after every edit.** While working, run only the
-  file you touched: `node --test test/<name>.test.mjs`, or `node engine/<module>.mjs` for that module's self-checks.
-  The full `node --test` takes ~4 minutes (four corpus scans in parallel, each spawning a JVM); repeating it per
-  change is the single largest cost of a round. Use `SKIP_SLOW=1 node --test` for a mid-round pass when you must.
-- `node --test` runs every module's self-checks and the snapshot tests.
-- `mvn -f engine-java/pom.xml package` builds the jar and runs the JUnit tests. Jar-backed tests (`test-support/fixtures/dump-dir.mjs`) only run
-  when the jar exists; without it a scan silently keeps the Node guesses, so check `runtime.engine` in facts.json.
-- Snapshot tests scan the public test apps cloned under `~/Projects/test-apps` (list in `test/apps.json`) and compare
-  facts, digests, validation results and rendered pages with `test/snapshots/` (local, gitignored).
+- **Run the full suite once, at the end of a piece of work, not after every edit.** While working, run only the file
+  you touched (`node --test test/<name>.test.mjs`) or a module's self-checks (`node engine/<module>.mjs`).
+- **Tiers.** The default `node --test` runs the self-checks, the unit tests, the fixtures (Java sources under
+  `test-support/fixtures/`, dumped by the jar) and the corpus tests for every app in `test/apps.json` that is not marked
+  `"slow": true`. `SLOW=1` adds the slow apps (fineract). The end-of-round run is `SLOW=1 node --test`. With `CI=1` too,
+  a missing corpus checkout or snapshot fails the run instead of skipping.
+- **Cache.** Corpus and fixture scans go through `test-support/scan-cache.mjs`: one scan per app, system and fixture per
+  run, stored in `test/snapshots/.cache/` (gitignored). The key covers the engine sources, the jar, the pinned commit
+  and `MINDMODEL_CLASSPATH`/`MINDMODEL_M2`. A checkout with changes outside its `mindmodel/` and `mindmodel-system/`
+  output folders is scanned fresh and never cached. The `calls` truth checks need the in-memory model, which the cache
+  cannot hold, so they scan directly.
+- Each dump is memoized per process, keyed by a hash of its sources. The jar takes one root per run, so each distinct
+  inline dump is still one JVM.
+- Snapshot tests compare facts, digests, validation results and rendered pages with `test/snapshots/` (local,
+  gitignored). The first run on a fresh clone records a snapshot and skips it. A refactor must leave every snapshot
+  unchanged. Accept an intended change with `UPDATE=1 node --test` after checking the difference it reports.
 - `node test/compare.mjs [--all] [app|system ...]` runs the committed engine (a throwaway worktree of `HEAD`) and the
-  working tree on every corpus app and system, and prints per family what was added, removed or changed. Slice
-  reports quote it; the snapshot diff alone cannot show what the old engine believed.
-- A refactor must leave every snapshot unchanged. An intended change: check the reported difference, then accept it
-  with `UPDATE=1 node --test`.
+  working tree on every corpus app and system, and prints per family what was added, removed or changed. Slice reports
+  quote it; the snapshot diff alone cannot show what the old engine believed.
+- `mvn -f engine-java/pom.xml package` builds the jar and runs the JUnit tests. Without the jar, `engine/jvm.mjs` keeps
+  the Node guesses and the fixture tests skip, so check `runtime.engine` in facts.json.
 - The test apps are read-only: never build, run or modify them (their `mindmodel/` output folders are ours).
 
 ## Commits

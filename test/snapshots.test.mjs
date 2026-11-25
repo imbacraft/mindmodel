@@ -1,21 +1,22 @@
 // Snapshot tests: everything the engine produces for the test apps (facts, digests, validation results and rendered
 // pages), compared with the last accepted run. The test apps are public repos cloned under test/apps.json's root
-// (or $MINDMODEL_TEST_APPS); missing ones are skipped. Snapshots stay local in test/snapshots/ (gitignored), so the
-// first run on a fresh clone records them and skips; later runs compare. Accept intended changes: UPDATE=1 node --test
+// (or $MINDMODEL_TEST_APPS); missing ones are skipped, and `slow` apps run only with SLOW=1. Snapshots stay local in
+// test/snapshots/ (gitignored), so the first run on a fresh clone records them and skips; later runs compare. With
+// SLOW=1 and CI=1 a missing checkout or snapshot fails. Accept intended changes: UPDATE=1 node --test
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scan, summarize } from '../engine/scan.mjs';
-import { cachedScan } from '../test-support/scan-cache.mjs';
-import { systemScan, systemSummary } from '../engine/system.mjs';
+import { summarize } from '../engine/scan.mjs';
+import { cachedScan, cachedSystemScan } from '../test-support/scan-cache.mjs';
+import { systemSummary } from '../engine/system.mjs';
 import { checkSchema, validate } from '../engine/validate.mjs';
 import { renderPage } from '../engine/render.mjs';
 import { validateSystem, renderSystemPage } from '../engine/system-render.mjs';
 import { git } from '../engine/activity.mjs';
-import { dirOf, loadApps } from './apps.mjs';
+import { STRICT, corpusSkip, dirOf, loadApps, requireCheckout } from './apps.mjs';
 
 // A snapshot is a fact about the engine, not about this machine: a populated ~/.m2 changes receiver typing, so the
 // corpus is always read without a classpath. The classpath itself is tested in test/classpath.test.mjs.
@@ -47,6 +48,8 @@ const readMap = (dir, rel) =>
 function check(t, name, actual) {
   const file = path.join(snapDir, `${name}.json`);
   const exists = fs.existsSync(file);
+  if (!exists && !process.env.UPDATE && STRICT)
+    assert.fail(`${name}: no snapshot recorded (CI with SLOW=1 needs one: run once without CI to record it)`);
   if (process.env.UPDATE || !exists) {
     fs.mkdirSync(snapDir, { recursive: true });
     fs.writeFileSync(file, JSON.stringify(actual, null, 1));
@@ -81,15 +84,11 @@ function moved(dir, commit) {
   if (!head) return `cannot read HEAD in ${dir}`;
   return head === commit ? null : `app at ${head.slice(0, 8)}, snapshots pinned to ${commit.slice(0, 8)}`;
 }
-const skipIf = (dir, app) => (!fs.existsSync(dir) ? `${dir} not found` : moved(dir, app.commit));
-
 for (const app of cfg.apps) {
-  const dir = dirOf({ ...cfg, root }, app),
-    skip = skipIf(dir, app);
-  test(
-    `app ${app.name}`,
-    { skip: process.env.SKIP_SLOW === '1' && app.name === 'fineract' ? 'SKIP_SLOW=1 (large app)' : false },
-    (t) => {
+  const dir = dirOf({ ...cfg, root }, app);
+  test(`app ${app.name}`, { skip: corpusSkip(app, dir) }, (t) => {
+    requireCheckout(dir);
+    const skip = moved(dir, app.commit);
     if (skip) return t.skip(skip);
     const raw = cachedScan(app.name, dir),
       facts = stable(raw),
@@ -106,11 +105,12 @@ for (const app of cfg.apps) {
 }
 
 for (const sysCfg of cfg.systems) {
-  const dir = path.join(root, sysCfg.name),
-    skip = skipIf(dir, sysCfg);
-  test(`system ${sysCfg.name}`, (t) => {
+  const dir = dirOf({ ...cfg, root }, sysCfg);
+  test(`system ${sysCfg.name}`, { skip: corpusSkip(sysCfg, dir) }, (t) => {
+    requireCheckout(dir);
+    const skip = moved(dir, sysCfg.commit);
     if (skip) return t.skip(skip);
-    const sys = systemScan(dir);
+    const sys = cachedSystemScan(sysCfg.name, dir);
     for (const s of sys.services) checkFacts(s.facts, `system ${sysCfg.name}/${s.name}`);
     const out = {
       system: stable({ ...sys, services: sys.services.map(({ facts, ...s }) => s) }),

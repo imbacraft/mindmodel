@@ -29,3 +29,20 @@ export function loadApps(dir = here) {
 
 // An app may live outside the corpus root (`dir`); the tests skip one that is not cloned.
 export const dirOf = (cfg, app) => app.dir ?? path.join(cfg.root, app.name);
+
+// Tiers. The default run covers the fixtures, the unit tests and every corpus app not marked `slow` in apps.json.
+// SLOW=1 adds the slow apps. With CI=1 as well, a corpus checkout or snapshot that is missing fails the run.
+export const SLOW = process.env.SLOW === '1';
+export const STRICT = SLOW && process.env.CI === '1';
+
+/** Why a corpus test does not run for this entry, or false. A missing checkout skips, except under STRICT. */
+export function corpusSkip(entry, dir) {
+  if (entry.slow && !SLOW) return `${entry.name} is slow: runs with SLOW=1`;
+  if (STRICT || fs.existsSync(dir)) return false;
+  return `${dir} not found`;
+}
+
+/** First line of a corpus test body: under STRICT a checkout that should be there but is not fails the test here. */
+export function requireCheckout(dir) {
+  if (!fs.existsSync(dir)) throw new Error(`${dir} is missing: CI with SLOW=1 needs every corpus checkout`);
+}

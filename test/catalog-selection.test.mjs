@@ -11,14 +11,12 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { annotationIndex, loadCatalogs, meanOf, selectCatalogs, simpleMeans } from '../engine/catalogs/catalog.mjs';
-import { scan } from '../engine/scan.mjs';
+import { cachedFixtureScan } from '../test-support/scan-cache.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const fixture = path.join(here, '../test-support/fixtures/inject-app');
 const jar = process.env.MINDMODEL_ENGINE_JAR ?? path.join(path.dirname(here), 'engine-java/target/mindmodel-engine.jar');
 const skip = fs.existsSync(jar) ? false : 'engine jar not built (mvn -f engine-java/pom.xml package)';
 
@@ -57,14 +55,7 @@ test('Inject resolves by FQN and, when unresolved, by simple name', () => {
 });
 
 test('a Spring app on javax.inject reports no unknown Inject', { skip }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mindmodel-inject-'));
-  fs.cpSync(fixture, dir, { recursive: true });
-  let facts;
-  try {
-    facts = scan(dir);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  const facts = cachedFixtureScan('inject-app');
   assert.equal(facts.runtime.engine.spoon, true, 'the fixture is scanned with the engine dump');
   const unknown = facts.coverage.unknownAnnotations.map((u) => u.name);
   assert.deepStrictEqual(

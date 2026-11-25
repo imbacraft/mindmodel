@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
 import { cachedScan } from '../test-support/scan-cache.mjs';
-import { dirOf, loadApps } from './apps.mjs';
+import { corpusSkip, dirOf, loadApps, requireCheckout } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfg = loadApps(here);
@@ -90,52 +90,49 @@ function compare(t, app, now, store = baseline) {
 
 for (const app of cfg.apps) {
   const dir = dirOf(cfg, app);
-  test(
-    `coverage ${app.name}`,
-    { skip: !fs.existsSync(dir) && `${dir} not found` },
-    (t) => {
-      const facts = cachedScan(app.name, dir);
-      const cov = facts.coverage;
+  test(`coverage ${app.name}`, { skip: corpusSkip(app, dir) }, (t) => {
+    requireCheckout(dir);
+    const facts = cachedScan(app.name, dir);
+    const cov = facts.coverage;
 
-      for (const r of cov.rates) {
-        assert.ok(r.percent >= 0 && r.percent <= 100, `${r.id}: ${r.percent}%`);
-        assert.ok(r.numerator <= r.denominator, `${r.id}: numerator above denominator`);
-      }
-      // A rate that cannot fail measures nothing: "annotations resolved" was 100% by construction and is gone.
-      assert.ok(!cov.rates.some((r) => r.id === 'annotations resolved'), 'the annotations-resolved rate is removed');
+    for (const r of cov.rates) {
+      assert.ok(r.percent >= 0 && r.percent <= 100, `${r.id}: ${r.percent}%`);
+      assert.ok(r.numerator <= r.denominator, `${r.id}: numerator above denominator`);
+    }
+    // A rate that cannot fail measures nothing: "annotations resolved" was 100% by construction and is gone.
+    assert.ok(!cov.rates.some((r) => r.id === 'annotations resolved'), 'the annotations-resolved rate is removed');
 
-      for (const u of cov.unknownAnnotations) {
-        assert.ok(u.count >= 5 || u.types >= 3, `${u.name}: reported below the threshold`);
-        assert.ok(u.samples.length >= 1 && u.samples.length <= 2, 'one or two samples');
-        for (const s of u.samples) assert.ok(/^.+:\d+$/.test(s), `sample looks like file:line: ${s}`);
-      }
-      // The blind-spot list must name things nobody understands, not framework annotations a broken selection let
-      // through. The top ten are what the writer reads first.
-      const leaked = cov.unknownAnnotations
-        .slice(0, 10)
-        .map((u) => u.name.split('.').pop())
-        .filter((name) => MUST_KNOW.has(name));
-      assert.deepStrictEqual(leaked, [], `${app}: catalogued annotations reported as unknown`);
+    for (const u of cov.unknownAnnotations) {
+      assert.ok(u.count >= 5 || u.types >= 3, `${u.name}: reported below the threshold`);
+      assert.ok(u.samples.length >= 1 && u.samples.length <= 2, 'one or two samples');
+      for (const s of u.samples) assert.ok(/^.+:\d+$/.test(s), `sample looks like file:line: ${s}`);
+    }
+    // The blind-spot list must name things nobody understands, not framework annotations a broken selection let
+    // through. The top ten are what the writer reads first.
+    const leaked = cov.unknownAnnotations
+      .slice(0, 10)
+      .map((u) => u.name.split('.').pop())
+      .filter((name) => MUST_KNOW.has(name));
+    assert.deepStrictEqual(leaked, [], `${app}: catalogued annotations reported as unknown`);
 
-      // Sureness is hertzbeat's security layer: no catalog covers it, so it must show up as a dependency the engine
-      // does not understand (§8, slice 1 gate).
-      if (app.name === 'hertzbeat')
-        assert.ok(
-          cov.uncataloguedDependencies.some((d) => /sureness/i.test(d.coordinate)),
-          'the blind spots must show Sureness',
-        );
+    // Sureness is hertzbeat's security layer: no catalog covers it, so it must show up as a dependency the engine
+    // does not understand (§8, slice 1 gate).
+    if (app.name === 'hertzbeat')
+      assert.ok(
+        cov.uncataloguedDependencies.some((d) => /sureness/i.test(d.coordinate)),
+        'the blind spots must show Sureness',
+      );
 
-      assert.deepStrictEqual(facts.coverage.degradedFiles, [], 'no file failed to parse');
-      compare(t, app.name, snapshot(cov), app.local ? localBaseline : baseline);
-    },
-  );
+    assert.deepStrictEqual(facts.coverage.degradedFiles, [], 'no file failed to parse');
+    compare(t, app.name, snapshot(cov), app.local ? localBaseline : baseline);
+  });
 }
 
-// Determinism: the same tree gives the same coverage, blind spots included.
+// Determinism: the same tree gives the same coverage, blind spots included. The cached answer and a fresh scan are the
+// two runs compared, so one scan is enough.
 test('coverage is deterministic', { skip: !fs.existsSync(path.join(root, 'cargotracker')) && 'app not found' }, () => {
-  const a = snapshot(scan(path.join(root, 'cargotracker')).coverage),
-    b = snapshot(scan(path.join(root, 'cargotracker')).coverage);
-  assert.deepStrictEqual(a, b);
+  const dir = path.join(root, 'cargotracker');
+  assert.deepStrictEqual(snapshot(cachedScan('cargotracker', dir).coverage), snapshot(scan(dir).coverage));
 });
 
 // Written once the tests have run: this block used to sit at module level and wrote the file before `compare` could

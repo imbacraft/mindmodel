@@ -1,8 +1,11 @@
 // Fixtures run through the real engine: the Java sources live on disk under test-support/fixtures/<name>/, and a case
 // names the layers it needs (base, then a variant that overrides or adds files). The layers are copied into a scratch
-// dir once per set and the jar dumps them; the model is built from that dump — the same path a scan takes. Inline Java
-// (`dumpOf`) takes the same route through a scratch dir of its own. Nothing here parses Java; a test that needs a dump
-// skips when the jar has not been built.
+// dir once per distinct set of bytes and the jar dumps them; the model is built from that dump — the same path a scan
+// takes. Inline Java (`dumpOf`) takes the same route through a scratch dir of its own. Each dump is memoized for the
+// life of the test process, keyed by a hash of its sources, and the scratch dirs are removed when the process exits.
+// The jar reads one root per run, so a dump is one JVM: batching several dumps into one run needs a CLI change.
+// Nothing here parses Java; a test that needs a dump skips when the jar has not been built.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +19,33 @@ export const JAR = process.env.MINDMODEL_ENGINE_JAR ?? path.join(here, '../../en
 export const NO_ENGINE = !fs.existsSync(JAR) ? 'engine jar not built (mvn -f engine-java/pom.xml package)' : false;
 
 // A real path, not the /var symlink: the dump relativises its file paths against the root it was given.
-const scratchDir = () => fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mindmodel-fixture-'));
+const scratchDirs = [];
+const scratchDir = () => {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mindmodel-fixture-'));
+  scratchDirs.push(dir);
+  return dir;
+};
+process.on('exit', () => {
+  for (const dir of scratchDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+/** Every file under `dir` as [relative path, bytes], in a fixed order. */
+function readTree(dir, base = dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) readTree(p, base, out);
+    else out.push([path.relative(base, p).split(path.sep).join('/'), fs.readFileSync(p)]);
+  }
+  return out;
+}
+
+/** The key a dump is memoized under: the names and bytes of its sources, and what marks them generated or known. */
+function keyOf(entries, extra = []) {
+  const h = crypto.createHash('sha256');
+  for (const [rel, bytes] of entries) h.update(rel).update('\0').update(bytes).update('\0');
+  for (const x of extra) h.update(x).update('\n');
+  return h.digest('hex');
+}
 
 const copyTree = (from, to) => {
   fs.mkdirSync(to, { recursive: true });
@@ -68,7 +97,8 @@ function sourcesOf(db) {
   );
 }
 
-// One dump per layer set: the cases in a test file share the base layers, so each set is copied and dumped once.
+// One dump per distinct source set: the cases in a test file share the base layers, and two cases with the same bytes
+// share one dump.
 const dumps = new Map();
 
 /**
@@ -78,7 +108,8 @@ const dumps = new Map();
  * from it (which carries the dump, so the extractors can query it) and the file → package/imports map.
  */
 export function dumpOfLayers(layers, { generated = [] } = {}) {
-  const key = `${layers.join('|')}#${generated.join('|')}`;
+  const bytes = layers.flatMap((layer) => readTree(path.join(here, layer)));
+  const key = keyOf(bytes, ['layers', ...generated.map((g) => `generated:${g}`)]);
   if (dumps.has(key)) return dumps.get(key);
   const dir = scratchDir();
   for (const layer of layers) copyTree(path.join(here, layer), dir);
@@ -99,14 +130,21 @@ export function dumpOfLayers(layers, { generated = [] } = {}) {
  * model built from it (which carries the dump, so the extractors can query it) and the file → package/imports map.
  */
 export function dumpOf(files, known = new Set()) {
+  const entries = Object.keys(files)
+    .sort()
+    .map((rel) => [rel, Buffer.from(files[rel])]);
+  const key = keyOf(entries, ['inline', ...[...known].sort()]);
+  if (dumps.has(key)) return dumps.get(key);
   const dir = scratchDir();
-  for (const [rel, text] of Object.entries(files)) {
+  for (const [rel, bytes] of entries) {
     const p = path.join(dir, rel);
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, text);
+    fs.writeFileSync(p, bytes);
   }
-  const db = runDump(dir, Object.keys(files).sort());
+  const db = runDump(dir, entries.map(([rel]) => rel));
   const sources = sourcesOf(db);
   const model = buildModelFromDump(db, sources, known);
-  return { db, model, sources, dir };
+  const result = { db, model, sources, dir };
+  dumps.set(key, result);
+  return result;
 }

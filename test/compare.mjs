@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dirOf, loadApps } from './apps.mjs';
+import { SLOW, dirOf, loadApps } from './apps.mjs';
 
 // Both engines are read the same way, without a classpath: `compare` asks what the code says about the engine, and a
 // machine with a full ~/.m2 must not answer differently from one without.
@@ -142,9 +142,9 @@ try {
   worktree = true;
   const targets = [
     ...cfg.apps
-      .filter((a) => !(process.env.SKIP_SLOW === '1' && a.name === 'fineract'))
+      .filter((a) => SLOW || !a.slow)
       .map((a) => ({ kind: 'app', name: a.name, dir: dirOf({ ...cfg, root }, a) })),
-    ...cfg.systems.map((s) => ({ kind: 'system', name: s.name, dir: path.join(root, s.name) })),
+    ...cfg.systems.map((s) => ({ kind: 'system', name: s.name, dir: dirOf({ ...cfg, root }, s) })),
   ].filter((t) => !only.size || only.has(t.name));
   console.log(`committed engine: ${execFileSync('git', ['-C', repo, 'rev-parse', '--short', 'HEAD']).toString().trim()}`);
   console.log(`working tree:     ${repo}\n`);

@@ -4,7 +4,7 @@
 //
 // The files are discovered, not listed: everything in test/truth/ and in test/truth/local/ (gitignored, for a private
 // app) is run. An app that is not cloned is skipped, so a fresh clone runs the public sample only and a checkout with a
-// private corpus adds it without editing this file.
+// private corpus adds it without editing this file. A `slow` app runs only with SLOW=1.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,8 +14,8 @@ import { fileURLToPath } from 'node:url';
 // The same rule as the snapshots: a truth file pins what the engine says, and a populated ~/.m2 would change receiver
 // typing on this machine alone. The classpath has its own tests.
 process.env.MINDMODEL_CLASSPATH = 'off';
-import { scan } from '../engine/scan.mjs';
-import { dirOf, loadApps } from './apps.mjs';
+import { cachedScan } from '../test-support/scan-cache.mjs';
+import { corpusSkip, dirOf, loadApps, requireCheckout } from './apps.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cfg = loadApps(here);
@@ -34,11 +34,6 @@ function truthFiles() {
   }
   return out;
 }
-
-const appDir = (name) => {
-  const a = cfg.apps.find((x) => x.name === name);
-  return a ? dirOf(cfg, a) : null;
-};
 
 // Every call site the model holds, addressed the way a reader would: file, line, method name, receiver text.
 function callIndex(model) {
@@ -272,19 +267,23 @@ const checks = {
   },
 };
 
-// One scan per app for every truth kind: the model is needed for call resolution, so these scans stay in-memory.
+// Call resolution needs the in-memory model, which the cache cannot hold: the `calls` kind scans its app once, with the
+// model (one scan per app per run). Every other kind reads facts, which come from the cache.
 const scanned = new Map();
-const factsFor = (app, dir) => {
-  if (!scanned.has(app)) scanned.set(app, scan(dir, { withModel: true }));
+const resultFor = (app, dir, kind) => {
+  if (kind !== 'calls') return cachedScan(app, dir);
+  if (!scanned.has(app)) scanned.set(app, cachedScan(app, dir, { withModel: true }));
   return scanned.get(app);
 };
 
 for (const { app, kind, file } of truthFiles()) {
-  const dir = appDir(app);
-  test(`truth ${kind} ${app}`, { skip: !dir || !fs.existsSync(dir) ? `${app} is not cloned` : false }, () => {
+  const entry = cfg.apps.find((x) => x.name === app);
+  const dir = entry ? dirOf(cfg, entry) : null;
+  test(`truth ${kind} ${app}`, { skip: !entry ? `${app} is not in the corpus config` : corpusSkip(entry, dir) }, () => {
+    requireCheckout(dir);
     const truth = JSON.parse(fs.readFileSync(file, 'utf8'));
     const misses = [];
-    checks[kind](app, truth, factsFor(app, dir), misses);
+    checks[kind](app, truth, resultFor(app, dir, kind), misses);
     assert.deepEqual(misses, [], `${app}: ${misses.length} hand-checked ${kind} fact(s) disagree`);
   });
 }
