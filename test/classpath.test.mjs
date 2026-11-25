@@ -3,6 +3,7 @@
 // offline throughout; anything that needs the network is not tested here, because the product never does it.
 //
 // Skips when Maven or the engine jar is absent, rather than pretending: the run needs both.
+import { withDegradation } from '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -251,7 +252,10 @@ test('classpath: an artifact missing from the repository is a named module, and 
   // The jar's own bytes are absent: the module that needs it cannot resolve offline.
   const m2 = localRepository(home2, libJar, { withJar: false });
   try {
-    const facts = withEnv({ MINDMODEL_M2: m2 }, () => scan(dir));
+    // The unresolved module is the degradation this case is about: it is recorded, and the scan still goes on.
+    const { value: facts, reasons } = withDegradation(() => withEnv({ MINDMODEL_M2: m2 }, () => scan(dir)));
+    assert.ok(reasons.some((r) => /unresolved offline \(.*\blib\b.*\): library types stay unresolved/.test(r)), reasons);
+    assert.deepStrictEqual(facts.runtime.degraded, reasons, 'the facts carry the same reasons');
     assert.ok(facts.classpath.failedModules.length >= 1, 'the module is named');
     assert.ok(facts.classpath.failedModules.some((f) => f.module === 'lib'), JSON.stringify(facts.classpath));
     // The digest says it in one line, and the run still produced a map's worth of facts.

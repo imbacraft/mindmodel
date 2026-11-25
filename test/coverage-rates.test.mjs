@@ -1,6 +1,7 @@
 // Coverage rates, end to end from the dump: what the engine understood and what it did not, computed from the model
 // the scan built. The Java lives on disk (test-support/fixtures/coverage-rates) and is dumped by the real engine; the
 // facts, catalogs and build files are plain inputs a scan also supplies.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';

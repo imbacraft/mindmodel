@@ -1,6 +1,7 @@
 // An annotation processor's output, as the dump reads it: the types are in the model because project code calls into
 // them, and not one row about them is written. The fixture is a contract-first controller and a generated mapper, both
 // shaped as a real processor writes them.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';

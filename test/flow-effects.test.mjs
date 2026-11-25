@@ -4,6 +4,7 @@
 // read back as a model — the same path a scan takes. Nothing here parses Java or names a declaration by hand.
 // Fixture E adds the override policy as a consumer's choice: a worker's reach follows every implementation with a
 // body, the ranked path only a unique one.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { flowsOfLayers } from '../test-support/fixtures/flows-of-dump.mjs';

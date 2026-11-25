@@ -42,7 +42,13 @@
   },
   "runtime": {
    "type": "object",
-   "description": "Ported in slice 2 (interceptors) and slice 4 (security)."
+   "description": "Ported in slice 2 (interceptors) and slice 4 (security). `degraded`: each fallback the scan took, by reason.",
+   "properties": {
+    "degraded": {
+     "type": "array",
+     "items": { "type": "string" }
+    }
+   }
   },
   "background": {
    "type": "object",

@@ -1,6 +1,7 @@
 // Coverage must be honest about itself: sane rates, blind spots with samples, the same answer twice, and no drop
 // against the accepted baseline. The baseline (test/baselines/coverage.json) is committed and small: rates as
 // numerator/denominator/percent, and the sizes of the blind-spot lists. UPDATE=1 rewrites it (the owner accepts it).
+import '../test-support/strict.mjs';
 import test, { after } from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

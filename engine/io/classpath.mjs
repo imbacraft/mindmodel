@@ -14,6 +14,9 @@ import crypto from 'node:crypto';
 import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { readBuild } from './build.mjs';
+import { degraded } from '../core/degrade.mjs';
+
+const readText = (p) => fs.readFileSync(p, 'utf8');
 
 const TIMEOUT = 120_000;
 
@@ -42,9 +45,10 @@ export function risk(root, files = []) {
 }
 
 /** The Maven modules this checkout declares: one per POM, plus the reactor coordinates a jar must never shadow. */
-function mavenModules(root, files) {
+function mavenModules(root, files, read) {
   // Only files that are really there: a caller's list may name a build file it read from a configuration.
-  const builds = readBuild(root, files.filter((f) => fs.existsSync(path.join(root, f)))).filter((b) => b.kind === 'maven');
+  const present = files.filter((f) => fs.existsSync(path.join(root, f)));
+  const builds = readBuild(root, present, read).filter((b) => b.kind === 'maven');
   return {
     poms: builds.map((b) => b.file).sort(),
     coordinates: new Set(builds.filter((b) => b.artifact).map((b) => `${b.group}:${b.artifact}`)),
@@ -153,7 +157,7 @@ export function generatedDirs(root, poms) {
       const dir = path.join(root, rel, name);
       if (!fs.existsSync(dir)) continue;
       // One level down is where the processors put their packages; a deeper walk finds no more source roots.
-      const children = fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }) : [];
+      const children = fs.readdirSync(dir, { withFileTypes: true });
       for (const child of children) {
         if (!child.isDirectory()) continue;
         const childRel = path.join(rel, name, child.name).split(path.sep).join('/');
@@ -170,13 +174,13 @@ export function generatedDirs(root, poms) {
 }
 
 /** A hash of every build file's content plus the tool and the repository: a changed dependency re-resolves. */
-function buildKey(root, files, { tool = '', m2 = '' } = {}) {
+function buildKey(root, files, { tool = '', m2 = '', read = readText } = {}) {
   const h = crypto.createHash('sha256');
   h.update(`${tool}\u0000${m2}\u0000`);
   for (const rel of files.filter((f) => /(^|\/)(pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?)$/.test(f)).sort()) {
     h.update(rel);
     try {
-      h.update(fs.readFileSync(path.join(root, rel)));
+      h.update(read(path.join(root, rel)));
     } catch {
       h.update('missing');
     }
@@ -249,11 +253,11 @@ const empty = (reason, extra = {}) => ({
  * Whether the Maven classpath is read for this checkout, decided once for `resolve` and `preflightLines`: `{ skip }`
  * with the reason, or the build's `{ all, poms, artifacts }`. Gradle is named, never read.
  */
-function classpathPlan(root, { env, files }) {
+function classpathPlan(root, { env, files, read }) {
   const mode = env.MINDMODEL_CLASSPATH ?? 'auto';
-  if (mode === 'off') return { skip: 'MINDMODEL_CLASSPATH=off' };
+  if (mode === 'off') return { skip: 'MINDMODEL_CLASSPATH=off', optOut: true };
   const all = files?.length ? files : walk(root);
-  const { poms, artifacts } = mavenModules(root, all);
+  const { poms, artifacts } = mavenModules(root, all, read);
   if (!poms.length) {
     const gradle = all.some((f) => /(^|\/)build\.gradle(\.kts)?$/.test(f));
     return { skip: gradle ? 'Gradle build, classpath not implemented' : 'no pom.xml or build.gradle at the root' };
@@ -273,7 +277,15 @@ function classpathPlan(root, { env, files }) {
  */
 export function resolve(
   root,
-  { files = [], env = process.env, timeout = TIMEOUT, cache = true, log = null, which = mavenTool } = {},
+  {
+    files = [],
+    env = process.env,
+    timeout = TIMEOUT,
+    cache = true,
+    log = null,
+    which = mavenTool,
+    read = readText,
+  } = {},
 ) {
   const started = Date.now();
   const ttl = Number(env.MINDMODEL_CLASSPATH_TTL_MS ?? 600_000);
@@ -292,14 +304,14 @@ export function resolve(
     return settled;
   };
   let key = '';
-  const plan = classpathPlan(root, { env, files });
-  if (plan.skip) return empty(plan.skip);
+  const plan = classpathPlan(root, { env, files, read });
+  if (plan.skip) return empty(plan.skip, { optOut: !!plan.optOut });
   const { all, poms, artifacts } = plan;
   const m2 = env.MINDMODEL_M2 ?? '';
   // The key is the build files and the repository, not the tool's version: asking Maven which version it is costs a
   // process spawn, and the goal is to ask the machine nothing at all on a warm scan. A Maven upgrade re-reads the same
   // POMs for the same dependency set, so the jars do not change. The version is recorded in the answer.
-  key = buildKey(root, all, { m2 });
+  key = buildKey(root, all, { m2, read });
   if (cache && fs.existsSync(cachePath)) {
     try {
       const held = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
@@ -386,7 +398,8 @@ function walk(root, depth = 0) {
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
   } catch {
-    return out;
+    // Only reached without a file list: the build files under this directory are then missing from the answer.
+    return degraded(`${path.basename(root)} cannot be listed: its build files are not read`, out);
   }
   for (const e of entries) {
     if (e.name.startsWith('.') || ['node_modules', 'target', 'build', 'mindmodel'].includes(e.name)) continue;

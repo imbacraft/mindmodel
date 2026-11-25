@@ -19,6 +19,7 @@ import { raw, table } from '../tools/library-table.mjs';
 import { targetIds } from './targets.mjs';
 import { typeArgsOf } from './type-args.mjs';
 import { simple } from '../core/names.mjs';
+import { push } from '../core/collections.mjs';
 import { listOf, mapOf } from '../catalogs/catalog.mjs';
 
 // ThreadLocal, its JDK subclass, and any project type extending either one (the vocabulary's `thread-local-types`).
@@ -96,7 +97,7 @@ export function queries(db) {
         for (const r of db.fieldAccessOf(fieldId(m))) {
           if (r.op !== 'read') continue;
           const k = `${r.file}\u0000${r.line}`;
-          map.set(k, [...(map.get(k) ?? []), r]);
+          push(map, k, r);
         }
       }
     readsCache = map;

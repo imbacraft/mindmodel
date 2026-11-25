@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFacts, validate } from './validate.mjs';
 import { inlineBase } from './base.mjs';
+import { degraded, degradedMark, degradedSince, withDegradation } from './core/degrade.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,7 +35,11 @@ function factsForMap(map, facts) {
   const head = facts.git?.head,
     commit = map.project?.commit;
   if (!head || !commit) return facts;
-  return head.startsWith(commit) || commit.startsWith(head) ? facts : null;
+  if (head.startsWith(commit) || commit.startsWith(head)) return facts;
+  return degraded(
+    `facts are from ${head}, the map from ${commit}: the page omits the fact-derived sections`,
+    null,
+  );
 }
 
 // Sections the page renders straight from facts instead of asking the writer to transcribe them. Each row is a fact
@@ -92,11 +97,16 @@ export function renderPage(map, root, web = null, facts = null) {
     entities: 3,
     scheduled: 1,
   });
-  // Same commit, short form on the map: facts are used. Different commit: the page renders without them.
+  // Same commit, short form on the map: facts are used. Different commit: the page renders without them, and says so.
   assert.ok(factsForMap({ project: { commit: 'abc1234' } }, { git: { head: 'abc1234' } }));
   assert.ok(factsForMap({ project: { commit: 'abc12' } }, { git: { head: 'abc1234' } }));
-  assert.equal(factsForMap({ project: { commit: 'abc1234' } }, { git: { head: 'def5678' } }), null);
-  assert.equal(block(renderPage({ project: { commit: 'abc' } }, '/tmp/p', null, { git: { head: 'zzz' } })), 'null');
+  const other = withDegradation(() => factsForMap({ project: { commit: 'abc1234' } }, { git: { head: 'def5678' } }));
+  assert.equal(other.value, null);
+  assert.match(other.reasons[0], /omits the fact-derived sections/);
+  const stale = withDegradation(() =>
+    block(renderPage({ project: { commit: 'abc' } }, '/tmp/p', null, { git: { head: 'zzz' } })),
+  );
+  assert.equal(stale.value, 'null');
   assert.deepStrictEqual(derived.background, {
     total: 1,
     rows: [{ name: 'B.tick', kind: 'Scheduled', args: '(fixedRate = 1)', cite: 'a/B.java:1' }],
@@ -123,26 +133,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const root = path.resolve(args[1] ?? path.join(path.dirname(file), '..'));
   const map = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-  // The facts are read once, here, and handed to validate() and to the page alike.
+  // The facts are read once, here, and handed to validate() and to the page alike. Every degradation of this run is
+  // printed once, whichever step recorded it.
+  const mark = degradedMark();
   const factsFile = path.join(path.dirname(file), '.work/facts.json');
-  const read = readFacts(factsFile);
-  const facts = read.facts;
+  const facts = readFacts(factsFile);
   const { errors, warnings } = validate(map, root, undefined, facts);
-  if (read.warning) console.log(`warn  ${read.warning}`);
-  warnings.forEach((w) => console.log(`warn  ${w}`));
+  const printed = new Set(warnings);
+  const report = () => {
+    for (const r of degradedSince(mark)) if (!printed.has(`degraded: ${r}`)) console.log(`warn  degraded: ${r}`);
+    warnings.forEach((w) => console.log(`warn  ${w}`));
+  };
   if (errors.length) {
+    report();
     errors.forEach((e) => console.log(`ERROR ${e}`));
     process.exit(1);
   }
-
-  if (!facts) console.log(`note  no ${path.relative(root, factsFile)}; the page omits its provenance line`);
-  else if (!factsForMap(map, facts))
-    console.log(
-      `warn  facts are from ${facts.git?.head ?? 'an unknown commit'}, the map from ${map.project?.commit ?? 'an unknown commit'}: ` +
-        'the page omits the fact-derived sections',
-    );
   const html = renderPage(map, root, web, facts);
   const out = outArg ? path.resolve(outArg) : path.join(path.dirname(file), 'index.html');
   fs.writeFileSync(out, html);
+  report();
   console.log(`wrote ${out} (${(html.length / 1024).toFixed(0)} KB)`);
 }

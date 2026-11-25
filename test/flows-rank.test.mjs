@@ -3,6 +3,7 @@
 // Both are fact counts: the endpoint verb, the frontend's call sites, the lifecycle family. No method, type or path
 // name is read for a rank. The fixture is Java source on disk (test-support/fixtures/flows-rank), dumped by the real
 // engine and read back as a model — the same path a scan takes.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FLOW_WEIGHTS } from '../engine/extract/flows.mjs';

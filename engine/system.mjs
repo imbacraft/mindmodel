@@ -31,10 +31,12 @@ export function systemScan(folder) {
   // sibling's class needs its own dump.
   const collided = collidedModules(folder, modules, db);
   const byModule = new Map(modules.map((d) => [d, moduleOf(folder, d, db, model, collided)]));
-  // Modules without a Spring entry point are shared libraries (DTOs, events), not services.
-  const libraries = modules.filter((d) => !isApp(d, byModule.get(d).types)).map((d) => path.relative(folder, d));
+  // Modules without a Spring entry point are shared libraries (DTOs, events), not services. Decided once per module:
+  // the check reads the module's build file.
+  const appOf = new Map(modules.map((d) => [d, isApp(d, byModule.get(d).types)]));
+  const libraries = modules.filter((d) => !appOf.get(d)).map((d) => path.relative(folder, d));
   const services = modules
-    .filter((dir) => isApp(dir, byModule.get(dir).types))
+    .filter((dir) => appOf.get(dir))
     .map((dir) => serviceOf(folder, dir, byModule.get(dir), patterns, ix));
   // Two services with the same spring.application.name (a copy-paste slip) would merge in discovery: tell them apart
   // by folder.

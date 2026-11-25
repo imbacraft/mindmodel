@@ -1,6 +1,7 @@
 // Corpus invariants: properties the facts must have on any real app, checked against the dump the scan read, with no
 // snapshots involved. These catch a fact that is wrong rather than merely changed.
 // Run: node --test test/invariants.test.mjs
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

@@ -1,5 +1,6 @@
 // Import-time self-checks moved out of engine/engine.mjs (Task 9); the assertions are unchanged.
 // They were the 0.5 crash pattern: machine-state checks run when any module imports this one.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

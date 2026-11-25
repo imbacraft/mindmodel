@@ -2,6 +2,7 @@
 // concepts allowed 6 while state.owners still capped at 5, so a legal map with six concepts could not validate.
 // The size tiers are the second such drift risk: four documents carry the same table, so the table is parsed here
 // and compared with the code that enforces it.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

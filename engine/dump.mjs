@@ -10,12 +10,51 @@ import { annotationOn } from './core/annotations.mjs';
 
 export const CONTRACT = 7;
 
-function rows(file) {
-  return fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim())
-    .map((l) => JSON.parse(l));
+const LF = 0x0a;
+const CHUNK = 1 << 20;
+
+/**
+ * Each line of a file as bytes, read in chunks, so the file is never held whole. Splitting on the LF byte is safe in
+ * UTF-8 (no multi-byte sequence contains it), and a line is decoded only once it is complete.
+ */
+function* byteLines(file, chunk = CHUNK) {
+  const fd = fs.openSync(file, 'r');
+  const buf = Buffer.allocUnsafe(chunk);
+  let pending = [];
+  try {
+    for (let n = fs.readSync(fd, buf, 0, chunk, null); n > 0; n = fs.readSync(fd, buf, 0, chunk, null)) {
+      const data = buf.subarray(0, n);
+      let start = 0;
+      for (let nl = data.indexOf(LF); nl !== -1; nl = data.indexOf(LF, start)) {
+        const tail = data.subarray(start, nl);
+        // The tail is a view of `buf`, which the next read overwrites: the caller decodes it before the next line.
+        yield pending.length ? Buffer.concat([...pending, tail]) : tail;
+        pending = [];
+        start = nl + 1;
+      }
+      if (start < n) pending.push(Buffer.from(data.subarray(start)));
+    }
+    if (pending.length) yield Buffer.concat(pending);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** The rows of one NDJSON file, one parsed line at a time. A bad line names its file and line number. */
+function rows(file, chunk = CHUNK) {
+  const out = [];
+  let lineNo = 0;
+  for (const bytes of byteLines(file, chunk)) {
+    lineNo++;
+    const text = bytes.toString('utf8');
+    if (!text.trim()) continue;
+    try {
+      out.push(JSON.parse(text));
+    } catch (e) {
+      throw new SyntaxError(`${file}:${lineNo}: ${e.message}`);
+    }
+  }
+  return out;
 }
 
 const key = (file, line) => `${file}\u0000${line}`;
@@ -268,4 +307,16 @@ export function open(dir) {
     fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ contract: 99 }));
     open(dir);
   }, /contract 99/);
+}
+
+// The NDJSON reader: a line split across chunk boundaries (multi-byte text included), blank lines, CRLF, a last line
+// with no newline, and a bad line named by file and line.
+{
+  const os = await import('node:os');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ndjson-')), 'rows.ndjson');
+  const want = [{ s: 'é€😀 with a long tail to cross chunks' }, { n: 1 }, { s: 'x'.repeat(40) }];
+  fs.writeFileSync(file, `${JSON.stringify(want[0])}\n\n${JSON.stringify(want[1])}\r\n${JSON.stringify(want[2])}`);
+  for (const chunk of [1, 3, 7, CHUNK]) assert.deepStrictEqual(rows(file, chunk), want, `chunk ${chunk}`);
+  fs.writeFileSync(file, `{"a":1}\n\n{"a":\n`);
+  assert.throws(() => rows(file, 4), (e) => e instanceof SyntaxError && e.message.startsWith(`${file}:3:`));
 }

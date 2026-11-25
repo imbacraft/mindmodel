@@ -126,6 +126,8 @@ export function assembleFacts(ctx, started, F) {
           }
         : { spoon: false, reason: dumpRun.reason },
       ...runtime,
+      // What this scan gave up on, and why (core/degrade.mjs): the digest and validate print it.
+      degraded: F.degraded,
     },
     methodSecurity: sec.methodSec.facts,
     securityModel: F.securityModelFact,

@@ -5,6 +5,7 @@
 // The files are discovered, not listed: everything in test/truth/ and in test/truth/local/ (gitignored, for a private
 // app) is run. An app that is not cloned is skipped, so a fresh clone runs the public sample only and a checkout with a
 // private corpus adds it without editing this file. A `slow` app runs only with SLOW=1.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

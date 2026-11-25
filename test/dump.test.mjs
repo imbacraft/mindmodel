@@ -1,5 +1,6 @@
 // The dump's own contract, checked on a hand-written fixture: every case here is a thing Spoon does that the Node side
 // will rely on. Runs only when the engine jar has been built (mvn -f engine-java/pom.xml package).
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

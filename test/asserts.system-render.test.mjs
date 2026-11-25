@@ -1,4 +1,5 @@
 // Import-time self-check moved out of engine/system-render.mjs (Task 9); the assertion is unchanged.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { unresolved } from '../engine/system-render.mjs';

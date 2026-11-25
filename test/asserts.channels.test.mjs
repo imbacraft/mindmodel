@@ -1,4 +1,5 @@
 // Import-time self-checks moved out of engine/extract/channels.mjs (Task 9); the assertions are unchanged.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { firstString } from '../engine/extract/channels.mjs';

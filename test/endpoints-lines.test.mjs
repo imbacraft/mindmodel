@@ -2,6 +2,7 @@
 // visible `{?}` where it could not), overloads as separate facts, an inherited mapping served by the concrete class,
 // a re-annotated override listed once, the JAX-RS application path, and an excluded deployable contributing nothing.
 // The Java lives on disk (test-support/fixtures/endpoints-lines); nothing here parses it.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';

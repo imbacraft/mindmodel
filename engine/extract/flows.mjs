@@ -230,12 +230,9 @@ export function flowEntries(model, endpoints = [], selected = []) {
   // method that both polls and talks to an executor is the one that starts the loop.
   const startsLoop = (m) =>
     (m.calls ?? []).some(isExecutor) || (m.ann ?? []).some((a) => lifecycle.has(a.fqn ?? ''));
+  const startupCalls = startupCallIndex(model, startup);
   const calledFromStartup = (id) =>
-    [...model.types.values()].some(
-      (t) =>
-        (t.ann ?? []).some((a) => startup.has(a.fqn ?? '')) &&
-        t.methods.some((x) => (x.calls ?? []).some((c) => (c.targets ?? []).includes(id) || (c.name === id.split('#')[1]?.split('(')[0] && !c.recv))),
-    );
+    startupCalls.targets.has(id) || startupCalls.unqualified.has(id.split('#')[1]?.split('(')[0]);
   const cls = callClassifier(selected);
   const pollsByCatalog = (m) =>
     (m.calls ?? []).some((c) => inLoop(m, c.line) && cls.meansOf(c.recvFqn, c.name) === 'queue-poll');
@@ -705,5 +702,24 @@ export function buildFlows(
 }
 
 const isListener = (t) => (t.supers ?? []).some((s) => listOf('listener-types').has(simple(s.fqn ?? s.text ?? '')));
+
+/**
+ * The calls the methods of startup types make, indexed once: the targets they reach, and the names of calls with no
+ * receiver. A method is started by startup when one of these reaches or names it.
+ */
+function startupCallIndex(model, startup) {
+  const targets = new Set();
+  const unqualified = new Set();
+  for (const t of model.types.values()) {
+    if (!(t.ann ?? []).some((a) => startup.has(a.fqn ?? ''))) continue;
+    for (const x of t.methods ?? [])
+      for (const c of x.calls ?? []) {
+        for (const id of c.targets ?? []) targets.add(id);
+        if (!c.recv) unqualified.add(c.name);
+      }
+  }
+  return { targets, unqualified };
+}
+
 // A model built from source carries `abstract`; one built from the dump carries the modifier list.
 const isAbstract = (t) => !!t?.abstract || (t?.modifiers ?? []).includes('abstract');

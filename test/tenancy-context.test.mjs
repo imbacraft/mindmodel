@@ -4,6 +4,7 @@
 //
 // Every fixture below runs through the real engine: the Java is written to a scratch dir, the jar dumps it, and the
 // entity and tenancy extractors read only that dump. The store definition is `stores()`, the same one security uses.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';

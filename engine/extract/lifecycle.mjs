@@ -9,6 +9,7 @@ import { scheduleFacts } from './schedules.mjs';
 import { queries } from '../model/query.mjs';
 import { declaredId, targetIds } from '../model/targets.mjs';
 import { simple } from '../core/names.mjs';
+import { push } from '../core/collections.mjs';
 import { patternOf } from '../catalogs/catalog.mjs';
 
 const normFqn = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
@@ -192,7 +193,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
     for (const row of dump.fieldAccessOf(`${pair.entityFqn}#${pair.field}`))
       if (row.op === 'write' && row.value?.kind === 'param' && row.value.index != null) {
         const key = `${row.method}\u0000${row.value.index}`;
-        paramWriters.set(key, [...(paramWriters.get(key) ?? []), pair]);
+        push(paramWriters, key, pair);
       }
 
   // The entity a Lombok builder setter writes. The synthesis names the builder `Entity.Builder` and marks its members
@@ -286,7 +287,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
   // that choice at the method (the dump's `returns`), as the digest always has. With several owners the entity a value
   // belongs to is not in the return type, so those are recorded only where a call hands the value to a field.
   const byEnum = new Map();
-  for (const pair of pairs) byEnum.set(pair.enumFqn, [...(byEnum.get(pair.enumFqn) ?? []), pair]);
+  for (const pair of pairs) push(byEnum, pair.enumFqn, pair);
   for (const [enumFqn, group] of byEnum) {
     if (group.length !== 1) continue;
     const [pair] = group;
@@ -512,7 +513,7 @@ export function javaFacts({ java = [], dump = null, model = null, repoEntity = n
     ['shop.Status', { fqn: 'shop.Status', kind: 'enum', pos: { file: 'shop/Status.java', line: 1, endLine: 4 } }],
   ]);
   const byOwner = new Map();
-  for (const m of members) byOwner.set(m.owner, [...(byOwner.get(m.owner) ?? []), m]);
+  for (const m of members) push(byOwner, m.owner, m);
   const dump = {
     types, members: new Map(members.filter((m) => m.id).map((m) => [m.id, m])), calls, fields,
     membersOf: (fqn) => byOwner.get(fqn) ?? [], callsOf: (id) => calls.filter((c) => c.method === id),

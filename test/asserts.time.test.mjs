@@ -1,4 +1,5 @@
 // Import-time self-checks moved out of engine/extract/text/time.mjs (Task 9); the assertions are unchanged.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { humanCron, humanSchedule, windowsIn } from '../engine/extract/text/time.mjs';

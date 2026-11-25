@@ -184,6 +184,8 @@ function understoodSection(f, cx) {
   const blind = [];
   const cp = classpathLine(f.classpath);
   if (cp) blind.push(cp);
+  // Every fallback the scan took (core/degrade.mjs), by reason: the writer checks the code behind it before a claim.
+  for (const reason of f.runtime?.degraded ?? []) blind.push(`- degraded: ${reason}`);
   const c = f.coverage;
   if (c) {
     if (c.unknownAnnotations?.length) {

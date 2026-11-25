@@ -5,6 +5,7 @@ import assert from 'node:assert';
 import { annotationIndex, listOf, meanHit, patternOf, simpleMeans } from '../catalogs/catalog.mjs';
 import { citeOf, factOf, methodIdOf, withUniqueIds } from './facts.mjs';
 import { parseCite } from '../core/cite.mjs';
+import { push } from '../core/collections.mjs';
 
 const NO_TX = patternOf('no-transaction-args');
 const EJB_BEAN = listOf('ejb-bean-annotations');
@@ -63,9 +64,9 @@ export function extractTransactions(model, selected, { outside = [], writes = []
   // per class is what a reader needs; the boundary kinds below stay because each is a hazard with a citation.
   const counts = new Map();
   const outsideByMethod = new Map();
-  for (const f of outside) if (f.method) outsideByMethod.set(f.method, [...(outsideByMethod.get(f.method) ?? []), f]);
+  for (const f of outside) if (f.method) push(outsideByMethod, f.method, f);
   const writesById = new Map();
-  for (const w of writes) writesById.set(w.method, [...(writesById.get(w.method) ?? []), w]);
+  for (const w of writes) push(writesById, w.method, w);
 
   for (const t of model.types.values()) {
     const typeTx = (t.ann ?? [])

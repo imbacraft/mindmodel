@@ -77,7 +77,7 @@ export function inventory(root) {
   // The Java files, by path: the dump is the only reader of them; the scan itself never opens one.
   const javaAll = files.filter((f) => f.endsWith('.java') && !isTestCode(f)).map((p) => ({ p: R(p) }));
   // The build, read as data: modules, coordinates, properties, plugins (evidence/build.mjs).
-  const buildFiles = readBuild(root, files.map(R));
+  const buildFiles = readBuild(root, files.map(R), read);
   return { root, files, R, read, byExt, javaAll, buildFiles };
 }
 

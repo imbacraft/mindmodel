@@ -6,8 +6,21 @@ import { open as openDump } from '../dump.mjs';
 import { annotationFqns, annotationIndex, loadCatalogs, selectCatalogs } from '../catalogs/catalog.mjs';
 import { deployables, mainIndex } from '../extract/boot.mjs';
 import { coordinatesOf } from '../evidence/build.mjs';
+import { degraded } from '../core/degrade.mjs';
 
 // The dump, the classpath and the model built from them: the one base every family queries.
+
+// A run without the project's classpath goes on, and it is a degradation: library types stay unresolved, and the user
+// is told why. A classpath the user switched off (MINDMODEL_CLASSPATH=off) is their answer, not a degradation.
+export function classpathDegradations(classpath) {
+  if (classpath.mode === 'none' && !classpath.optOut)
+    degraded(`no classpath (${classpath.reason}): library types stay unresolved`, null);
+  if (classpath.failedModules?.length) {
+    const names = classpath.failedModules.map((f) => f.module).join(', ');
+    const n = classpath.failedModules.length;
+    degraded(`${n} module(s) unresolved offline (${names}): library types stay unresolved`, null);
+  }
+}
 
 // The shipped catalogs are read once per process; a project catalog is merged here when it lands.
 const CATALOGS = loadCatalogs();
@@ -70,7 +83,8 @@ export function loadModel({ root, files, R, read, javaAll, buildFiles }) {
   // The project's own dependency jars, when the machine already has them (offline, nothing built): Spoon then resolves
   // library types, and the library stubs say what their members are. Optional and never blocking.
   const cpStart = Date.now();
-  const classpath = resolveClasspath(root, { files: files.map(R) });
+  const classpath = resolveClasspath(root, { files: files.map(R), read });
+  classpathDegradations(classpath);
   const classpathMs = Date.now() - cpStart;
   const dumpStart = Date.now();
   const classpathHash = summaryHash(classpath, root);
@@ -92,6 +106,8 @@ export function loadModel({ root, files, R, read, javaAll, buildFiles }) {
       },
     ]),
   );
+  for (const [file, s] of sources)
+    if (s.degraded) degraded(`${file}: the engine could not read all of it; some types or calls may be missing`, null);
   // Which frameworks are installed decides how a wildcard import of a name the project does not declare resolves
   // (`jakarta.persistence.*` with `@Entity`), so the catalogs are selected before the model is built.
   const imports = [...sources.values()].flatMap((s) => s.imports.map((x) => x.name));

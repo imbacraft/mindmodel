@@ -1,6 +1,7 @@
 // Task 5: a citation never pins an overload by guesswork. A file that declares several methods of one name resolves
 // only through a range that overlaps exactly one declaration, or through the arity form `#name/2`; a bare `#name` there
 // is an error that lists the candidates, so the writer chooses instead of the validator.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -93,10 +94,48 @@ test('the fixture declares the two overloads where the model says', () => {
 const DUMP = path.join(root, 'mindmodel', '.work', 'dump');
 fs.mkdirSync(DUMP, { recursive: true });
 const ndjson = (rows) => rows.map((r) => `${JSON.stringify(r)}\n`).join('');
-for (const empty of ['calls', 'fields', 'files']) fs.writeFileSync(path.join(DUMP, `${empty}.ndjson`), '');
 fs.writeFileSync(
   path.join(DUMP, 'meta.json'),
-  JSON.stringify({ contract: CONTRACT, engine: 'fixture', counts: { types: 1 } }),
+  JSON.stringify({
+    contract: CONTRACT,
+    engine: 'fixture',
+    counts: { types: 1, members: 4, calls: 2, fields: 1, files: 1 },
+  }),
+);
+// A complete dump of FIXTURE, every file the loader reads: the two calls (caller's save, save's store), the one field
+// write (store's `this.last = s`) and the file's own row. A partial dump would switch the overload checks off.
+fs.writeFileSync(
+  path.join(DUMP, 'calls.ndjson'),
+  ndjson([
+    {
+      method: 'demo.X#caller/0', id: 'demo.X#caller/0@21:5', file: 'X.java', line: 21, col: 5, name: 'save', argc: 2,
+      recv: { type: 'demo.X', typeArgs: [], kind: 'implicit' }, targets: [{ id: 'demo.X#save/2', kind: 'declared' }],
+      uniqueImpl: true, origin: 'java',
+      args: [
+        { text: '"a"', kind: 'constant', value: 'a', valueKind: 'string', type: 'java.lang.String' },
+        { text: '1', kind: 'constant', value: 1, valueKind: 'int', type: 'int' },
+      ],
+    },
+    {
+      method: 'demo.X#save/2', id: 'demo.X#save/2@17:5', file: 'X.java', line: 17, col: 5, name: 'store', argc: 1,
+      recv: { type: 'demo.X', typeArgs: [], kind: 'implicit' }, targets: [{ id: 'demo.X#store/1', kind: 'declared' }],
+      uniqueImpl: true, origin: 'java',
+      args: [{ text: 'out', kind: 'unresolved', type: null, reason: 'no-declaration' }],
+    },
+  ]),
+);
+fs.writeFileSync(
+  path.join(DUMP, 'fields.ndjson'),
+  ndjson([
+    {
+      method: 'demo.X#store/1', field: 'demo.X#last', static: false, op: 'write', typeArgs: [], file: 'X.java',
+      line: 25, col: 5, value: { text: 's', kind: 'param', type: 'java.lang.String', index: 0 },
+    },
+  ]),
+);
+fs.writeFileSync(
+  path.join(DUMP, 'files.ndjson'),
+  ndjson([{ path: 'X.java', package: 'demo', importsOrigin: 'header', imports: [], errors: [] }]),
 );
 fs.writeFileSync(
   path.join(DUMP, 'types.ndjson'),
@@ -222,7 +261,7 @@ const ruleCite = (m) => m.rules[0].cites[0];
 
 test('a bare #name over two overloads is refused, listing both candidates', () => {
   const m = map(['X.java#save']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, [
     '$.rules[0].cites: "X.java#save" is ambiguous: ' +
       'X.java:5-7#save (0 params), X.java:9-18#save (2 params)',
@@ -232,21 +271,21 @@ test('a bare #name over two overloads is refused, listing both candidates', () =
 
 test('the arity form resolves to the overload it names', () => {
   const m = map(['X.java#save/2']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, []);
   assert.equal(ruleCite(m), 'X.java:9-18#save/2');
 });
 
 test('a range over one overload is accepted unchanged', () => {
   const m = map(['X.java:9-18#save']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, []);
   assert.equal(ruleCite(m), 'X.java:9-18#save');
 });
 
 test('a range over only a call site is rejected', () => {
   const m = map(['X.java:21#save']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, [
     '$.rules[0].cites: "X.java:21#save" is ambiguous: ' +
       'X.java:5-7#save (0 params), X.java:9-18#save (2 params)',
@@ -256,7 +295,7 @@ test('a range over only a call site is rejected', () => {
 
 test('one declaration of the name still resolves by name, as before', () => {
   const m = map(['X.java#caller']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, []);
   assert.equal(ruleCite(m), 'X.java:20-22#caller');
 });
@@ -269,7 +308,7 @@ test('an arity no declaration has is an error, not a fallback to the nearest nam
 
 test('the dump beside the map names the same overloads', () => {
   const m = map(['X.java#save']);
-  const { errors } = validate(m, root); // no declared argument: read mindmodel/.work/dump
+  const { errors } = validate(m, root, undefined, null); // reads mindmodel/.work/dump; no facts are needed
   assert.deepEqual(errors, [
     '$.rules[0].cites: "X.java#save" is ambiguous: ' +
       'X.java:5-7#save (0 params), X.java:9-18#save (2 params)',
@@ -278,7 +317,7 @@ test('the dump beside the map names the same overloads', () => {
 
 test('a #Type citation is not made ambiguous by the constructor of the same name', () => {
   const m = map(['X.java#X']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, []);
   assert.equal(ruleCite(m), 'X.java:4-29#X');
 });
@@ -289,6 +328,6 @@ test('a citation into build output is refused, even when the file is there', () 
   fs.mkdirSync(path.dirname(generated), { recursive: true });
   fs.writeFileSync(generated, 'public class X {}\n');
   const m = map(['target/generated-sources/annotations/X.java:1#X']);
-  const { errors } = validate(m, root, DECLARED);
+  const { errors } = validate(m, root, DECLARED, null);
   assert.deepEqual(errors, ['$.rules[0].cites: "target/generated-sources/annotations/X.java:1#X" cites build output; cite the source behind it']);
 });

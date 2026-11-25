@@ -4,14 +4,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { buildFileOf, isBuildFile, readVersionCatalog } from '../evidence/build.mjs';
 
-export function readBuild(root, rels) {
+// `read` takes an absolute path and returns its text: a scan passes its per-scan reader, so a POM is read once.
+export function readBuild(root, rels, read = (p) => fs.readFileSync(p, 'utf8')) {
   const versionCatalog = rels.find((r) => /(^|\/)gradle\/libs\.versions\.toml$/.test(r));
   const libs = versionCatalog
-    ? readVersionCatalog(fs.readFileSync(path.join(root, versionCatalog), 'utf8'))
+    ? readVersionCatalog(read(path.join(root, versionCatalog)))
     : new Map();
   const out = [];
   for (const rel of rels.filter(isBuildFile)) {
-    const parsed = buildFileOf(rel, fs.readFileSync(path.join(root, rel), 'utf8'), libs);
+    const parsed = buildFileOf(rel, read(path.join(root, rel)), libs);
     if (parsed) out.push(parsed);
   }
   return out;

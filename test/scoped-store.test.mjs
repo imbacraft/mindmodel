@@ -2,6 +2,7 @@
 // read, so the *shape* is the evidence — a call on one type inside a try block, the same type cleared in that try's
 // finally. This is the project-K shape: two cookies read in if arms, a private project method that stores the value,
 // and the clear written in the finalizer. Every fixture runs through the real engine.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';

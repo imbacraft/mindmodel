@@ -1,4 +1,5 @@
 // Import-time self-checks moved out of engine/scan.mjs (Task 9); the assertions are unchanged.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { routePath } from '../engine/scan/web.mjs';

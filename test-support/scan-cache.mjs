@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scan } from '../engine/scan.mjs';
+import { withDegradation } from '../engine/core/degrade.mjs';
 import { systemScan } from '../engine/system.mjs';
 import { execFileSync } from 'node:child_process';
 import { loadApps } from '../test/apps.mjs';
@@ -148,17 +149,23 @@ export function cachedSystemScan(name, dir) {
   return memo(`system-${name}`, `${commitOf(cfg.systems, name)}:${envKey()}`, () => systemScan(dir));
 }
 
-// A fixture is read in place: its bytes are the key, and the scan runs on a copy (a scan writes beside the code).
+// A fixture is read in place: its bytes are the key, and the scan runs on a copy (a scan writes beside the code). A
+// fixture carries no dependency jars, so "no classpath" is its one allowed degradation; anything else the scan gave up
+// on fails the test, whether the facts were scanned now or served from the cache.
+const FIXTURE_ALLOWED = /^no classpath \(/;
 export function cachedFixtureScan(name) {
   const dir = path.join(here, 'fixtures', name);
   const scratch = () => {
     const copy = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mindmodel-fixture-scan-'));
     try {
       fs.cpSync(dir, copy, { recursive: true });
-      return scan(copy);
+      return withDegradation(() => scan(copy)).value;
     } finally {
       fs.rmSync(copy, { recursive: true, force: true });
     }
   };
-  return memo(`fixture-${name}`, `${hashTree([dir])}:${envKey()}`, scratch);
+  const facts = memo(`fixture-${name}`, `${hashTree([dir])}:${envKey()}`, scratch);
+  const unexpected = (facts.runtime?.degraded ?? []).filter((r) => !FIXTURE_ALLOWED.test(r));
+  if (unexpected.length) throw new Error(`fixture ${name}: the scan degraded: ${unexpected.join('; ')}`);
+  return facts;
 }

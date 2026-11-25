@@ -5,6 +5,7 @@
 //
 // Every fixture below runs through the real engine: the Java is dumped by the jar, the model is built from that dump,
 // and the extractor reads only the dump. A fixture the dump cannot answer stays unresolved and is asserted as such.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';

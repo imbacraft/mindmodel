@@ -1,6 +1,7 @@
 // The budget rows in the rules quote the JSON schemas, so a number changed in one place must change in the other.
 // Each row maps its numbers, in order, to the schema field (or validator word cap) it quotes. A null entry is a count
 // of sentences, steps or words that no schema enforces: it is read, not checked.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

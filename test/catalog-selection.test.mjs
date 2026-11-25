@@ -8,6 +8,7 @@
 // that merely imports `javax.annotation.concurrent.ThreadSafe` would flip @PostConstruct's meaning by selecting cdi.
 // Both entries stay reachable — once cdi is selected for javax.inject, `javax.annotation.PostConstruct` is in its index
 // (the fixture below uses it), and an EE app selects them through ejb.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

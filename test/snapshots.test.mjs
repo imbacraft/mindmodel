@@ -3,6 +3,7 @@
 // (or $MINDMODEL_TEST_APPS); missing ones are skipped, and `slow` apps run only with SLOW=1. Snapshots stay local in
 // test/snapshots/ (gitignored), so the first run on a fresh clone records them and skips; later runs compare. With
 // SLOW=1 and CI=1 a missing checkout or snapshot fails. Accept intended changes: UPDATE=1 node --test
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

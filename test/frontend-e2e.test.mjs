@@ -1,6 +1,7 @@
 // Q1: end-to-end test code belongs to whoever wrote the test, not to this app's frontend. A Cypress/Playwright spec
 // drives a *running* application from a browser, so its calls must not reach `frontend.apiCalls` — the same rule that
 // keeps `src/test/` out of the Java model. Fixture: one SPA call plus Cypress and Playwright helpers.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { isE2e } from '../engine/core/paths.mjs';

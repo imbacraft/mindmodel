@@ -1,6 +1,7 @@
 // Import-time self-checks moved out of engine/system.mjs (Task 9), now over a dump: the messaging listener annotations,
 // the Kafka/JMS/Eventuate calls with their folded channel arguments, the Jakarta EE JNDI destinations, the channel-name
 // resolution, and the REST calls a service makes. The Java lives on disk (test-support/fixtures/system-messaging).
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';

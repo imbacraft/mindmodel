@@ -28,10 +28,12 @@ import { bootOf } from './scan/boot.mjs';
 import { gitInfoOf, activityCounts } from './scan/git.mjs';
 import { flowsOf } from './scan/flows.mjs';
 import { assembleFacts, summaryLine } from './scan/assemble.mjs';
+import { degradedMark, degradedSince } from './core/degrade.mjs';
 
 // Scans one app root and returns its facts; the CLI below writes them. Skills call this file, so the CLI stays here.
 export function scan(root, { withModel = false, extraConstants = new Map() } = {}) {
   const started = Date.now();
+  const mark = degradedMark();
   const inv = inventory(root);
   const ctx = { ...inv, ...loadModel(inv) };
   const { model, selected, app, files, R, read } = ctx;
@@ -84,6 +86,7 @@ export function scan(root, { withModel = false, extraConstants = new Map() } = {
     cov,
     entFacts,
     tenantFacts,
+    degraded: degradedSince(mark),
   });
   // Tests that check resolution against hand-verified calls need the model; facts alone cannot show a receiver type.
   if (withModel) Object.defineProperty(facts, 'model', { value: model, enumerable: false });
@@ -110,5 +113,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   fs.writeFileSync(out, JSON.stringify(facts, null, 1));
   fs.writeFileSync(out.replace(/\.json$/, '.md'), digest);
   console.log(summaryLine(facts, out));
+  for (const r of facts.runtime.degraded) console.log(`warn  degraded: ${r}`);
   if (retired) console.log(`previous map kept at ${retired}`);
 }

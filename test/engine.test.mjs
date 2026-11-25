@@ -1,5 +1,6 @@
 // Load tests: every module under engine/ must import cleanly. The assert self-checks live in
 // test/asserts.<module>.test.mjs, not at the top of the modules (Task 9); a module that fails to load fails its test.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';

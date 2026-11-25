@@ -1,5 +1,6 @@
 // The shipped engine is an artifact, so what the repository promises about it must be checkable offline: the lock file
 // pins version, size and digest, the plugin names the release, and the jar on disk has to be that one.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

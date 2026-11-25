@@ -1,5 +1,6 @@
 // The engine's library table is data inside the jar, generated from the catalogs. This test keeps the two honest: an
 // edited catalog that is not regenerated fails here rather than surfacing as a silently unresolved chain at scan time.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';

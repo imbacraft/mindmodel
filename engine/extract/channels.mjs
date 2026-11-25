@@ -3,6 +3,7 @@
 // the argument when it is a literal or a resolvable static constant, else the argument text.
 
 import { placeholderOf } from '../core/placeholders.mjs';
+import { push } from '../core/collections.mjs';
 import { annotationOn } from '../core/annotations.mjs';
 import { listOf, patternOf, tableOf } from '../catalogs/catalog.mjs';
 
@@ -23,8 +24,11 @@ export const firstString = (args = []) => args.map((a) => String(a).trim()).find
 export function channelFacts(model, { config = new Map(), extraConstants = new Map() } = {}) {
   const facts = [];
   const consts = model.constants ?? new Map();
+  // The types of each file, in model order: a resource's field is looked up in its own file, not in every type.
+  const typesByFile = new Map();
+  for (const x of model.types.values()) push(typesByFile, x.file, x);
   const lookupOf = (file, simple) => {
-    const t = [...model.types.values()].find((x) => x.file === file && (x.fields ?? []).some((f) => f.name === simple));
+    const t = (typesByFile.get(file) ?? []).find((x) => (x.fields ?? []).some((f) => f.name === simple));
     const f = t?.fields?.find((x) => x.name === simple);
     const res = (f?.ann ?? []).find((a) => /Resource|Inject/.test(a.name));
     return /lookup\s*=\s*"([^"]+)"/.exec(res?.args ?? '')?.[1] ?? null;

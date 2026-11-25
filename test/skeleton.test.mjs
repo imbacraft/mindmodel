@@ -1,5 +1,6 @@
 // The walking skeleton, end to end: the dump -> model -> catalogs -> facts, on one real app. cargotracker is small
 // enough to assert exact properties; large apps are measured in reports.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

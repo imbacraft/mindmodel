@@ -5,6 +5,7 @@
 // The probes below are the shapes a Java-source read takes in this codebase: a `.java` path handed to `readFileSync`,
 // `.text` of a Java source entry, `.b`/`.lines` — the body or the lines cut out of that text — and a `textOf`
 // callback called with a Java path. A hit is attributed to the innermost function whose body contains it.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

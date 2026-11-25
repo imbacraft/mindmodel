@@ -2,6 +2,7 @@
 // whose rules live in a configurer the repo does not declare says so instead of reporting the prefix as "unknown".
 // The fixtures are Java sources on disk (test-support/fixtures/security-prefixes), dumped by the real engine and read
 // back as a model — the same path a scan takes. Nothing here parses Java.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

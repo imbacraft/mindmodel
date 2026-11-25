@@ -1,4 +1,5 @@
 // Import-time self-checks moved out of engine/activity.mjs (Task 9); the assertions are unchanged.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { count, sinceCutoff } from '../engine/core/git-log.mjs';

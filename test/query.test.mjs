@@ -1,6 +1,7 @@
 // The query layer on the engine's own fixture: every primitive of engine/model/query.mjs, once per shape it will be
 // asked about in Phase 3 (a holder written through a project type, a cookie name compared in a helper, an entity
 // setter reached through a repository, a value handed down two calls). The dump is built once per run.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';

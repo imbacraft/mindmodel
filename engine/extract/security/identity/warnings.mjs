@@ -3,6 +3,7 @@ import { IDENTITY_ENTRY, verifiesIn } from './types.mjs';
 import { requestReads } from '../flow/requests.mjs';
 import { valueReaches } from '../flow/values.mjs';
 import { securitySinks } from './sinks.mjs';
+import { push } from '../../../core/collections.mjs';
 
 // The caller the code believes because the request said so. Two conditions, both required: the value reaches a
 // *security* identity holder (the security context, an Authentication/Principal slot, or a holder of the app's own
@@ -33,7 +34,7 @@ export function identityWarnings(model, isTest = () => false, db = null) {
       const byHolder = new Map();
       // A warning accuses, so it is built from the sinks whose element type the run could actually read: an inferred
       // store (element unresolved) is evidence for the user sources, never the reason for a claim about the caller.
-      for (const s of sinks) if (!s.inferred) byHolder.set(s.method, [...(byHolder.get(s.method) ?? []), s]);
+      for (const s of sinks) if (!s.inferred) push(byHolder, s.method, s);
       for (const [key, group] of byHolder) {
         const used = reads.filter((r) => group.some((s) => valueReaches(r, s.arg, q, d, Boolean(s.weak))));
         if (!used.length) continue;

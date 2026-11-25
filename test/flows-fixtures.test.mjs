@@ -3,6 +3,7 @@
 // effect; entity points stop at five; an inherited endpoint keeps its controllers apart; and a branch arm makes the
 // effect it holds conditional. The Java lives on disk under test-support/fixtures and is dumped by the real engine,
 // read back as a model — nothing here parses Java.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
 import { buildFlows, flowEntries } from '../engine/extract/flows.mjs';

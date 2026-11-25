@@ -91,13 +91,11 @@ export function userSourcesOf(model, selected) {
       }
     }
   // Sureness declares its authentication types as processors; the catalog names them.
-  const types = [...model.types.values()];
+  const holderOf = firstHolderIndex(model.types.values());
   for (const { catalog } of selected)
     for (const t of catalog.types ?? []) {
       if (t.means !== 'auth-type') continue;
-      const holder = types.find(
-        (x) => (x.supers ?? []).some((sp) => (sp.fqn ?? '').split('<')[0] === t.fqn) || x.fqn === t.fqn,
-      );
+      const holder = holderOf.get(t.fqn);
       if (holder)
         addUser(
           t.authType,
@@ -109,6 +107,22 @@ export function userSourcesOf(model, selected) {
     if (!userSources.some((u) => u.kind === a.kind))
       userSources.push({ kind: a.kind, cites: a.evidence, why: a.why?.[0] });
   return userSources;
+}
+
+/**
+ * The first type, in model order, that extends or implements a supertype FQN or is that FQN itself: one pass over the
+ * types, then a lookup per catalog name (a generic supertype counts by its raw name).
+ */
+function firstHolderIndex(types) {
+  const first = new Map();
+  const put = (key, t) => {
+    if (!first.has(key)) first.set(key, t);
+  };
+  for (const x of types) {
+    for (const sp of x.supers ?? []) put((sp.fqn ?? '').split('<')[0], x);
+    put(x.fqn, x);
+  }
+  return first;
 }
 
 /** The security model: rules, endpoints, method security, tenancy and user sources, with the base controllers. */

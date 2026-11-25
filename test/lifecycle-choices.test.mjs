@@ -1,6 +1,7 @@
 // A status a method chooses rather than receives: the switch arms a helper returns, a constant handed to a setter, and
 // the field's own default. Every fixture here is Java source under test/dump-fixture/src/shop, run through the real
 // engine and read back as a dump — the same path an app takes. Nothing is built from inline source text.
+import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

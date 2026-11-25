@@ -5,6 +5,7 @@ import assert from 'node:assert';
 import { childOf, childrenOf, parseXml, textOf } from './xml.mjs';
 import { resolvePlaceholders } from '../core/placeholders.mjs';
 import { listOf } from '../catalogs/catalog.mjs';
+import { degraded } from '../core/degrade.mjs';
 
 // The Gradle configurations a dependency can sit in, from the vocabulary; the regexes below are built from them.
 const GRADLE_CONFIGS = [...listOf('gradle-configurations')].join('|');
@@ -243,11 +244,12 @@ function readGradleSettings(text, rel = 'settings.gradle') {
 // package.json: the frontend half of a full-stack app. Coordinates are `npm:<name>`; no catalog matches them, and the
 // frontend family reads the same file for routes and calls. Kept here so the build evidence is complete.
 function readPackageJson(text, rel = 'package.json') {
-  let pkg = {};
+  let pkg;
   try {
     pkg = JSON.parse(text);
   } catch {
-    return { file: rel, kind: 'npm', deps: [] };
+    const reason = `${rel} is not readable JSON: its dependencies are not listed`;
+    return degraded(reason, { file: rel, kind: 'npm', deps: [] });
   }
   const deps = Object.entries({ ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }).map(
     ([name, version]) => ({ group: 'npm', artifact: name, version: String(version) }),

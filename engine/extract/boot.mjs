@@ -6,6 +6,8 @@ import path from 'node:path';
 import assert from 'node:assert';
 import { configKeys } from './config.mjs';
 import { simple } from '../core/names.mjs';
+import { degraded } from '../core/degrade.mjs';
+import { push } from '../core/collections.mjs';
 import { annotationOn } from '../core/annotations.mjs';
 import { listOf, patternOf, tableOf } from '../catalogs/catalog.mjs';
 import { isTestCode } from '../core/paths.mjs';
@@ -21,8 +23,8 @@ const SPRING_BASE = listOf('app-base-types');
 const baseOf = (s) => simple(s.fqn ?? s.text);
 const bindsSpring = (t) =>
   annotationOn(t, ...SPRING_APP) !== null || (t.supertypes ?? []).some((s) => SPRING_BASE.has(baseOf(s)));
-const linesOf = (file) =>
-  (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []);
+// The dump's own files: the caller only reads a dump that ran, and a missing one is a broken dump, so it throws.
+const linesOf = (file) => fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
 
 /**
  * The app entry points a dump names: every method the engine marked `isMain` in a file whose types bind Spring — one
@@ -35,14 +37,14 @@ export function mainIndex(dir) {
   for (const line of linesOf(path.join(dir, 'types.ndjson'))) {
     const t = JSON.parse(line);
     const file = t.pos?.file;
-    if (file) types.set(file, [...(types.get(file) ?? []), t]);
+    if (file) push(types, file, t);
   }
   const mains = new Map();
   for (const line of linesOf(path.join(dir, 'members.ndjson')).filter((l) => l.includes('"isMain":true'))) {
     const m = JSON.parse(line);
     const file = m.pos?.file;
     if (!file || !(types.get(file) ?? []).some(bindsSpring)) continue;
-    mains.set(file, [...(mains.get(file) ?? []), { type: simple(m.owner), line: m.pos.line ?? null, id: m.id }]);
+    push(mains, file, { type: simple(m.owner), line: m.pos.line ?? null, id: m.id });
   }
   for (const list of mains.values()) list.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
   return { typesOf: (file) => types.get(file) ?? [], mainsIn: (file) => mains.get(file) ?? [] };
@@ -329,7 +331,7 @@ function packageScripts(files, rel, read) {
       try {
         return { file: rel(f), scripts: JSON.parse(read(f)).scripts ?? {} };
       } catch {
-        return { file: rel(f), scripts: {} };
+        return { file: rel(f), scripts: degraded(`${rel(f)} is not readable JSON: its scripts are not listed`, {}) };
       }
     });
 }

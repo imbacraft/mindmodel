@@ -11,6 +11,7 @@ import { gitWindow, activityFor } from './io/activity.mjs';
 import { formatCite, parseCite } from './core/cite.mjs';
 import { checkSchema } from './core/schema.mjs';
 import { budgetFor, budgetWarnings, isThin } from './budget.mjs';
+import { degraded, degradedMark, degradedSince } from './core/degrade.mjs';
 
 const SCHEMA = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/mindmodel.schema.json'), 'utf8'),
@@ -60,10 +61,17 @@ export function citeTarget(map) {
 }
 
 // A citation's target among the file's declarations: the same name, and the same arity when the cite gives one
-// (`#save/2`). Null when the file's declarations are unknown here (no dump, or not a Java file).
+// (`#save/2`). Null when there is no dump (`declared` null: said once, where the dump was read) or no symbol to match.
+// A Java file the dump knows nothing about, cited by symbol, is a partial dump: the overload check is off.
+// Build output never has dump rows (a generated source is read for its types, never cited), so it is not a gap.
+const BUILD_OUTPUT = /(^|\/)(target|build)\//;
 export function citeCandidates(declared, pc) {
-  const decl = declared?.get(pc.file);
-  if (!decl) return null;
+  if (!declared || !pc.symbol) return null;
+  const decl = declared.get(pc.file);
+  if (!decl) {
+    if (!/\.java$/.test(pc.file) || BUILD_OUTPUT.test(pc.file)) return null;
+    return degraded(`dump has no declarations for ${pc.file}: the overload check for #${pc.symbol} is off`, null);
+  }
   const named = [...(decl.methods ?? []), ...(decl.types ?? [])].filter((d) => d.name === pc.symbol);
   return pc.arity == null ? named : named.filter((d) => d.arity == null || d.arity === pc.arity);
 }
@@ -135,7 +143,7 @@ export function checkCite(c, root, declared, cache) {
   if (!pc) return `malformed citation "${c}"`;
   // Build output is never a citation's target: it is rewritten by every build, and a citation into it would point at
   // code the project does not own (a generated source contributes no dump row at all, so nothing real is there).
-  if (/(^|\/)(target|build)\//.test(pc.file)) return `"${c}" cites build output; cite the source behind it`;
+  if (BUILD_OUTPUT.test(pc.file)) return `"${c}" cites build output; cite the source behind it`;
   const abs = path.join(root, pc.file);
   if (!fs.existsSync(abs)) return `path not found "${pc.file}"`;
   const dir = fs.statSync(abs).isDirectory();
@@ -343,31 +351,32 @@ function declarationsOf(dump) {
   return byFile;
 }
 
-/** The dump beside the map, when there is one: the CLI's own way to the same answers. A dump that is there but cannot
- * be read gives no declarations, so the overload checks are off, and the warning says so. */
+/** The dump beside the map, when there is one: the CLI's own way to the same answers. Without a readable dump there are
+ * no declarations, so the overload checks are off, and that is a degradation. */
 function declaredFromDump(root) {
   const dir = path.join(root, 'mindmodel', '.work', 'dump');
-  if (!fs.existsSync(path.join(dir, 'meta.json'))) return { declared: null, warning: null };
+  if (!fs.existsSync(path.join(dir, 'meta.json')))
+    return degraded('no engine dump at mindmodel/.work/dump: the overload checks are off', null);
   try {
-    return { declared: declarationsOf(openDump(dir)), warning: null };
+    return declarationsOf(openDump(dir));
   } catch (e) {
-    return { declared: null, warning: `mindmodel/.work/dump cannot be read (${e.message}): overload checks are off` };
+    return degraded(`mindmodel/.work/dump cannot be read (${e.message}): the overload checks are off`, null);
   }
 }
 
 // The scan facts, read once per run: the endpoint count sets the size tier (P8), and the security warnings say which
-// files must not become rules. Facts are optional for validation; an unreadable file is not a validation error, but it
-// is a warning, because the budget then falls back to the widest tier.
+// files must not become rules. Facts are optional for validation, but without them the budget falls back to the
+// widest tier and no security warning applies: that is a degradation, not a silent default.
 export function readFacts(file) {
-  if (!fs.existsSync(file)) return { facts: null, warning: null };
+  if (!fs.existsSync(file))
+    return degraded(`no ${file}: the budget uses the widest tier and no security warnings apply`, null);
   try {
-    return { facts: JSON.parse(fs.readFileSync(file, 'utf8')), warning: null };
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (e) {
-    return {
-      facts: null,
-      warning: `facts.json cannot be read (${e.message}): the budget uses the widest tier, and no security ` +
-        'warnings apply',
-    };
+    return degraded(
+      `facts.json cannot be read (${e.message}): the budget uses the widest tier, and no security warnings apply`,
+      null,
+    );
   }
 }
 
@@ -573,20 +582,22 @@ function checkBudget({ map, facts, warn }, citeCount) {
  * parsed facts.json: undefined reads it from the map's project, null means none.
  */
 export function validate(map, root, declared, facts) {
+  const mark = degradedMark();
+  if (declared === undefined) declared = declaredFromDump(root);
+  if (facts === undefined) facts = readFacts(path.join(root, 'mindmodel', '.work', 'facts.json'));
+  const result = checkMap(map, root, declared, facts);
+  // What this run gave up on, then what the scan gave up on (facts.runtime.degraded): both reach the user as warnings.
+  const fromScan = (facts?.runtime?.degraded ?? []).map((r) => `scan degraded: ${r}`);
+  result.warnings.push(...degradedSince(mark).map((r) => `degraded: ${r}`), ...fromScan);
+  return result;
+}
+
+// The checks behind validate(), with `declared` and `facts` already resolved.
+function checkMap(map, root, declared, facts) {
   const errors = [],
     warnings = [];
   const err = (m) => errors.push(m),
     warn = (m) => warnings.push(m);
-  if (declared === undefined) {
-    const dump = declaredFromDump(root);
-    declared = dump.declared;
-    if (dump.warning) warn(dump.warning);
-  }
-  if (facts === undefined) {
-    const read = readFacts(path.join(root, 'mindmodel', '.work', 'facts.json'));
-    facts = read.facts;
-    if (read.warning) warn(read.warning);
-  }
   const cache = new Map();
   resolveCites(map, root, declared, cache);
   fillActivity(map, root);

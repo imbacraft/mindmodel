@@ -51,8 +51,10 @@ let located; // undefined until asked; then `{ path, source }` or null
  */
 export function locate() {
   if (located !== undefined) return located;
+  // A jar the user named is used as given, even when it is missing: falling back to another copy would run an engine
+  // the user did not choose. `ensure` says so.
   const fromEnv = process.env.MINDMODEL_ENGINE_JAR;
-  if (fromEnv && fs.existsSync(fromEnv)) return (located = { path: fromEnv, source: 'env' });
+  if (fromEnv) return (located = { path: fromEnv, source: 'env' });
   const held = lock();
   const cached = cacheJar(held.version);
   if (matches(cached, held)) return (located = { path: cached, source: 'cache' });
@@ -73,6 +75,8 @@ export function jarPath() {
  */
 export async function ensure({ download = true, log = () => {} } = {}) {
   const found = locate();
+  if (found && !fs.existsSync(found.path))
+    return { ok: false, reason: `MINDMODEL_ENGINE_JAR is ${found.path}, which does not exist` };
   if (found) return { ok: true, ...found };
   const held = lock();
   const cached = cacheJar(held.version);
