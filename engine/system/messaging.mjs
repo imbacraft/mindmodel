@@ -43,7 +43,7 @@ export function messaging(module, patterns = BUILTIN) {
             line: a.line || m.start,
             expr: quoted(v),
             raw: quoted(v),
-            arg: { kind: 'literal', text: quoted(v), value: v, valueKind: 'string' },
+            arg: { kind: 'literal', text: quoted(v), value: { kind: 'string', value: v } },
             file: module.prefix + t.file,
             mfile: t.file,
           });
@@ -191,7 +191,7 @@ export function channelName(x, module, keys, ix) {
     return r.unresolved ? r : { name: r.name, via: r.via };
   }
   // A constant field: the value the dump folded, named as the source names it.
-  if (arg.kind === 'constant' && arg.value != null) return { name: String(arg.value), via: written };
+  if (arg.kind === 'constant' && arg.value?.value != null) return { name: String(arg.value.value), via: written };
   // A field or parameter injected from config (`@Value("${key}") String var`): the field's own annotation says which
   // key.
   if (arg.kind === 'field' && arg.field) {

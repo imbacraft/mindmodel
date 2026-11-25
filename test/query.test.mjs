@@ -78,7 +78,7 @@ test('query: argValue follows a parameter one hop by default and keeps every cal
   assert.deepStrictEqual(none.values.map((v) => [v.value.kind, v.stopped]), [['param', 'depth']]);
   // One path is a literal, the other a parameter whose own caller does not exist: every path is reported.
   const both = q().argValue(inner, 0, 2);
-  assert.deepStrictEqual(both.values.map((v) => v.value.value), ['literal']);
+  assert.deepStrictEqual(both.values.map((v) => v.value.value.value), ['literal']);
   assert.deepStrictEqual(both.unresolved.map((u) => u.reason), ['no-caller']);
   assert.equal(both.unresolved[0].at.method, 'contract.Chain#unknown(String)');
   // An argument the call does not have is unresolved.
@@ -160,7 +160,7 @@ test('query: comparedTo finds the comparison of a parameter, and the value that 
   assert.deepStrictEqual(found.unresolved, []);
   // The helper compares its parameter; the filter that calls it passes a literal: the two primitives together.
   const equals = callTo(read, 'equals');
-  assert.deepStrictEqual(q().argValue(equals, 0).values.map((v) => v.value.value), ['session']);
+  assert.deepStrictEqual(q().argValue(equals, 0).values.map((v) => v.value.value.value), ['session']);
   assert.equal(q().argValue(equals, 0).values[0].at.method, 'contract.CookieFilter#handle()');
   assert.deepStrictEqual(q().comparedTo({ method: read, index: 1 }).comparisons, [], 'no such parameter');
   assert.deepStrictEqual(q().comparedTo({ method: 'contract.CookieFilter#missing()' }).unresolved.map((u) => u.reason),

@@ -20,7 +20,7 @@ import { linesMatching } from '../core/strings.mjs';
 const SPRING_APP = [...listOf('boot-main-annotations')];
 const SPRING_BASE = listOf('app-base-types');
 
-const baseOf = (s) => simple(s.fqn ?? s.text);
+const baseOf = (s) => simple(s.typeFqn ?? s.type);
 const bindsSpring = (t) =>
   annotationOn(t, ...SPRING_APP) !== null || (t.supertypes ?? []).some((s) => SPRING_BASE.has(baseOf(s)));
 // The dump's own files: the caller only reads a dump that ran, and a missing one is a broken dump, so it throws.
@@ -193,8 +193,8 @@ export function deployables({ java, files, rel, read, dump = null }) {
       supertypes: [
         {
           kind: 'class',
-          text: 'SpringBootServletInitializer',
-          fqn: 'org.springframework.boot.web.servlet.support.SpringBootServletInitializer',
+          type: 'SpringBootServletInitializer',
+          typeFqn: 'org.springframework.boot.web.servlet.support.SpringBootServletInitializer',
         },
       ],
     },

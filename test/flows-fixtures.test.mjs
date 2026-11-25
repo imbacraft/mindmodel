@@ -119,7 +119,7 @@ test('an effect inside a branch arm is conditional and counts at half weight', {
     buildFlows(model, { entries: flowEntries(model, endpoints), stateWrites, outsideCalls, activityOf: () => 0 });
 
   // The dump wrote the `if` arm: the charge line sits inside it, the save line does not.
-  assert.ok(arms.some((b) => b.start <= 10 && 10 <= b.end), `the arm covers the charge: ${JSON.stringify(arms)}`);
+  assert.ok(arms.some((b) => b.line <= 10 && 10 <= b.endLine), `the arm covers the charge: ${JSON.stringify(arms)}`);
   const arm = build()[0];
   assert.deepEqual(arm.why, ['entry POST +3', 'entities 1 (Order) +3', 'outside 1 +1, 1 conditional']);
   assert.equal(arm.score, 7, 'the conditional charge weighs half of 3, rounded down');

@@ -24,7 +24,7 @@ const HOW = {
 };
 
 /** A constant's value name: `a.b.S.PAID` -> `PAID`. A nested enum keeps its `$` in the type, not in the value. */
-const constantName = (value) => simple(value?.value ?? value?.text ?? value?.field ?? '').split(/[<$]/)[0];
+const constantName = (value) => simple(value?.value?.value ?? value?.text ?? value?.field ?? '').split(/[<$]/)[0];
 /**
  * A value that names a status without the dump declaring its type: the source wrote `OrderState.CANCELLED`, and the
  * row carries the field it read (`field: OrderState#CANCELLED`) with a reason saying the declaration is elsewhere.
@@ -32,7 +32,7 @@ const constantName = (value) => simple(value?.value ?? value?.text ?? value?.fie
  */
 const outsideRead = (value) =>
   value?.kind === 'field' && value.reason === 'declaration-outside-dump' && value.field
-    ? { type: value.type, value: String(value.field).split('#').pop() }
+    ? { type: value.typeFqn, value: String(value.field).split('#').pop() }
     : null;
 const noHop = (reason, at) => ({ values: [], unresolved: [{ reason, at }] });
 
@@ -41,7 +41,7 @@ function expressionValues(value, enumFqn, at) {
   if (!value) return noHop('no-value', at);
   if (value.kind === 'unresolved') return noHop(value.reason ?? 'unresolved', at);
   if (value.kind === 'constant')
-    return normFqn(value.type) === enumFqn
+    return normFqn(value.typeFqn) === enumFqn
       ? { values: [{ value: constantName(value), cite: at?.method ?? null, how: 'direct' }], unresolved: [] }
       : noHop('other-type', at);
   if (value.kind === 'conditional') {
@@ -231,7 +231,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
     if (call.via === 'methodRef' || call.origin === 'error' || !inApp(call.file)) continue;
     const args = dump.argsOf(call.id);
     args.forEach((arg, index) => {
-      const type = normFqn(arg?.type);
+      const type = normFqn(arg?.typeFqn);
       if (!STATUS_NAME.test(simple(type))) return;
       // The type whose instance receives the call: the receiver the dump typed, or the entity a Lombok builder setter
       // belongs to. Both are facts of the call row, not a reading of the argument's text.
@@ -270,11 +270,11 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
       if (!inApp(call.file)) continue;
       const member = dump.members.get(target);
       if (!member || dump.annotation(member, 'Modifying') == null) continue;
-      const constants = (call.args ?? []).filter((a) => a?.kind === 'constant' && STATUS_NAME.test(simple(a.type)));
+      const constants = (call.args ?? []).filter((a) => a?.kind === 'constant' && STATUS_NAME.test(simple(a.typeFqn)));
       if (!constants.length) continue;
       const entity = repoEntity.get(simple(member.owner));
       for (const pair of pairs) {
-        if (entity !== pair.entity || normFqn(constants[constants.length - 1].type) !== pair.enumFqn) continue;
+        if (entity !== pair.entity || normFqn(constants[constants.length - 1].typeFqn) !== pair.enumFqn) continue;
         const from = constants.slice(0, -1).map(constantName).join('/') || '?';
         const value = constantName(constants[constants.length - 1]);
         const slot = pair.setting.get(value) ?? { set: [], conditional: [] };
@@ -434,10 +434,10 @@ function outsideStatuses({ dump, declared, entities, cite, unresolved, inApp }) 
   for (const call of dump.calls)
     for (const [i, arg] of dump.argsOf(call.id).entries()) {
       const read = arg?.kind === 'constant' ? null : outsideRead(arg);
-      if (!(arg?.kind === 'constant' || read) || !outside(read ? read.type : arg.type) || !inApp(call.file)) continue;
+      if (!(arg?.kind === 'constant' || read) || !outside(read ? read.type : arg.typeFqn) || !inApp(call.file)) continue;
       const setter = /^(?:set\w*(?:Status|State)|status|state)$/.test(call.name ?? '');
       if (!setter && !targetIds(call).some((t) => writers.has(`${t}\u0000${i}`))) continue;
-      take(read ? read.type : arg.type, read ? read.value : constantName(arg), call.method, call.line);
+      take(read ? read.type : arg.typeFqn, read ? read.value : constantName(arg), call.method, call.line);
     }
   // A default written into a status field: `this.status = SomeStatus.PENDING` — a constant, or a static read of a field
   // whose type this dump does not declare (`OrderState.CANCELLED`).
@@ -446,8 +446,8 @@ function outsideStatuses({ dump, declared, entities, cite, unresolved, inApp }) 
     if (!STATUS_FIELD.test(String(row.field).split('#').pop())) continue;
     const read = row.value?.kind === 'constant' ? null : outsideRead(row.value);
     const value = row.value?.kind === 'constant' ? row.value : read;
-    if (!value || !outside(read ? read.type : row.value.type)) continue;
-    take(read ? read.type : row.value.type, read ? read.value : constantName(row.value), row.method, row.line);
+    if (!value || !outside(read ? read.type : row.value.typeFqn)) continue;
+    take(read ? read.type : row.value.typeFqn, read ? read.value : constantName(row.value), row.method, row.line);
   }
   for (const [name, g] of groups) {
     if (!g.sites.size) {
@@ -485,14 +485,14 @@ export function javaFacts({ java = [], dump = null, model = null, repoEntity = n
     name, targets, origin: 'java', recv, args,
   });
   const calls = [
-    call('shop.Svc#direct()', 'shop.Svc#direct()@3:5', 'setStatus', ['shop.Order#setStatus(shop.Status)'], { type: 'shop.Order', how: 'local' },
-      [{ text: 'shop.Status.PAID', kind: 'constant', type: 'shop.Status', value: 'shop.Status.PAID' }]),
-    call('shop.Order#setStatus(shop.Status)', 'shop.Order#setStatus(shop.Status)@8:5', 'setStatus', [], { type: 'shop.Order', how: 'this' },
-      [{ text: 's', kind: 'param', type: 'shop.Status', index: 0 }]),
-    call('shop.Svc#mark(shop.Status)', 'shop.Svc#mark(shop.Status)@12:5', 'setStatus', ['shop.Order#setStatus(shop.Status)'], { type: 'shop.Order', how: 'field' },
-      [{ text: 's', kind: 'param', type: 'shop.Status', index: 0 }]),
-    call('shop.Caller#run()', 'shop.Caller#run()@20:5', 'mark', ['shop.Svc#mark(shop.Status)'], { type: 'shop.Svc', how: 'field' },
-      [{ text: 'shop.Status.NEW', kind: 'constant', type: 'shop.Status', value: 'shop.Status.NEW' }]),
+    call('shop.Svc#direct()', 'shop.Svc#direct()@3:5', 'setStatus', ['shop.Order#setStatus(shop.Status)'], { typeFqn: 'shop.Order', how: 'local' },
+      [{ text: 'shop.Status.PAID', kind: 'constant', typeFqn: 'shop.Status', value: { kind: 'enum', value: 'shop.Status.PAID' } }]),
+    call('shop.Order#setStatus(shop.Status)', 'shop.Order#setStatus(shop.Status)@8:5', 'setStatus', [], { typeFqn: 'shop.Order', how: 'this' },
+      [{ text: 's', kind: 'param', typeFqn: 'shop.Status', index: 0 }]),
+    call('shop.Svc#mark(shop.Status)', 'shop.Svc#mark(shop.Status)@12:5', 'setStatus', ['shop.Order#setStatus(shop.Status)'], { typeFqn: 'shop.Order', how: 'field' },
+      [{ text: 's', kind: 'param', typeFqn: 'shop.Status', index: 0 }]),
+    call('shop.Caller#run()', 'shop.Caller#run()@20:5', 'mark', ['shop.Svc#mark(shop.Status)'], { typeFqn: 'shop.Svc', how: 'field' },
+      [{ text: 'shop.Status.NEW', kind: 'constant', typeFqn: 'shop.Status', value: { kind: 'enum', value: 'shop.Status.NEW' } }]),
   ];
   const members = [
     ...['NEW', 'PAID', 'GONE'].map((name) => ({ kind: 'enumConstant', owner: 'shop.Status', name })),
@@ -503,11 +503,11 @@ export function javaFacts({ java = [], dump = null, model = null, repoEntity = n
       pos: { file: 'shop/Svc.java', line: 11, endLine: 13 } },
     { kind: 'method', owner: 'shop.Caller', name: 'run', id: 'shop.Caller#run()', pos: { file: 'shop/Caller.java', line: 19, endLine: 21 } },
     { kind: 'method', owner: 'shop.Svc', name: 'choose', id: 'shop.Svc#choose()', returns: 'Status',
-      returned: [{ kind: 'switch', line: 30, col: 9, arms: [{ labels: ['A'], value: { text: 'shop.Status.NEW', kind: 'constant', type: 'shop.Status', value: 'shop.Status.NEW' } }] }],
+      returned: [{ kind: 'switch', line: 30, col: 9, arms: [{ labels: ['A'], value: { text: 'shop.Status.NEW', kind: 'constant', typeFqn: 'shop.Status', value: { kind: 'enum', value: 'shop.Status.NEW' } } }] }],
       pos: { file: 'shop/Svc.java', line: 29, endLine: 34 } },
     { kind: 'field', owner: 'shop.Order', name: 'status', type: 'Status', typeFqn: 'shop.Status', pos: { file: 'shop/Order.java', line: 4, endLine: 4 } },
   ];
-  const fields = [{ method: 'shop.Order#setStatus(shop.Status)', field: 'shop.Order#status', op: 'write', line: 8, value: { text: 's', kind: 'param', type: 'shop.Status', index: 0 } }];
+  const fields = [{ method: 'shop.Order#setStatus(shop.Status)', field: 'shop.Order#status', op: 'write', line: 8, value: { text: 's', kind: 'param', typeFqn: 'shop.Status', index: 0 } }];
   const types = new Map([
     ['shop.Order', { fqn: 'shop.Order', kind: 'class', pos: { file: 'shop/Order.java', line: 1, endLine: 10 }, ann: [] }],
     ['shop.Status', { fqn: 'shop.Status', kind: 'enum', pos: { file: 'shop/Status.java', line: 1, endLine: 4 } }],

@@ -8,7 +8,7 @@ import { simple } from './core/names.mjs';
 import { push } from './core/collections.mjs';
 import { annotationOn } from './core/annotations.mjs';
 
-export const CONTRACT = 7;
+export const CONTRACT = 8;
 
 const LF = 0x0a;
 const CHUNK = 1 << 20;
@@ -106,7 +106,7 @@ export function open(dir) {
   for (const f of fields) if (f.field) push(byField, f.field, f);
   const byFile = new Map(files.map((f) => [f.path, f]));
   const subtypes = new Map();
-  for (const t of types) for (const s of t.supertypes ?? []) push(subtypes, s.fqn, t.fqn);
+  for (const t of types) for (const s of t.supertypes ?? []) push(subtypes, s.typeFqn, t.fqn);
 
   /** Annotations on a type or member, by full name or simple name; the arguments are values, or null when unresolved. */
   const annotation = (element, name) => {
@@ -196,7 +196,7 @@ export function open(dir) {
   fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ contract: CONTRACT, engine: 'test', counts: { types: 2 } }));
   w('types.ndjson', [
     { fqn: 'a.Port', kind: 'interface', supertypes: [], ann: [], pos: { file: 'a/Port.java', line: 1, col: 1, endLine: 2, endCol: 1 } },
-    { fqn: 'a.Impl', kind: 'class', supertypes: [{ kind: 'interface', text: 'Port', fqn: 'a.Port' }], ann: [],
+    { fqn: 'a.Impl', kind: 'class', supertypes: [{ kind: 'interface', type: 'Port', typeFqn: 'a.Port' }], ann: [],
       pos: { file: 'a/Impl.java', line: 1, col: 1, endLine: 3, endCol: 1 } },
   ]);
   w('members.ndjson', [
@@ -207,12 +207,12 @@ export function open(dir) {
       ann: [{ name: 'org.springframework.transaction.annotation.Transactional', args: { value: { kind: 'string', value: 'x' } } }],
       // One switch whose result the method hands on, one plain return, one value the engine could not describe.
       returned: [
-        { kind: 'return', line: 2, col: 5, value: { text: 'PATH', kind: 'constant', type: 'java.lang.String', value: '/x' } },
+        { kind: 'return', line: 2, col: 5, value: { text: 'PATH', kind: 'constant', typeFqn: 'java.lang.String', value: { kind: 'string', value: '/x' } } },
         { kind: 'switch', line: 3, col: 5, form: 'expression', target: 'code',
-          on: { text: 'status', kind: 'param', type: 'java.lang.String', index: 0 },
+          on: { text: 'status', kind: 'param', typeFqn: 'java.lang.String', index: 0 },
           arms: [
-            { labels: ['NEW'], default: false, value: { text: 'A', kind: 'literal', type: 'java.lang.String', value: 'A' } },
-            { labels: [], default: true, value: { text: 'mystery.x', kind: 'unresolved', type: null, reason: 'no-declaration' } },
+            { labels: ['NEW'], default: false, value: { text: 'A', kind: 'literal', typeFqn: 'java.lang.String', value: { kind: 'string', value: 'A' } } },
+            { labels: [], default: true, value: { text: 'mystery.x', kind: 'unresolved', typeFqn: null, reason: 'no-declaration' } },
           ] },
       ],
       pos: { file: 'a/Impl.java', line: 2, col: 5, endLine: 2, endCol: 20 } },
@@ -221,19 +221,19 @@ export function open(dir) {
   ]);
   w('calls.ndjson', [
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:9', file: 'a/Impl.java', line: 2, col: 9, name: 'find', argc: 1,
-      recv: { type: 'a.Port', typeArgs: [], kind: 'field' },
+      recv: { typeFqn: 'a.Port', typeArgs: [], kind: 'field' },
       targets: [{ id: 'a.Port#find(Long)', kind: 'declared' }, { id: 'a.Impl#find(Long)', kind: 'override' }],
       uniqueImpl: true, origin: 'java',
-      args: [{ text: 'PATH', kind: 'constant', value: '/x', valueKind: 'string', type: 'java.lang.String' }] },
+      args: [{ text: 'PATH', kind: 'constant', value: { kind: 'string', value: '/x' }, typeFqn: 'java.lang.String' }] },
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:25', file: 'a/Impl.java', line: 2, col: 25, name: 'save', argc: 0,
-      recv: { type: null, typeArgs: [], kind: 'implicit' }, targets: [], uniqueImpl: false, origin: 'unresolved',
-      reason: 'no-callee', args: [{ text: 'x', kind: 'unresolved', type: null, reason: 'no-declaration' }] },
+      recv: { typeFqn: null, typeArgs: [], kind: 'implicit' }, targets: [], uniqueImpl: false, origin: 'unresolved',
+      reason: 'no-callee', args: [{ text: 'x', kind: 'unresolved', typeFqn: null, reason: 'no-declaration' }] },
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:30', file: 'a/Impl.java', line: 2, col: 30, name: 'getPath',
-      via: 'methodRef', argc: 0, recv: { type: 'a.Impl', typeArgs: ['java.lang.String'], kind: 'instance' },
+      via: 'methodRef', argc: 0, recv: { typeFqn: 'a.Impl', typeArgs: ['java.lang.String'], kind: 'instance' },
       targets: [{ id: 'a.Impl#path()', kind: 'declared' }], uniqueImpl: false, origin: 'java', args: [] },
     // Two overrides of one port: the declaration is a fact, which implementation runs is not.
     { method: 'a.Impl#find(Long)', id: 'a.Impl#find(Long)@2:40', file: 'a/Impl.java', line: 2, col: 40, name: 'save', argc: 1,
-      recv: { type: 'a.Port', typeArgs: [], kind: 'field' },
+      recv: { typeFqn: 'a.Port', typeArgs: [], kind: 'field' },
       targets: [
         { id: 'a.Port#save(Long)', kind: 'declared' },
         { id: 'a.Impl#save(Long)', kind: 'override' },
@@ -243,21 +243,21 @@ export function open(dir) {
   ]);
   w('fields.ndjson', [
     { method: 'a.Impl#find(Long)', field: 'a.Impl#PATH', static: true, op: 'read', typeArgs: [], file: 'a/Impl.java', line: 2, col: 9,
-      value: { text: 'PATH', kind: 'constant', type: 'java.lang.String', value: '/x', valueKind: 'string', field: 'a.Impl#PATH' } },
+      value: { text: 'PATH', kind: 'constant', typeFqn: 'java.lang.String', value: { kind: 'string', value: '/x' }, field: 'a.Impl#PATH' } },
     { method: 'a.Impl#find(Long)', field: 'a.Impl#name', static: false, op: 'write', typeArgs: [], file: 'a/Impl.java', line: 2, col: 20,
-      value: { text: 'name', kind: 'param', type: 'java.lang.String', index: 0 } },
+      value: { text: 'name', kind: 'param', typeFqn: 'java.lang.String', index: 0 } },
     // A field of a generic type, and a write of a static member whose type the dump never declares: the read is typed
     // and named, and the reason says the declaration is elsewhere.
     { method: 'a.Impl#find(Long)', field: 'a.Impl#holder', static: false, op: 'write', typeArgs: ['a.Order'],
       file: 'a/Impl.java', line: 2, col: 26,
-      value: { text: 'Outside.PAID', kind: 'field', type: 'a.Outside', field: 'a.Outside#PAID',
+      value: { text: 'Outside.PAID', kind: 'field', typeFqn: 'a.Outside', field: 'a.Outside#PAID',
         reason: 'declaration-outside-dump' } },
     { method: 'a.Impl#find(Long)', field: null, static: false, op: 'read', typeArgs: [], file: 'a/Impl.java', line: 2, col: 31,
       origin: 'unresolved', reason: 'no-declaring-type',
-      value: { text: 'mystery.x', kind: 'unresolved', type: null, reason: 'no-declaration' } },
+      value: { text: 'mystery.x', kind: 'unresolved', typeFqn: null, reason: 'no-declaration' } },
   ]);
   w('files.ndjson', [
-    { path: 'a/Impl.java', package: 'a', importsOrigin: 'header', imports: [{ name: 'java.util.List', wildcard: false, static: false }], errors: [] },
+    { path: 'a/Impl.java', package: 'a', importsOrigin: 'spoon', imports: [{ name: 'java.util.List', wildcard: false, static: false }], errors: [] },
     { path: 'a/Unknown.java', package: 'a', importsOrigin: 'unresolved', importsReason: 'header-unreadable', imports: [], errors: [] },
   ]);
   const d = open(dir);

@@ -20,10 +20,10 @@ export function requestReads(entryId, q, db, model, depth = 2, methods = null) {
   const reads = [];
   const unresolved = [];
   const reach = methods ?? q.reach(entryId, depth).methods;
-  const libraryCall = (c) => c.recv?.type && !db.types.has(c.recv.type);
+  const libraryCall = (c) => c.recv?.typeFqn && !db.types.has(c.recv.typeFqn);
   const requestRecv = (c) =>
-    libraryCall(c) && ['HttpServletRequest', 'ServletRequest'].includes(simpleType(c.recv.type));
-  const cookieRecv = (c) => libraryCall(c) && simpleType(c.recv.type) === 'Cookie';
+    libraryCall(c) && ['HttpServletRequest', 'ServletRequest'].includes(simpleType(c.recv.typeFqn));
+  const cookieRecv = (c) => libraryCall(c) && simpleType(c.recv.typeFqn) === 'Cookie';
   // A cookie is only read where one is in reach: `getName()` names it, `getValue()` reads it. Without that, a helper
   // comparing its parameter to a constant is a host check, not a cookie name.
   // A cookie is only read where one is in reach: `getName()`/`getValue()` on a `Cookie`, or the request's cookie stream

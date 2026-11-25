@@ -136,7 +136,7 @@ const claimReadIn = (methods, db) => {
 
 /** The first string literal among a call's arguments: the claim or parameter name the code actually asks for. */
 export const literalName = (c) =>
-  (c.args ?? []).map((a) => (a?.kind === 'literal' && a.valueKind === 'string' ? a.value : null)).find(Boolean) ?? null;
+  (c.args ?? []).map((a) => (a?.kind === 'literal' && a.value?.kind === 'string' ? a.value.value : null)).find(Boolean) ?? null;
 const pathReadIn = (methods, db) => {
   for (const { id } of methods)
     for (const c of db.callsOf(id)) if (['getRequestURI', 'getServletPath', 'getPathInfo'].includes(c.name)) return c;
@@ -145,9 +145,9 @@ const pathReadIn = (methods, db) => {
 
 {
   // A claim's name is the literal the read asks for, never a variable or a type: `getClaim("iss")` names `iss`.
-  assert.equal(literalName({ args: [{ kind: 'literal', valueKind: 'string', value: 'iss' }] }), 'iss');
+  assert.equal(literalName({ args: [{ kind: 'literal', value: { kind: 'string', value: 'iss' } }] }), 'iss');
   assert.equal(
-    literalName({ args: [{ kind: 'local', text: 'claimName' }, { kind: 'literal', valueKind: 'number', value: '1' }] }),
+    literalName({ args: [{ kind: 'local', text: 'claimName' }, { kind: 'literal', value: { kind: 'number', value: '1' } }] }),
     null,
     'a variable is not a claim name, and neither is a number',
   );

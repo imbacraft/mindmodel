@@ -103,7 +103,7 @@ export function tenancyFacts(
     if (!value) return false;
     const candidates =
       value.kind === 'constant' || value.kind === 'literal' || value.kind === 'string'
-        ? [value.value]
+        ? [value.value?.value]
         : value.kind === 'field'
           ? [String(value.field ?? '').split('#').pop()]
           : value.kind === 'call'
@@ -113,7 +113,7 @@ export function tenancyFacts(
               : value.kind === 'param'
                 ? [identifier(value.text)]
                 : value.kind === 'new'
-                  ? [String(value.created ?? value.type ?? '').split('.').pop()]
+                  ? [String(value.created ?? value.typeFqn ?? '').split('.').pop()]
                   : [];
     return candidates.some((text) => typeof text === 'string' && text.length > 0 && named(text));
   };

@@ -7,9 +7,9 @@ import { simple } from '../../../core/names.mjs';
 export const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
 // The string values an argument list folds to: a literal's or a constant's value, never a variable's name.
 export const stringValues = (rows) =>
-  rows.map((a) => (typeof a?.value === 'string' ? a.value : null)).filter((v) => v !== null);
+  rows.map((a) => (typeof a?.value?.value === 'string' ? a.value.value : null)).filter((v) => v !== null);
 // An argument as a rule's reason displays it: a string in quotes, anything else by the name the dump wrote.
-export const shownArg = (a) => (typeof a?.value === 'string' ? `"${a.value}"` : String(a?.text ?? ''));
+export const shownArg = (a) => (typeof a?.value?.value === 'string' ? `"${a.value.value}"` : String(a?.text ?? ''));
 
 // --- the dump door: shared by everything below ------------------------------------------------------------
 // The extractors read code only through `engine/model/query.mjs`. `model.dump` is the handle the model was built from
@@ -20,8 +20,8 @@ export const simpleType = (text) => simple(baseType(text));
 
 /** The constant name an argument carries, or null: the dump folded it, so this never reads a written expression. */
 export const nameOfValue = (value) =>
-  value && ['constant', 'literal', 'string'].includes(value.kind) && typeof value.value === 'string'
-    ? value.value
+  value && ['constant', 'literal', 'string'].includes(value.kind) && typeof value.value?.value === 'string'
+    ? value.value.value
     : null;
 
 /** Every value of one argument across its call sites, with the values the dump could not resolve kept apart. */

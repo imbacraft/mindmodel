@@ -299,7 +299,7 @@ test('classpath: a class the engine cannot read is unresolved, and the dump comp
       .map((l) => JSON.parse(l));
     const meta = JSON.parse(fs.readFileSync(path.join(dump.dir, 'meta.json'), 'utf8'));
     assert.ok(
-      rows.some((r) => r.unresolved === 'library-class-unreadable') || meta.classpath.dropped,
+      rows.some((r) => r.origin === 'error') || meta.classpath.dropped,
       `the unreadable jar is reported, not silently ignored: ${JSON.stringify({ rows: rows.slice(0, 3), meta: meta.classpath })}`,
     );
   } finally {

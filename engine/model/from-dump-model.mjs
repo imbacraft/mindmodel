@@ -68,7 +68,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       // An abstract class serves nothing by itself: its mappings run in its concrete subclasses.
       abstract: (row.modifiers ?? []).includes('abstract'),
       ann: [],
-      supers: (row.supertypes ?? []).map((s) => ({ kind: s.kind, text: s.text, fqn: s.fqn ?? null })),
+      supers: (row.supertypes ?? []).map((s) => ({ kind: s.kind, text: s.type, fqn: s.typeFqn ?? null })),
       fields: [],
       methods: [],
       enumValues: [],
@@ -166,7 +166,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
     // Each target is `{id, kind}`: the declaration Spoon resolved, then its overrides.
     const targets = row.targets ?? [];
     const call = {
-      kind: 'call',
+      // `new` is a constructor call (`<init>`): the rates and the flow skip it, as model/calls.mjs says.
+      kind: row.kind ?? 'call',
       // The dump's own row id: a reader hands it back to the query layer for the typed arguments (`argsOf`), the
       // receiver's type arguments and the targets.
       id: row.id ?? null,
@@ -175,7 +176,7 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
       col: row.col ?? null,
       // Arguments are typed objects; the extractors read the written text of the first two.
       args: (row.args ?? []).slice(0, 2).map((a) => (typeof a === 'string' ? a : a?.text ?? '')),
-      recvFqn: row.recv?.type ?? null,
+      recvFqn: row.recv?.typeFqn ?? null,
       recvHow: row.recv?.how ?? row.recv?.kind ?? null,
       // The receiver's written type arguments at this site, as the dump spells them: `["shop.Voucher"]` for a call
       // made through `Base<Voucher>`, `["T"]` for one through a field declared `GenericRepo<T>`.
@@ -228,7 +229,7 @@ function receiverOf(row) {
   const written = row.recv?.text ?? null;
   if (!written) return null;
   // A static call written without a receiver inside its own class: Spoon names the class, the author did not.
-  if (row.recv.kind === 'static' && String(row.method ?? '').startsWith(`${row.recv.type}#`)) return null;
+  if (row.recv.kind === 'static' && String(row.method ?? '').startsWith(`${row.recv.typeFqn}#`)) return null;
   const segments = written.split('.');
   const firstType = segments.findIndex((s) => /^[A-Z]/.test(s));
   const text = firstType > 0 ? segments.slice(firstType).join('.') : written;
@@ -243,7 +244,7 @@ function howOf(row) {
   if (['java', 'lombok', 'compiler', 'arity'].includes(row.origin)) {
     // A generated member (Lombok's builder step) has a receiver but no declaration to name: the chain typed it.
     if (!targets.length) return row.reason === 'lombok-builder' ? 'generated' : 'unresolved';
-    return targets.length > 1 || (targets.length === 1 && targets[0].split('#')[0] !== row.recv?.type)
+    return targets.length > 1 || (targets.length === 1 && targets[0].split('#')[0] !== row.recv?.typeFqn)
       ? 'impl'
       : 'direct';
   }
@@ -303,7 +304,7 @@ function resolver(sources, types, known = new Set()) {
         pos: { file: 'src/a/Port.java', line: 1, endLine: 4 },
       },
       {
-        fqn: 'a.Impl', kind: 'class', supertypes: [{ kind: 'interface', text: 'Port', fqn: 'a.Port' }],
+        fqn: 'a.Impl', kind: 'class', supertypes: [{ kind: 'interface', type: 'Port', typeFqn: 'a.Port' }],
         ann: [{ name: 'org.springframework.stereotype.Service', raw: '', args: {} }],
         pos: { file: 'src/a/Impl.java', line: 1, endLine: 9 },
       },
@@ -317,14 +318,14 @@ function resolver(sources, types, known = new Set()) {
       {
         kind: 'method', owner: 'a.Impl', name: 'find', id: 'a.Impl#find(Long)',
         params: [{ name: 'id', type: 'Long', ann: [] }], ann: [], hasBody: true,
-        branches: [{ start: 5, end: 6, kind: 'if' }],
+        branches: [{ line: 5, endLine: 6, kind: 'if' }],
         pos: { file: 'src/a/Impl.java', line: 4, endLine: 8 },
       },
     ],
     [
       {
         method: 'a.Impl#find(Long)', file: 'src/a/Impl.java', line: 5, name: 'save', argc: 0,
-        recv: { type: 'a.Port', how: 'field' }, targets: [{ id: 'a.Port#save()', kind: 'declared' }], origin: 'java', args: [],
+        recv: { typeFqn: 'a.Port', how: 'field' }, targets: [{ id: 'a.Port#save()', kind: 'declared' }], origin: 'java', args: [],
       },
     ],
   );
@@ -338,7 +339,7 @@ function resolver(sources, types, known = new Set()) {
   assert.equal(model.constants.get('a.Impl.PATH'), '/x');
   assert.equal(model.resolveConst('src/a/Impl.java', 'a.Impl', 'PATH'), '/x');
   assert.equal(impl.methods[0].id, 'a.Impl#find(Long)');
-  assert.deepStrictEqual(impl.methods[0].branches, [{ start: 5, end: 6, kind: 'if' }]);
+  assert.deepStrictEqual(impl.methods[0].branches, [{ line: 5, endLine: 6, kind: 'if' }]);
   assert.deepStrictEqual(impl.methods[0].calls[0], {
     kind: 'call', id: null, name: 'save', line: 5, col: null, args: [], recvFqn: 'a.Port', recvHow: 'field', typeArgs: [],
     targets: ['a.Port#save()'], targetKinds: new Map([['a.Port#save()', 'declared']]), uniqueImpl: false,

@@ -115,6 +115,7 @@ export function moduleOf(folder, dir, db, model, collided) {
   const rel = relPosix(folder, dir);
   // A module at the folder itself has no prefix: its files are already relative to the folder.
   const prefix = rel ? `${rel}/` : '';
+  // Two dumps on purpose: the folder's resolves calls across modules; a collided module is dumped alone (no classpath).
   if (collided.has(dir)) {
     const own = dumpFor(dir, javaFiles(dir).map((p) => relPosix(dir, p)));
     if (own.ok) {

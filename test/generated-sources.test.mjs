@@ -35,7 +35,7 @@ test('generated sources: the project still resolves into them', { skip: NO_ENGIN
   // A project call into a generated mapper: the receiver is typed by the stub and the target is its signature.
   const call = db.callsOf('app.GeneratedUse#label(Order)').find((c) => c.name === 'toDto');
   assert.ok(call, 'the project calls the generated mapper');
-  assert.equal(call.recv.type, 'gen.mapper.OrderMapperImpl', 'the stub typed the receiver');
+  assert.equal(call.recv.typeFqn, 'gen.mapper.OrderMapperImpl', 'the stub typed the receiver');
   assert.ok(db.targetsOf(call).some((id) => id.startsWith('gen.mapper.OrderMapperImpl#toDto(')),
     `the call reaches a generated signature: ${db.targetsOf(call)}`);
   // The project's own call after it is still resolved: nothing the stubs add costs a fact.
@@ -44,7 +44,7 @@ test('generated sources: the project still resolves into them', { skip: NO_ENGIN
 
   // A generated interface is a supertype, written as the project wrote it and never as a dumped type.
   const controller = db.type('app.OrderController');
-  assert.deepEqual(controller.supertypes.map((s) => [s.text, s.fqn]), [['OrderApi', 'gen.api.OrderApi']]);
+  assert.deepEqual(controller.supertypes.map((s) => [s.type, s.typeFqn]), [['OrderApi', 'gen.api.OrderApi']]);
 });
 
 test('generated sources: the endpoints this scan reports do not depend on them', { skip: NO_ENGINE }, () => {

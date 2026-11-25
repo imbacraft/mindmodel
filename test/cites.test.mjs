@@ -109,18 +109,18 @@ fs.writeFileSync(
   ndjson([
     {
       method: 'demo.X#caller/0', id: 'demo.X#caller/0@21:5', file: 'X.java', line: 21, col: 5, name: 'save', argc: 2,
-      recv: { type: 'demo.X', typeArgs: [], kind: 'implicit' }, targets: [{ id: 'demo.X#save/2', kind: 'declared' }],
+      recv: { typeFqn: 'demo.X', typeArgs: [], kind: 'implicit' }, targets: [{ id: 'demo.X#save/2', kind: 'declared' }],
       uniqueImpl: true, origin: 'java',
       args: [
-        { text: '"a"', kind: 'constant', value: 'a', valueKind: 'string', type: 'java.lang.String' },
-        { text: '1', kind: 'constant', value: 1, valueKind: 'int', type: 'int' },
+        { text: '"a"', kind: 'constant', value: { kind: 'string', value: 'a' }, typeFqn: 'java.lang.String' },
+        { text: '1', kind: 'constant', value: { kind: 'int', value: 1 }, typeFqn: 'int' },
       ],
     },
     {
       method: 'demo.X#save/2', id: 'demo.X#save/2@17:5', file: 'X.java', line: 17, col: 5, name: 'store', argc: 1,
-      recv: { type: 'demo.X', typeArgs: [], kind: 'implicit' }, targets: [{ id: 'demo.X#store/1', kind: 'declared' }],
+      recv: { typeFqn: 'demo.X', typeArgs: [], kind: 'implicit' }, targets: [{ id: 'demo.X#store/1', kind: 'declared' }],
       uniqueImpl: true, origin: 'java',
-      args: [{ text: 'out', kind: 'unresolved', type: null, reason: 'no-declaration' }],
+      args: [{ text: 'out', kind: 'unresolved', typeFqn: null, reason: 'no-declaration' }],
     },
   ]),
 );
@@ -129,13 +129,13 @@ fs.writeFileSync(
   ndjson([
     {
       method: 'demo.X#store/1', field: 'demo.X#last', static: false, op: 'write', typeArgs: [], file: 'X.java',
-      line: 25, col: 5, value: { text: 's', kind: 'param', type: 'java.lang.String', index: 0 },
+      line: 25, col: 5, value: { text: 's', kind: 'param', typeFqn: 'java.lang.String', index: 0, inLambda: false },
     },
   ]),
 );
 fs.writeFileSync(
   path.join(DUMP, 'files.ndjson'),
-  ndjson([{ path: 'X.java', package: 'demo', importsOrigin: 'header', imports: [], errors: [] }]),
+  ndjson([{ path: 'X.java', package: 'demo', importsOrigin: 'spoon', imports: [], errors: [] }]),
 );
 fs.writeFileSync(
   path.join(DUMP, 'types.ndjson'),

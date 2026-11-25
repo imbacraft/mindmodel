@@ -24,7 +24,7 @@ export function securitySinks(entryId, q, db, model, holders) {
     for (const store of identityStores(q, id, db)) {
       const args = store.args ?? callById(db, store.call)?.args ?? [];
       if (store.kind === 'security-context') {
-        const recv = callById(db, store.call)?.recv?.type;
+        const recv = callById(db, store.call)?.recv?.typeFqn;
         sinks.push({
           method: label,
           what:
@@ -158,6 +158,6 @@ export function projectHolderSlot(hit, call, q, db, model) {
 /** The project value built at a call site: the dump says `new` and names the created type. */
 export const builtValue = (q, call, i, db, model) => {
   for (const { value } of q.argValue(call, i).values)
-    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.type, db)) return value;
+    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.typeFqn, db)) return value;
   return null;
 };

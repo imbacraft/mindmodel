@@ -46,7 +46,7 @@ export function shiroCodeRules(model, db = model?.dump ?? null) {
       for (const c of m.calls ?? []) {
         if (c.name !== 'put' && c.name !== 'addPathDefinition') continue;
         const rows = dumpArgs(db, c);
-        const [pattern, expr] = [0, 1].map((i) => (typeof rows[i]?.value === 'string' ? rows[i].value : null));
+        const [pattern, expr] = [0, 1].map((i) => (typeof rows[i]?.value?.value === 'string' ? rows[i].value.value : null));
         if (!pattern || !expr) continue;
         const roles = /roles\[([^\]]+)\]/.exec(expr)?.[1];
         const access = /anon/.test(expr) ? 'anonymous' : roles ? `role:${roles.split(',')[0].trim()}` : 'authenticated';

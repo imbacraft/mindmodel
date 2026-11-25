@@ -35,7 +35,7 @@ export const storeLabel = (store, db) => {
   const row = callById(db, store.call);
   // A store found by shape names its type as written: the call's receiver type is the enclosing class when Spoon
   // could not resolve the library type, and naming that would name the filter instead of the holder.
-  const recv = store.via === 'try-finally-pattern' ? store.holder : row?.recv?.type;
+  const recv = store.via === 'try-finally-pattern' ? store.holder : row?.recv?.typeFqn;
   const owner = recv ? `${simpleType(recv)}.` : '';
   return `${owner}${row?.name ?? store.kind}(${row?.args?.map((a) => a.text).join(', ') ?? ''})`;
 };

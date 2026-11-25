@@ -62,7 +62,7 @@ test('channelName: a constant, a class literal and an injected placeholder', { s
   const index = codeIndex(m.model);
   const key = (name) => ({ name: 'x' });
   assert.equal(
-    channelName({ arg: { kind: 'constant', text: 'Channels.COMMAND_CHANNEL', value: 'kitchenCommands' }, mfile: 'src/main/java/shop/TicketService.java', file: 'src/main/java/shop/TicketService.java' }, m, key, index).name,
+    channelName({ arg: { kind: 'constant', text: 'Channels.COMMAND_CHANNEL', value: { kind: 'string', value: 'kitchenCommands' } }, mfile: 'src/main/java/shop/TicketService.java', file: 'src/main/java/shop/TicketService.java' }, m, key, index).name,
     'kitchenCommands',
   );
   assert.equal(

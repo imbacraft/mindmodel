@@ -42,7 +42,7 @@ export const isIdentityType = (model, written, db = null) => {
   const text = baseType(written);
   if (!text) return null;
   const row = db?.library?.get(text) ?? [...(db?.library?.values() ?? [])].find((r) => simple(r.fqn) === simple(text));
-  if (!row || row.unresolved || JDK_NAMESPACE.test(row.fqn ?? text)) return null;
+  if (!row || row.origin === 'error' || JDK_NAMESPACE.test(row.fqn ?? text)) return null;
   return (row.fields ?? []).length ? row.fqn : null;
 };
 
@@ -54,7 +54,7 @@ export const isIdentityType = (model, written, db = null) => {
 export function verifiesIn(methods, db, model) {
   for (const { id } of methods)
     for (const c of db.callsOf(id))
-      if (isVerifierType(c.recv?.type, model)) return { type: c.recv.type, cite: `${c.file}:${c.line}` };
+      if (isVerifierType(c.recv?.typeFqn, model)) return { type: c.recv.typeFqn, cite: `${c.file}:${c.line}` };
   return null;
 }
 
@@ -77,7 +77,7 @@ export function verifiesIn(methods, db, model) {
     library: new Map([
       ['com.acme.Ctx', { fqn: 'com.acme.Ctx', fields: [{ name: 'userId', type: 'java.lang.String' }] }],
       ['com.acme.Marker', { fqn: 'com.acme.Marker', fields: [] }],
-      ['com.acme.Broken', { fqn: 'com.acme.Broken', unresolved: 'library-class-unreadable' }],
+      ['com.acme.Broken', { fqn: 'com.acme.Broken', origin: 'error', reason: 'library-class-unreadable', fields: [] }],
     ]),
   };
   assert.equal(isIdentityType(model, 'com.acme.Ctx', jar), 'com.acme.Ctx', 'a library value type carries an identity');

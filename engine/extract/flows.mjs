@@ -224,7 +224,7 @@ export function flowEntries(model, endpoints = [], selected = []) {
   // name ending in Queue / Executor / Pool. It is started when the method is itself a lifecycle hook, when it hands a
   // Runnable to an executor (the loop is in the lambda), or when a lifecycle method calls it.
   const { isPoll, isExecutor } = callClassifier(selected);
-  const inLoop = (m, line) => (m.loops ?? []).some((l) => l.start <= line && line <= l.end);
+  const inLoop = (m, line) => (m.loops ?? []).some((l) => l.line <= line && line <= l.endLine);
   const pollsInLoop = (m) => (m.calls ?? []).some((c) => inLoop(m, c.line) && isPoll(c));
   // The Runnable may be handed over inline or through a local (`Runnable r = () -> …; pool.execute(r)`); either way the
   // method that both polls and talks to an executor is the one that starts the loop.
@@ -284,12 +284,12 @@ export function buildFlows(
   const branchMemo = new Map();
   const branchRanges = (m) => {
     if (branchMemo.has(m)) return branchMemo.get(m);
-    const ranges = (m?.branches ?? []).filter((b) => Number.isFinite(b?.start) && Number.isFinite(b?.end));
+    const ranges = (m?.branches ?? []).filter((b) => Number.isFinite(b?.line) && Number.isFinite(b?.endLine));
     branchMemo.set(m, ranges);
     return ranges;
   };
   const insideBranch = (m, line) =>
-    Number.isFinite(line) && branchRanges(m).some((b) => b.start <= line && line <= b.end);
+    Number.isFinite(line) && branchRanges(m).some((b) => b.line <= line && line <= b.endLine);
   // One marker for the fact, the digest line and the rules: the label carries it, `conditional` states it.
   const marked = (eff, cond) =>
     cond && !eff.conditional ? { ...eff, conditional: true, label: `${eff.label} (conditional)` } : eff;

@@ -29,7 +29,7 @@ export function answer(d, command, rest) {
     case 'type': {
       const t = d.type(arg(0));
       if (!t) push(`no such type: ${arg(0)}`);
-      else push(`${t.fqn} ${t.kind} ${pos(t.pos)} supertypes: ${(t.supertypes ?? []).map((s) => s.text).join(', ') || '-'}`);
+      else push(`${t.fqn} ${t.kind} ${pos(t.pos)} supertypes: ${(t.supertypes ?? []).map((s) => s.type).join(', ') || '-'}`);
       break;
     }
     case 'method': {
@@ -44,7 +44,7 @@ export function answer(d, command, rest) {
       const list = (command === 'calls' ? d.callsOf(arg(0)) : d.callersOf(arg(0))).slice(0, LIMIT);
       push(`${list.length} ${command} of ${arg(0)}`);
       for (const c of list)
-        push(`  ${c.file}:${c.line}:${c.col} ${c.name}/${c.argc} recv=${c.recv.type ?? '?'} -> ${targetIds(c).join(', ') || `- ${c.origin}${c.reason ? ` (${c.reason})` : ''}`}`);
+        push(`  ${c.file}:${c.line}:${c.col} ${c.name}/${c.argc} recv=${c.recv.typeFqn ?? '?'} -> ${targetIds(c).join(', ') || `- ${c.origin}${c.reason ? ` (${c.reason})` : ''}`}`);
       break;
     }
     case 'impls': {

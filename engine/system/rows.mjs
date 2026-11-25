@@ -1,7 +1,7 @@
 // Readers of the dump's rows: a call's arguments, a type's and a member's rows, and the strings an annotation value
 // folds to. The dump is the only reader of the modules' Java; these only read what it wrote.
 export const dumpArgs = (db, call) => (db && call?.id ? db.argsOf(call.id) : []);
-export const stringArg = (a) => (typeof a?.value === 'string' ? a.value : null);
+export const stringArg = (a) => (typeof a?.value?.value === 'string' ? a.value.value : null);
 
 // An annotation as the dump wrote it: its arguments are values, not the source text the model keeps for display.
 export const typeRow = (module, t) => module?.db?.type(t.fqn) ?? null;

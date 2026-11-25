@@ -60,9 +60,9 @@ export function queries(db) {
     if (!fqn || seen.has(fqn)) return null;
     if (HOLDER_BASES.has(fqn)) return fqn;
     seen.add(fqn);
-    const supers = db.type(fqn)?.supertypes ?? (db.library?.get(fqn)?.supers ?? []).map((f) => ({ fqn: f }));
+    const supers = db.type(fqn)?.supertypes ?? db.library?.get(fqn)?.supers ?? [];
     for (const s of supers) {
-      const hit = holderBase(s.fqn, seen);
+      const hit = holderBase(s.typeFqn, seen);
       if (hit) return hit;
     }
     return null;
@@ -76,7 +76,7 @@ export function queries(db) {
    */
   const calledOnType = (c) => {
     const recv = c.recv ?? {};
-    if (recv.kind === 'static' || recv.how === 'static') return recv.type ? { key: recv.type, type: recv.type } : null;
+    if (recv.kind === 'static' || recv.how === 'static') return recv.typeFqn ? { key: recv.typeFqn, type: recv.typeFqn } : null;
     const written = String(recv.text ?? '').replace(/<[\s\S]*$/, '').replace(/\[\]$/, '').trim();
     if (!written || !/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(written)) return null;
     if (!/^[A-Z]/.test(written.split('.').pop())) return null;
@@ -206,7 +206,7 @@ export function queries(db) {
         const base = holderBase(type);
         if (!base) continue;
         // The element type is written on the field (`ThreadLocal<String>`) or on the supertype of a project holder.
-        const supertype = db.type(type)?.supertypes?.find((s) => s.fqn === base)?.text ?? null;
+        const supertype = db.type(type)?.supertypes?.find((s) => s.typeFqn === base)?.type ?? null;
         const element = typeArgsOf(m.type)[0] ?? typeArgsOf(supertype)[0] ?? null;
         list.push({ field: fieldId(m), owner: m.owner, type, base, element, writes: [], clears: [] });
       }
@@ -217,7 +217,7 @@ export function queries(db) {
       const op = holderOp(c.name);
       const read = readOf(reads, c);
       if (!read) {
-        if (op && holderBase(c.recv?.type)) gaps.push({ ...site(c), reason: 'holder-not-a-field', type: c.recv.type });
+        if (op && holderBase(c.recv?.typeFqn)) gaps.push({ ...site(c), reason: 'holder-not-a-field', type: c.recv.typeFqn });
         continue;
       }
       const holder = byField.get(read.field);
@@ -229,7 +229,7 @@ export function queries(db) {
     // happen inside the library, so `writes`/`clears` stay empty here and a static call on the type is the store
     // (`stores()`). Resolved, because the field's declared type is the dump's own answer.
     for (const t of db.library?.values() ?? []) {
-      if (t.unresolved) continue;
+      if (t.origin === 'error') continue;
       for (const f of t.fields ?? []) {
         if (!(f.modifiers ?? []).includes('static')) continue;
         const type = f.typeFqn ?? raw(f.type);
@@ -267,11 +267,12 @@ export function queries(db) {
     const read = readOf(reads, c);
     const op = holderOp(c.name);
     if (read && op) return { kind: 'holder', field: read.field, op };
-    if (c.name === 'setAuthentication' && simple(c.recv?.type) === 'SecurityContext')
+    if (c.name === 'setAuthentication' && simple(c.recv?.typeFqn) === 'SecurityContext')
       return { kind: 'security-context', holder: SECURITY_CONTEXT_HOLDER, how: 'setAuthentication' };
-    if (c.name === 'setContext' && c.recv?.type === SECURITY_CONTEXT_HOLDER)
+    if (c.name === 'setContext' && c.recv?.typeFqn === SECURITY_CONTEXT_HOLDER)
       return { kind: 'security-context', holder: SECURITY_CONTEXT_HOLDER, how: 'setContext' };
-    if (c.name === 'setAttribute' && ATTRIBUTE_HOLDERS.has(c.recv?.type)) return { kind: 'request-attribute', holder: c.recv.type };
+    if (c.name === 'setAttribute' && ATTRIBUTE_HOLDERS.has(c.recv?.typeFqn))
+      return { kind: 'request-attribute', holder: c.recv.typeFqn };
     return null;
   };
 
@@ -307,8 +308,9 @@ export function queries(db) {
         const store = storeOf(c, reads);
         if (store) found.push({ ...store, ...at, args: c.args ?? [] });
         // A store-shaped call the dump could not resolve is a gap: it may be a store, and saying no would be a guess.
-        else if (UNTYPED_STORES.has(c.name) && !c.recv?.type) gaps.push({ ...at, name: c.name, reason: 'receiver-untyped' });
-        else if (holderOp(c.name) && holderBase(c.recv?.type)) gaps.push({ ...at, name: c.name, reason: 'holder-not-a-field' });
+        else if (UNTYPED_STORES.has(c.name) && !c.recv?.typeFqn) gaps.push({ ...at, name: c.name, reason: 'receiver-untyped' });
+        else if (holderOp(c.name) && holderBase(c.recv?.typeFqn))
+          gaps.push({ ...at, name: c.name, reason: 'holder-not-a-field' });
       }
     return { stores: found, unresolved: gaps };
   };
@@ -321,7 +323,7 @@ export function queries(db) {
     if (!db) return { type: null, unresolved: 'no-dump' };
     const row = rowOf(call);
     if (!row) return { type: null, unresolved: 'no-call' };
-    const type = row.recv?.type ?? null;
+    const type = row.recv?.typeFqn ?? null;
     const how = row.recv?.how ?? null;
     if (!type) return { type: null, how, unresolved: 'receiver-untyped' };
     if (how === 'static' || row.recv?.kind === 'static') return { type, how, unresolved: 'static-call' };
@@ -379,7 +381,7 @@ export function queries(db) {
     const member = db.members.get(methodId);
     if (!member) return { stores: [], unresolved: [{ reason: 'no-method', at: null }] };
     const blocks = (member.tryBlocks ?? []).filter(
-      (b) => Number.isFinite(b?.start) && Number.isFinite(b?.end) && Number.isFinite(b?.finallyStart),
+      (b) => Number.isFinite(b?.line) && Number.isFinite(b?.endLine) && Number.isFinite(b?.finallyLine),
     );
     const calls = blocks.length ? db.callsOf(methodId) : [];
     const out = [];
@@ -387,7 +389,7 @@ export function queries(db) {
       // The finalizer's types: the same written type must appear there, or the try is not a request-scoped store.
       const cleared = new Map();
       for (const c of calls) {
-        if (!(c.line >= block.finallyStart && c.line <= block.finallyEnd)) continue;
+        if (!(c.line >= block.finallyLine && c.line <= block.finallyEndLine)) continue;
         const on = calledOnType(c);
         if (on) cleared.set(`${on.key}|${c.name}`, c);
       }
@@ -402,10 +404,10 @@ export function queries(db) {
         for (const { id, conditional } of frontier) {
           const owner = db.members.get(id);
           const arms = (owner?.branches ?? []).filter((b) => b?.kind === 'if' || b?.kind === 'else');
-          const inArm = (line) => arms.some((a) => a.start <= line && line <= a.end);
+          const inArm = (line) => arms.some((a) => a.line <= line && line <= a.endLine);
           for (const c of db.callsOf(id)) {
             // `hop === 0` is the try body itself; later hops are the project methods it reaches, body and all.
-            if (hop === 0 && !(c.line >= block.start && c.line <= block.end)) continue;
+            if (hop === 0 && !(c.line >= block.line && c.line <= block.endLine)) continue;
             // A store reached through an `if` arm is conditional, however many hops away it is written.
             const reached = conditional || inArm(c.line);
             const on = calledOnType(c);
@@ -454,7 +456,7 @@ export function queries(db) {
   const row = (method, name, at, args, targets = []) => ({
     method, id: `${method}@${at}`, file: 'a/A.java', line: Number(at.split(':')[0]), col: Number(at.split(':')[1]),
     name, args, targets, origin: targets.length ? 'java' : 'library',
-    recv: { type: 'java.lang.String', kind: 'instance', how: 'param', text: 'value' },
+    recv: { typeFqn: 'java.lang.String', kind: 'instance', how: 'param', text: 'value' },
   });
   const calls = [
     row('a.A#entry()', 'middle', '6:9', [arg('literal', { value: 'lit' })], ['a.A#middle(String)']),

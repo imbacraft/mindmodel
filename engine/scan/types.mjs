@@ -78,8 +78,9 @@ function viewsReturnedBy(dump, t) {
     .filter((m) => !hasAnnotation(m, 'ResponseBody'))
     .flatMap((m) =>
       (dump?.returnsOf(m.id) ?? [])
-        .filter((r) => r.kind === 'return' && typeof r.value?.value === 'string' && /^\S+$/.test(r.value.value))
-        .map((r) => ({ view: r.value.value, line: r.line })),
+        .map((r) => ({ view: r.value?.value?.value, line: r.line, kind: r.kind }))
+        .filter((r) => r.kind === 'return' && typeof r.view === 'string' && /^\S+$/.test(r.view))
+        .map(({ view, line }) => ({ view, line })),
     );
 }
 

@@ -108,7 +108,7 @@ test('dump: the fixture contract', { skip }, () => {
   assert.equal(logger.type, 'org.slf4j.Logger', 'the @Slf4j field');
   const calls = read(d.out, 'calls.ndjson');
   const info = calls.find((c) => c.name === 'info' && c.file.endsWith('Order.java'));
-  assert.equal(info.recv.type, 'org.slf4j.Logger', 'log is typed, not an invented package');
+  assert.equal(info.recv.typeFqn, 'org.slf4j.Logger', 'log is typed, not an invented package');
   assert.equal(info.origin, 'library');
 
   // A file JDT cannot parse is named, and only that file.
@@ -158,10 +158,10 @@ test('dump: the fixture contract', { skip }, () => {
     assert.ok(args.some((a) => a.kind === kind), `an argument of kind ${kind}`);
   // `text` is the expression as written, cut at 80: display only, never a fact.
   assert.deepStrictEqual(arg('NAME'), {
-    text: 'NAME', kind: 'constant', type: 'java.lang.String',
-    valueKind: 'string', value: 'name', field: 'contract.Args#NAME',
+    text: 'NAME', kind: 'constant', typeFqn: 'java.lang.String',
+    value: { kind: 'string', value: 'name' }, field: 'contract.Args#NAME',
   });
-  assert.deepStrictEqual(arg('input'), { text: 'input', kind: 'param', type: 'java.lang.String', index: 0 });
+  assert.deepStrictEqual(arg('input'), { text: 'input', kind: 'param', typeFqn: 'java.lang.String', index: 0, inLambda: false });
   assert.equal(arg('count').index, 1, 'a second parameter keeps its index');
   assert.equal(arg('local').from, 'contract.Args#run(String,int)@10:24', 'a local names the call it was assigned from');
   assert.equal(arg('state').field, 'contract.Args#state');
@@ -169,7 +169,7 @@ test('dump: the fixture contract', { skip }, () => {
   assert.equal(arg('new Sink()').created, 'contract.Sink');
   assert.equal(arg('input == null ? NAME : state').then.kind, 'constant');
   assert.deepStrictEqual(arg('mystery.port'), {
-    text: 'mystery.port', kind: 'unresolved', type: null, reason: 'no-declaration',
+    text: 'mystery.port', kind: 'unresolved', typeFqn: null, reason: 'no-declaration',
   });
   assert.equal(db.argsOf(arg('sink.name()').call).length, 0, 'argsOf answers the call an argument names');
 
@@ -193,40 +193,40 @@ test('dump: the fixture contract', { skip }, () => {
   const write = access('contract.Fields#name', 'write');
   assert.equal(write.method, 'contract.Fields#write(String)');
   assert.equal(write.static, false);
-  assert.deepStrictEqual(write.value, { text: 'value', kind: 'param', type: 'java.lang.String', index: 0 });
+  assert.deepStrictEqual(write.value, { text: 'value', kind: 'param', typeFqn: 'java.lang.String', index: 0, inLambda: false });
   assert.equal(access('contract.Fields#name', 'read').method, 'contract.Fields#read()');
   const holder = access('contract.Fields#HOLDER', 'read');
   assert.equal(holder.static, true, 'the static holder is marked static');
-  assert.equal(holder.value.type, 'java.lang.ThreadLocal', 'a read says what was read');
+  assert.equal(holder.value.typeFqn, 'java.lang.ThreadLocal', 'a read says what was read');
   assert.deepStrictEqual(db.writersOf('contract.Fields#name').map((f) => f.method), ['contract.Fields#write(String)']);
   const unknownField = d.fields.find((f) => f.field === null && f.op === 'read' && f.file.endsWith('contract/Fields.java'));
   assert.equal(unknownField.origin, 'unresolved');
   assert.equal(unknownField.reason, 'no-declaring-type', 'a field nobody declared has no invented owner');
-  assert.deepStrictEqual(unknownField.value, { text: 'stranger.qty', kind: 'unresolved', type: null, reason: 'no-declaration' });
+  assert.deepStrictEqual(unknownField.value, { text: 'stranger.qty', kind: 'unresolved', typeFqn: null, reason: 'no-declaration' });
 
   // 1d: returns, and the arms of the switch a method hands on.
   const returns = (id) => db.returnsOf(id);
   assert.equal(returns('contract.Returns#literal()')[0].value.kind, 'literal');
-  assert.equal(returns('contract.Returns#constant()')[0].value.value, 'new');
+  assert.equal(returns('contract.Returns#constant()')[0].value.value.value, 'new');
   assert.equal(returns('contract.Returns#param(String)')[0].value.index, 0);
   assert.equal(returns('contract.Returns#conditional(State)')[0].value.kind, 'conditional');
-  assert.equal(returns('contract.Returns#conditional(State)')[0].value.otherwise.value, 'done');
+  assert.equal(returns('contract.Returns#conditional(State)')[0].value.otherwise.value.value, 'done');
   const chosen = returns('contract.Returns#chosen(State)')[0];
   assert.equal(chosen.kind, 'switch');
   assert.equal(chosen.form, 'statement');
   assert.equal(chosen.target, 'code', 'the switch fills one local, and the dump says which');
   assert.deepStrictEqual(chosen.arms.map((a) => a.labels), [['NEW'], []], 'an arm names its labels as written');
   assert.deepStrictEqual(chosen.arms.map((a) => a.default), [false, true]);
-  assert.deepStrictEqual(chosen.arms.map((a) => a.value.value), ['new', 'done']);
+  assert.deepStrictEqual(chosen.arms.map((a) => a.value.value.value), ['new', 'done']);
   const assigned = returns('contract.Returns#assigned(State)')[0];
   assert.equal(assigned.form, 'expression');
   assert.equal(assigned.target, 'code');
   const handed = returns('contract.Returns#fromSwitch(State)')[0];
   assert.equal(handed.kind, 'switch', 'a returned switch keeps its arms');
   assert.equal(handed.target, undefined);
-  assert.deepStrictEqual(handed.arms.map((a) => a.value.value), ['orders.State.DONE', 'orders.State.NEW']);
+  assert.deepStrictEqual(handed.arms.map((a) => a.value.value.value), ['orders.State.DONE', 'orders.State.NEW']);
   assert.deepStrictEqual(returns('contract.Returns#unknown()')[0].value, {
-    text: 'mystery.value', kind: 'unresolved', type: null, reason: 'no-declaration',
+    text: 'mystery.value', kind: 'unresolved', typeFqn: null, reason: 'no-declaration',
   });
   assert.deepStrictEqual(returns('contract.Args#run(String,int)'), [], 'a void method returns nothing');
 
@@ -269,9 +269,9 @@ test('dump: the fixture contract', { skip }, () => {
   // the call on `T row` names generic.Row and the dump says why it could.
   const base = callAt('generic.Base#publish(T)', 12, 'save');
   assert.deepEqual(base.recv.typeArgs, ['T'], 'the field is declared Repo<T>');
-  assert.equal(base.recv.type, 'generic.Repo');
+  assert.equal(base.recv.typeFqn, 'generic.Repo');
   const touch = callAt('generic.Base#publish(T)', 13, 'touch');
-  assert.equal(touch.recv.type, 'generic.Base', 'a call on `this` inside a generic base');
+  assert.equal(touch.recv.typeFqn, 'generic.Base', 'a call on `this` inside a generic base');
   assert.deepEqual(touch.recv.typeArgs, ['T']);
   const superCall = callAt('generic.RowBase#publish(Row)', 10, 'publish');
   assert.deepEqual(superCall.recv.typeArgs, ['generic.Row'], 'super is written Base<Row>');
@@ -299,7 +299,7 @@ test('dump: the fixture contract', { skip }, () => {
   assert.deepEqual(genericField.typeArgs, ['T']);
   const outside = d.fields.find((f) => f.field === 'generic.Row#state' && f.op === 'write' && f.value.kind === 'field');
   assert.deepEqual(outside.value, {
-    text: 'OrderState.CANCELLED', kind: 'field', type: 'external.OrderState',
+    text: 'OrderState.CANCELLED', kind: 'field', typeFqn: 'external.OrderState',
     field: 'external.OrderState#CANCELLED', reason: 'declaration-outside-dump',
   });
 
@@ -314,9 +314,9 @@ test('dump: a try block and its finalizer are ranges, kept apart from the decisi
   const d = dumpInto(tmp());
   const method = d.members.find((m) => m.id === 'contract.ScopedFilter#doFilterInternal(boolean)');
   // The block's own lines, and the finalizer's: two ranges, so an extractor never re-reads a body to find them.
-  assert.deepStrictEqual(method.tryBlocks.map((b) => [b.start, b.end, b.finallyStart, b.finallyEnd]), [[10, 12, 12, 14]]);
+  assert.deepStrictEqual(method.tryBlocks.map((b) => [b.line, b.endLine, b.finallyLine, b.finallyEndLine]), [[10, 12, 12, 14]]);
   // A try body always runs: its lines are never a decision arm, or every effect written in one would turn conditional.
-  assert.deepStrictEqual(method.branches, [{ start: 11, end: 11, kind: 'if' }]);
+  assert.deepStrictEqual(method.branches, [{ line: 11, endLine: 11, kind: 'if' }]);
   // A method without a try still writes the field, so a reader needs no optional check.
   const plain = d.members.find((m) => m.id === 'contract.RequestHolder#set(String)');
   assert.deepStrictEqual(plain.tryBlocks, []);
