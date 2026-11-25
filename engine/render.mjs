@@ -7,7 +7,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validate } from './validate.mjs';
+import { readFacts, validate } from './validate.mjs';
 import { inlineBase } from './base.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -123,15 +123,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const root = path.resolve(args[1] ?? path.join(path.dirname(file), '..'));
   const map = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-  const { errors, warnings } = validate(map, root);
+  // The facts are read once, here, and handed to validate() and to the page alike.
+  const factsFile = path.join(path.dirname(file), '.work/facts.json');
+  const read = readFacts(factsFile);
+  const facts = read.facts;
+  const { errors, warnings } = validate(map, root, undefined, facts);
+  if (read.warning) console.log(`warn  ${read.warning}`);
   warnings.forEach((w) => console.log(`warn  ${w}`));
   if (errors.length) {
     errors.forEach((e) => console.log(`ERROR ${e}`));
     process.exit(1);
   }
 
-  const factsFile = path.join(path.dirname(file), '.work/facts.json');
-  const facts = fs.existsSync(factsFile) ? JSON.parse(fs.readFileSync(factsFile, 'utf8')) : null;
   if (!facts) console.log(`note  no ${path.relative(root, factsFile)}; the page omits its provenance line`);
   else if (!factsForMap(map, facts))
     console.log(

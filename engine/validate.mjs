@@ -213,24 +213,100 @@ export function citeProblem(pc, named, lines) {
   return containsSymbol(lines, pc) ? null : `does not contain "${pc.symbol}"`;
 }
 
+// Every citation field in the map, in walk order: `cites` and `start` arrays, and `cite` strings. Each entry has its
+// holder's path (`where`, for messages) and `set`, which rewrites the citation in place, so repairs and checks share
+// one walk.
+export function citesOf(map) {
+  const out = [];
+  const walk = (node, where) => {
+    if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${where}[${i}]`));
+    if (!node || typeof node !== 'object') return;
+    for (const [k, v] of Object.entries(node)) {
+      if ((k === 'cites' || k === 'start') && Array.isArray(v))
+        v.forEach((cite, i) => out.push({ cite, where: `${where}.${k}`, set: (f) => (v[i] = f) }));
+      else if (k === 'cite' && typeof v === 'string')
+        out.push({ cite: v, where: `${where}.cite`, set: (f) => (node[k] = f) });
+      else walk(v, `${where}.${k}`);
+    }
+  };
+  walk(map, '$');
+  return out;
+}
+{
+  const map = { a: { cites: ['x.java:1'] }, b: [{ cite: 'y.java:2' }], start: ['z.java:3'] };
+  assert.deepStrictEqual(
+    citesOf(map).map(({ cite, where }) => [cite, where]),
+    [
+      ['x.java:1', '$.a.cites'],
+      ['y.java:2', '$.b[0].cite'],
+      ['z.java:3', '$.start'],
+    ],
+  );
+}
+
+// A cited file's lines, read once per run: validate() and the citation repairs share the cache.
+const linesOf = (cache, abs) => {
+  if (!cache.has(abs)) cache.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
+  return cache.get(abs);
+};
+
+// Why one citation does not resolve, as the message that follows its location (null when it resolves). `declared` is
+// the dump's declarations, or null when there is no dump; `cache` is the run's file cache (see linesOf).
+export function checkCite(c, root, declared, cache) {
+  const pc = parseCite(c);
+  if (!pc) return `malformed citation "${c}"`;
+  // Build output is never a citation's target: it is rewritten by every build, and a citation into it would point at
+  // code the project does not own (a generated source contributes no dump row at all, so nothing real is there).
+  if (/(^|\/)(target|build)\//.test(pc.file)) return `"${c}" cites build output; cite the source behind it`;
+  const abs = path.join(root, pc.file);
+  if (!fs.existsSync(abs)) return `path not found "${pc.file}"`;
+  const dir = fs.statSync(abs).isDirectory();
+  if (pc.start == null) {
+    const why = dir ? null : citeProblem(pc, citeCandidates(declared, pc), linesOf(cache, abs));
+    return why ? `"${c}" ${why}` : null;
+  }
+  if (dir) return `line given for directory "${c}"`;
+  const lines = linesOf(cache, abs);
+  if (pc.start < 1 || pc.end < pc.start || pc.end > lines.length) return `"${c}" outside file (${lines.length} lines)`;
+  // #symbol: the cited lines must be the declaration the writer meant. Overloads are never guessed: with several
+  // methods of that name the range must overlap exactly one of them, and a bare name is ambiguous.
+  const why = citeProblem(pc, citeCandidates(declared, pc), lines);
+  return why ? `"${c}" ${why}` : null;
+}
+{
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const cache = new Map();
+  assert.equal(checkCite('::bad::', root, null, cache), 'malformed citation "::bad::"');
+  assert.equal(
+    checkCite('target/x.java:1', root, null, cache),
+    '"target/x.java:1" cites build output; cite the source behind it',
+  );
+  assert.equal(checkCite('engine/nope.mjs:1', root, null, cache), 'path not found "engine/nope.mjs"');
+  assert.equal(checkCite('engine:1-2', root, null, cache), 'line given for directory "engine:1-2"');
+  assert.equal(checkCite('engine', root, null, cache), null);
+  assert.ok(
+    checkCite('engine/validate.mjs:0-3', root, null, cache).startsWith('"engine/validate.mjs:0-3" outside file'),
+  );
+  assert.equal(
+    checkCite('engine/render.mjs#noSuchSymbolXyz', root, null, cache),
+    '"engine/render.mjs#noSuchSymbolXyz" does not contain "noSuchSymbolXyz"',
+  );
+  assert.equal(cache.size, 2, 'each cited file is read once');
+}
+
 // Fill in or repair line ranges from symbols, in place: "path#method" gets the method's exact range, and a
 // range that misses its #symbol is moved to the method of that name nearest to it. Writers cite methods by
 // name and never need to look up line numbers. Overloads are never guessed: a name the file declares several
 // times is left for validate() to report with its candidates, and a range that overlaps one declaration is kept
 // as written. Returns how many citations changed.
-export function resolveCites(map, root, declared = null) {
-  const cache = new Map(),
-    load = (abs) => {
-      if (!cache.has(abs)) cache.set(abs, { lines: fs.readFileSync(abs, 'utf8').split('\n') });
-      return cache.get(abs);
-    },
-    at = (file) => declared?.get(file) ?? { methods: [], types: [] };
+export function resolveCites(map, root, declared = null, cache = new Map()) {
+  const at = (file) => declared?.get(file) ?? { methods: [], types: [] };
   const fix = (c) => {
     const pc = parseCite(c);
     if (!pc?.symbol) return c;
     const abs = path.join(root, pc.file);
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return c;
-    const { lines } = load(abs);
+    const lines = linesOf(cache, abs);
     const named = citeCandidates(declared, pc);
     const cite = (d) => `${pc.file}:${d.start}-${d.end}#${symbolWithArity(pc)}`;
     // The range names one declaration: nothing to repair, and nothing to guess.
@@ -250,28 +326,14 @@ export function resolveCites(map, root, declared = null) {
     return c;
   };
   let changed = 0;
-  const walk = (node) => {
-    if (Array.isArray(node)) return node.forEach(walk);
-    if (!node || typeof node !== 'object') return;
-    for (const [k, v] of Object.entries(node)) {
-      if ((k === 'cites' || k === 'start') && Array.isArray(v))
-        v.forEach((c, i) => {
-          const f = typeof c === 'string' ? fix(c) : c;
-          if (f !== c) {
-            v[i] = f;
-            changed++;
-          }
-        });
-      else if (k === 'cite' && typeof v === 'string') {
-        const f = fix(v);
-        if (f !== v) {
-          node[k] = f;
-          changed++;
-        }
-      } else walk(v);
+  for (const ref of citesOf(map)) {
+    if (typeof ref.cite !== 'string') continue;
+    const f = fix(ref.cite);
+    if (f !== ref.cite) {
+      ref.set(f);
+      changed++;
     }
-  };
-  walk(map);
+  }
   return changed;
 }
 
@@ -376,81 +438,92 @@ export function declaredFromModel(model) {
   return byFile;
 }
 
-/** The dump beside the map, when there is one: the CLI's own way to the same answers. */
+/** The dump's declarations per file, in the shape citeCandidates() reads. */
+function declarationsOf(dump) {
+  const byFile = new Map();
+  const slot = (file) => {
+    if (!byFile.has(file)) byFile.set(file, { methods: [], types: [] });
+    return byFile.get(file);
+  };
+  for (const row of dump.types.values())
+    if (row.pos?.file)
+      slot(row.pos.file).types.push({
+        name: String(row.fqn).split('.').pop(),
+        start: startsAt(row, row.pos.line),
+        end: row.pos.endLine ?? row.pos.line,
+        nameLine: startsAt(row, row.pos.line),
+      });
+  for (const m of dump.members.values())
+    if (m.kind === 'method' && m.pos?.file)
+      slot(m.pos.file).methods.push({
+        name: m.name,
+        start: startsAt(m, m.pos.line),
+        end: m.pos.endLine ?? m.pos.line,
+        nameLine: startsAt(m, m.pos.line),
+        arity: Array.isArray(m.params) ? m.params.length : null,
+      });
+  return byFile;
+}
+
+/** The dump beside the map, when there is one: the CLI's own way to the same answers. A dump that is there but cannot
+ * be read gives no declarations, so the overload checks are off, and the warning says so. */
 function declaredFromDump(root) {
   const dir = path.join(root, 'mindmodel', '.work', 'dump');
-  if (!fs.existsSync(path.join(dir, 'meta.json'))) return null;
+  if (!fs.existsSync(path.join(dir, 'meta.json'))) return { declared: null, warning: null };
   try {
-    const dump = openDump(dir);
-    const byFile = new Map();
-    const slot = (file) => {
-      if (!byFile.has(file)) byFile.set(file, { methods: [], types: [] });
-      return byFile.get(file);
+    return { declared: declarationsOf(openDump(dir)), warning: null };
+  } catch (e) {
+    return { declared: null, warning: `mindmodel/.work/dump cannot be read (${e.message}): overload checks are off` };
+  }
+}
+
+// The scan facts, read once per run: the endpoint count sets the size tier (P8), and the security warnings say which
+// files must not become rules. Facts are optional for validation; an unreadable file is not a validation error, but it
+// is a warning, because the budget then falls back to the widest tier.
+export function readFacts(file) {
+  if (!fs.existsSync(file)) return { facts: null, warning: null };
+  try {
+    return { facts: JSON.parse(fs.readFileSync(file, 'utf8')), warning: null };
+  } catch (e) {
+    return {
+      facts: null,
+      warning: `facts.json cannot be read (${e.message}): the budget uses the widest tier, and no security ` +
+        'warnings apply',
     };
-    for (const row of dump.types.values())
-      if (row.pos?.file)
-        slot(row.pos.file).types.push({
-          name: String(row.fqn).split('.').pop(),
-          start: startsAt(row, row.pos.line),
-          end: row.pos.endLine ?? row.pos.line,
-          nameLine: startsAt(row, row.pos.line),
-        });
-    for (const m of dump.members.values())
-      if (m.kind === 'method' && m.pos?.file)
-        slot(m.pos.file).methods.push({
-          name: m.name,
-          start: startsAt(m, m.pos.line),
-          end: m.pos.endLine ?? m.pos.line,
-          nameLine: startsAt(m, m.pos.line),
-          arity: Array.isArray(m.params) ? m.params.length : null,
-        });
-    return byFile;
-  } catch {
-    return null;
   }
 }
 
-// The scan facts, when the run has them: the endpoint count sets the size tier (P8), and the security warnings say
-// which files must not become rules. Facts are optional for validation; an unreadable file is not a validation error.
-function readFacts(root) {
-  const file = path.join(root, 'mindmodel', '.work', 'facts.json');
-  if (!fs.existsSync(file)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-export function validate(map, root, declared = declaredFromDump(root)) {
-  resolveCites(map, root, declared);
-  fillActivity(map, root);
-  const errors = [],
-    warnings = [];
-  const err = (m) => errors.push(m),
-    warn = (m) => warnings.push(m);
-  // The schema holds the required fields and every budget ceiling and floor; the checks below are what it cannot say.
-  checkSchema(map, SCHEMA, SCHEMA.$defs ?? {}, '$', err);
-  if (errors.length) return { errors, warnings };
-
+// The ids a reference may name. A reference to an unknown region or concept is an error where it is written.
+function idChecks(map, err) {
   const conceptIds = new Set(map.concepts.map((c) => c.id));
   const regionIds = new Set(map.regions.map((r) => r.id));
-  const laneIds = new Set(map.runtime.lanes.map((l) => l.id));
-  const needRegion = (id, where) => {
-    if (!regionIds.has(id)) err(`${where}: unknown region "${id}"`);
+  return {
+    conceptIds,
+    regionIds,
+    laneIds: new Set(map.runtime.lanes.map((l) => l.id)),
+    needRegion: (id, where) => {
+      if (!regionIds.has(id)) err(`${where}: unknown region "${id}"`);
+    },
+    needConcept: (id, where) => {
+      if (!conceptIds.has(id)) err(`${where}: unknown concept "${id}"`);
+    },
   };
-  const needConcept = (id, where) => {
-    if (!conceptIds.has(id)) err(`${where}: unknown concept "${id}"`);
-  };
+}
 
-  // Core sentence: links every concept in one line, so each must be marked [[id|text]] and the claim cited.
-  const marked = new Set(
-    [...(map.coreSentence?.text ?? '').matchAll(/\[\[([a-z][a-z0-9-]*)\|[^\]]+\]\]/g)].map((x) => x[1]),
-  );
+// The ids a `[[id|text]]` mention names in a sentence.
+const markedIds = (text) =>
+  new Set([...(text ?? '').matchAll(/\[\[([a-z][a-z0-9-]*)\|[^\]]+\]\]/g)].map((x) => x[1]));
+
+// Core sentence: links every concept in one line, so each must be marked [[id|text]] and the claim cited. The
+// relations and the region sentence link the same way.
+function checkSentences(ctx) {
+  const { map, err, conceptIds, regionIds, needConcept, needRegion } = ctx;
+  const marked = markedIds(map.coreSentence?.text);
   if (!map.coreSentence?.text) err('missing coreSentence');
   else {
     for (const id of marked) needConcept(id, 'coreSentence');
-    for (const id of conceptIds) if (!marked.has(id)) err(`coreSentence: concept "${id}" not mentioned as [[${id}|…]]`);
+    for (const id of conceptIds)
+      if (!marked.has(id)) err(`coreSentence: concept "${id}" not mentioned as [[${id}|…]]`);
     if (!map.coreSentence.cites?.length) err('coreSentence: no citation (R7)');
   }
   for (const c of map.concepts)
@@ -458,16 +531,18 @@ export function validate(map, root, declared = declaredFromDump(root)) {
       needConcept(r.to, `concept ${c.id} relation`);
       if (!r.cites?.length) err(`concept ${c.id} → ${r.to}: relation has no citation (R7)`);
     }
-
-  const inSentence = new Set(
-    [...(map.regionSentence?.text ?? '').matchAll(/\[\[([a-z][a-z0-9-]*)\|[^\]]+\]\]/g)].map((x) => x[1]),
-  );
+  const inSentence = markedIds(map.regionSentence?.text);
   if (!map.regionSentence?.text) err('missing regionSentence');
   else {
     for (const id of inSentence) needRegion(id, 'regionSentence');
     for (const id of regionIds)
       if (!inSentence.has(id)) err(`regionSentence: region "${id}" not mentioned as [[${id}|…]]`);
   }
+}
+
+// Regions, request steps and background jobs name real regions, lanes and concepts, and each job is cited.
+function checkRefs(ctx) {
+  const { map, err, root, laneIds, needConcept, needRegion } = ctx;
   for (const r of map.regions) {
     for (const p of r.paths ?? []) if (!fs.existsSync(path.join(root, p))) err(`region ${r.id}: path not found "${p}"`);
     if (r.activity && !(r.activity.commits >= 0 && r.activity.commits <= r.activity.of))
@@ -484,8 +559,11 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     needRegion(b.region, `background "${b.name}"`);
     if (!b.cites?.length) err(`background "${b.name}": no citation (R7)`);
   });
+}
 
-  // State & source of truth (3.4): one owner row per core concept, writers named by region.
+// State & source of truth (3.4): one owner row per core concept, writers named by region.
+function checkState(ctx) {
+  const { map, err, conceptIds, needConcept, needRegion } = ctx;
   const owners = map.state.owners ?? [];
   for (const o of owners) {
     needConcept(o.concept, 'state owner');
@@ -494,15 +572,21 @@ export function validate(map, root, declared = declaredFromDump(root)) {
   }
   for (const id of conceptIds)
     if (owners.filter((o) => o.concept === id).length !== 1) err(`state: concept "${id}" needs exactly one owner row`);
+}
 
+// Activity badges are computed (fillActivity): every region at 0 commits points at the paths, not at the code.
+function checkActivityAndActors({ map, warn }) {
   const act = map.regions.filter((r) => r.activity);
   if (act.length > 1 && act.every((r) => r.activity.commits === 0))
     warn("every region has 0 commits: check the regions' paths");
   map.context.actors.forEach((a) => {
     if (!a.importance) warn(`actor ${a.id}: missing "importance" (why it ranks here)`);
   });
+}
 
-  // R14: each story touches >=2 regions; regions no flow runs through are reported.
+// R14: each story touches >=2 regions; regions no flow runs through are reported.
+function checkStories(ctx) {
+  const { map, err, warn, needRegion, regionIds } = ctx;
   const covered = new Set();
   for (const st of map.stories) {
     const touched = new Set(st.steps.map((s) => s.region));
@@ -514,6 +598,12 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     touched.forEach((r) => covered.add(r));
   }
   for (const r of regionIds) if (!covered.has(r)) warn(`region ${r}: no story runs through it`);
+}
+
+// Rules and stories say why they rank here. An absolute rule should say when it holds (P10a), but that check is a
+// warning: an instruction ("never read the tenant from the request") is not a claim that something never happens, and
+// rejecting it as an error would punish a correct, verified rule for its grammar.
+function checkRules({ map, err, warn }) {
   for (const [what, list] of [
     ['rule', map.rules],
     ['story', map.stories],
@@ -521,16 +611,21 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     list.forEach((x, i) => {
       if (!x.importance) err(`${what} ${i + 1}: missing "importance" (why it ranks here)`);
     });
-  // A rule that is absolute should say when it holds (P10a), but the check is a warning: an instruction ("never read
-  // the tenant from the request") is not a claim that something never happens, and rejecting it as an error would
-  // punish a correct, verified rule for its grammar.
   const ABSOLUTE =
     /\b(never|always|all requests|every request|no authentication|requires? authentication|guaranteed|impossible)\b/i;
   map.rules.forEach((r, i) => {
     if (ABSOLUTE.test(`${r.title ?? ''} ${r.text ?? ''}`) && !String(r.condition ?? '').trim())
-      warn(`rule ${i + 1}: absolute wording without a "condition" (state when it holds, or say why it is unconditional)`);
+      warn(
+        `rule ${i + 1}: absolute wording without a "condition" ` +
+          '(state when it holds, or say why it is unconditional)',
+      );
   });
-  // The security section states knowledge, and every claim in it cites code (S4).
+}
+
+// The security section states knowledge, and every claim in it cites code (S4). A rule that cites code under an
+// anonymous-write warning is describing missing code, not the system's conventions: it is warned, and points at
+// findings.md.
+function checkSecurity({ map, err, warn, facts }) {
   if (map.security) {
     const need = (what, cites) => {
       if (!cites || !cites.length) err(`security: ${what} has no citation`);
@@ -540,94 +635,99 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     for (const u of map.security.userSources ?? []) need(`user source ${u.kind}`, u.cites);
     if (map.security.tenant) need('tenant', map.security.tenant.cites);
   }
-
-  // A rule that cites an endpoint under an anonymous-write warning is describing missing code, not the system's
-  // conventions. The warning is not fatal, but it should point the writer at findings.md.
-  const secFacts = readFacts(root);
-  if (secFacts) {
-    const warned = new Set((secFacts.securityWarnings ?? []).map((w) => String(w.evidence?.[0] ?? '').replace(/:.*$/, '')));
+  if (facts) {
+    const warned = new Set(
+      (facts.securityWarnings ?? []).map((w) => String(w.evidence?.[0] ?? '').replace(/:.*$/, '')),
+    );
     map.rules.forEach((r, i) => {
       const files = (r.cites ?? []).map((c) => String(typeof c === 'string' ? c : c.path ?? '').replace(/[:#].*$/, ''));
       if (files.some((f) => warned.has(f)))
-        warn(`rule ${i + 1}: cites code covered by an anonymous-write warning; state the condition neutrally and put the gap in findings.md`);
+        warn(
+          `rule ${i + 1}: cites code covered by an anonymous-write warning; state the condition neutrally ` +
+            'and put the gap in findings.md',
+        );
     });
   }
+}
+
+// Change stories are not part of the map, and inferred steps are reported, never hidden.
+function checkStoryKinds({ map, err, warn }) {
   if (map.stories.some((s) => s.kind === 'change'))
     err('change stories are not part of the map; stories are ranked main flows');
   const inferred = map.stories.flatMap((s) => s.steps.filter((x) => x.inferred).map(() => s.id));
   if (inferred.length) warn(`${inferred.length} story step(s) marked inferred: ${[...new Set(inferred)].join(', ')}`);
+}
 
-  // Collect every citation, check it resolves.
-  const cites = [];
-  const walk = (node, where) => {
-    if (Array.isArray(node)) return node.forEach((n, i) => walk(n, `${where}[${i}]`));
-    if (node && typeof node === 'object') {
-      for (const [k, v] of Object.entries(node)) {
-        if ((k === 'cites' || k === 'start') && Array.isArray(v)) v.forEach((c) => cites.push([c, `${where}.${k}`]));
-        else if (k === 'cite' && typeof v === 'string') cites.push([v, `${where}.cite`]);
-        else walk(v, `${where}.${k}`);
-      }
-    }
-  };
-  walk(map, '$');
-  const lineCount = new Map();
-  for (const [c, where] of cites) {
-    const pc = parseCite(c);
-    if (!pc) {
-      err(`${where}: malformed citation "${c}"`);
-      continue;
-    }
-    // Build output is never a citation's target: it is rewritten by every build, and a citation into it would point at
-    // code the project does not own (a generated source contributes no dump row at all, so nothing real is there).
-    if (/(^|\/)(target|build)\//.test(pc.file)) {
-      err(`${where}: "${c}" cites build output; cite the source behind it`);
-      continue;
-    }
-    const abs = path.join(root, pc.file);
-    if (!fs.existsSync(abs)) {
-      err(`${where}: path not found "${pc.file}"`);
-      continue;
-    }
-    const dir = fs.statSync(abs).isDirectory();
-    if (!dir && !lineCount.has(abs)) lineCount.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
-    if (pc.start == null) {
-      const why = dir ? null : citeProblem(pc, citeCandidates(declared, pc), lineCount.get(abs));
-      if (why) err(`${where}: "${c}" ${why}`);
-      continue;
-    }
-    if (dir) {
-      err(`${where}: line given for directory "${c}"`);
-      continue;
-    }
-    const fileLines = lineCount.get(abs),
-      n = fileLines.length;
-    if (pc.start < 1 || pc.end < pc.start || pc.end > n) {
-      err(`${where}: "${c}" outside file (${n} lines)`);
-      continue;
-    }
-    // #symbol: the cited lines must be the declaration the writer meant. Overloads are never guessed: with several
-    // methods of that name the range must overlap exactly one of them, and a bare name is ambiguous.
-    const why = citeProblem(pc, citeCandidates(declared, pc), fileLines);
-    if (why) err(`${where}: "${c}" ${why}`);
+// Every citation in the map resolves (checkCite). Returns the citations, which the budget counts.
+function checkCites({ map, root, declared, cache, err }) {
+  const cites = citesOf(map);
+  for (const { cite, where } of cites) {
+    const why = checkCite(cite, root, declared, cache);
+    if (why) err(`${where}: ${why}`);
   }
-  for (const [where, list] of [
-    ['request path', map.runtime.steps],
-    ...map.stories.map((s) => [`story ${s.id}`, s.steps]),
-  ])
+  return cites;
+}
+
+// Every request step and story step is cited (R7).
+function checkSteps({ map, err }) {
+  const groups = [['request path', map.runtime.steps], ...map.stories.map((s) => [`story ${s.id}`, s.steps])];
+  for (const [where, list] of groups)
     list.forEach((s, i) => {
       if (!s.cites?.length) err(`${where} step ${i + 1}: no citation (R7)`);
     });
+}
 
-  // Words budget (P8): the core map (everything except stories) against its tier, and each section against its share.
+// Words budget (P8): the core map (everything except stories) against its tier, and each section against its share.
+function checkBudget({ map, facts, warn }, citeCount) {
   const counts = sectionWords(map);
   const coreWords = Object.values(counts).reduce((n, x) => n + x, 0);
-  const facts = readFacts(root);
-  const endpoints = facts?.endpoints?.length ?? null;
-  const budget = budgetFor(endpoints);
+  const budget = budgetFor(facts?.endpoints?.length ?? null);
   budgetWarnings(counts, budget).forEach(warn);
   const citeNeeded = citeTarget(map);
-  if (cites.length > Math.round(citeNeeded * 1.4))
-    warn(`citations: ${cites.length} > 1.4x the ~${citeNeeded} a block-cited map needs (P3: one or two per block)`);
+  if (citeCount > Math.round(citeNeeded * 1.4))
+    warn(`citations: ${citeCount} > 1.4x the ~${citeNeeded} a block-cited map needs (P3: one or two per block)`);
+  return { counts, coreWords, budget, citeNeeded };
+}
+
+/**
+ * The checks validate() runs on a map that has passed the schema, in the order their messages are reported.
+ * `declared` is the dump's declarations: undefined reads the dump beside the map, null means none. `facts` is the
+ * parsed facts.json: undefined reads it from the map's project, null means none.
+ */
+export function validate(map, root, declared, facts) {
+  const errors = [],
+    warnings = [];
+  const err = (m) => errors.push(m),
+    warn = (m) => warnings.push(m);
+  if (declared === undefined) {
+    const dump = declaredFromDump(root);
+    declared = dump.declared;
+    if (dump.warning) warn(dump.warning);
+  }
+  if (facts === undefined) {
+    const read = readFacts(path.join(root, 'mindmodel', '.work', 'facts.json'));
+    facts = read.facts;
+    if (read.warning) warn(read.warning);
+  }
+  const cache = new Map();
+  resolveCites(map, root, declared, cache);
+  fillActivity(map, root);
+  // The schema holds the required fields and every budget ceiling and floor; the checks below are what it cannot say.
+  checkSchema(map, SCHEMA, SCHEMA.$defs ?? {}, '$', err);
+  if (errors.length) return { errors, warnings };
+
+  const ctx = { map, root, err, warn, facts, declared, cache, ...idChecks(map, err) };
+  checkSentences(ctx);
+  checkRefs(ctx);
+  checkState(ctx);
+  checkActivityAndActors(ctx);
+  checkStories(ctx);
+  checkRules(ctx);
+  checkSecurity(ctx);
+  checkStoryKinds(ctx);
+  const cites = checkCites(ctx);
+  checkSteps(ctx);
+  const sized = checkBudget(ctx, cites.length);
 
   // P6 wording and secrets, then the owner-only findings the map may not carry.
   const p6 = p6Issues(map);
@@ -644,12 +744,12 @@ export function validate(map, root, declared = declaredFromDump(root)) {
     warnings,
     stats: {
       citations: cites.length,
-      citeTarget: citeNeeded,
-      tier: budget.tier,
-      coreWords,
-      budget: budget.core,
-      sections: counts,
-      targets: budget.sections,
+      citeTarget: sized.citeNeeded,
+      tier: sized.budget.tier,
+      coreWords: sized.coreWords,
+      budget: sized.budget.core,
+      sections: sized.counts,
+      targets: sized.budget.sections,
       storyWords: wordCount(map.stories),
     },
   };

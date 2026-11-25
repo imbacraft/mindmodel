@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseCite, resolveCites, checkSchema } from './validate.mjs';
+import { checkCite, checkSchema, citesOf, resolveCites } from './validate.mjs';
 import { inlineBase } from './base.mjs';
 
 // "How it talks" as a table: per service, what it calls, what it publishes (and who listens), what it listens to.
@@ -75,7 +75,8 @@ export function validateSystem(map, sys, root) {
     warnings = [],
     err = (m) => errors.push(m),
     warn = (m) => warnings.push(m);
-  resolveCites(map, root);
+  const cache = new Map();
+  resolveCites(map, root, null, cache);
   const schema = JSON.parse(
     fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/system.schema.json'), 'utf8'),
   );
@@ -97,40 +98,11 @@ export function validateSystem(map, sys, root) {
   for (const f of map.flows)
     for (const h of f.hops)
       for (const n of [h.from, h.to]) if (!named.has(n)) warn(`flow ${f.id}: "${n}" is not a scanned service`);
-  // Citations: every one must resolve to a real file and range.
-  const walk = (node, where, out) => {
-    if (Array.isArray(node)) node.forEach((n, i) => walk(n, `${where}[${i}]`, out));
-    else if (node && typeof node === 'object')
-      for (const [k, v] of Object.entries(node))
-        if (k === 'cites' && Array.isArray(v)) v.forEach((c) => out.push([c, where]));
-        else walk(v, `${where}.${k}`, out);
-    return out;
-  };
-  const cites = walk(map, '$', []),
-    files = new Map();
-  for (const [c, where] of cites) {
-    const pc = parseCite(c);
-    if (!pc) {
-      err(`${where}: malformed citation "${c}"`);
-      continue;
-    }
-    const abs = path.join(root, pc.file);
-    if (!fs.existsSync(abs)) {
-      err(`${where}: path not found "${pc.file}"`);
-      continue;
-    }
-    if (pc.start == null || fs.statSync(abs).isDirectory()) continue;
-    if (!files.has(abs)) files.set(abs, fs.readFileSync(abs, 'utf8').split('\n'));
-    const lines = files.get(abs);
-    if (pc.end > lines.length) err(`${where}: "${c}" outside file`);
-    else if (
-      pc.symbol &&
-      !lines
-        .slice(pc.start - 1, pc.end)
-        .join('\n')
-        .includes(pc.symbol)
-    )
-      err(`${where}: "${c}" does not contain "${pc.symbol}"`);
+  // Citations: every one must resolve to a real file and range, checked the way validate() checks a project map.
+  const cites = citesOf(map);
+  for (const { cite, where } of cites) {
+    const why = checkCite(cite, root, null, cache);
+    if (why) err(`${where}: ${why}`);
   }
   for (const f of map.flows) if (!f.hops.length) err(`flow ${f.id}: no hops`);
   return {
