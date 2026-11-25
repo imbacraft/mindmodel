@@ -109,6 +109,20 @@
   },
   "services": {
    "type": "array",
+   "description": "Every scanned service, placed in a tier. The core tier is capped by maxContains.",
+   "contains": {
+    "type": "object",
+    "required": [
+     "tier"
+    ],
+    "properties": {
+     "tier": {
+      "const": "core"
+     }
+    }
+   },
+   "minContains": 0,
+   "maxContains": 8,
    "items": {
     "type": "object",
     "required": [

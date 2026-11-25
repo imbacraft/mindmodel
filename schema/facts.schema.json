@@ -186,7 +186,7 @@
   },
   "classpath": {
    "type": "object",
-   "description": "What the run could read of the project's own dependencies (engine/classpath.mjs). `mode: none` is the normal answer on a machine that has never built the project: nothing blocks, the library types stay unresolved.",
+   "description": "What the run could read of the project's own dependencies (engine/io/classpath.mjs). `mode: none` is the normal answer on a machine that has never built the project: nothing blocks, the library types stay unresolved.",
    "additionalProperties": true,
    "properties": {
     "mode": {
@@ -238,7 +238,7 @@
   },
   "git": {
    "type": "object",
-   "description": "Stays in the scanner (activity.mjs)."
+   "description": "Stays in the scanner (io/activity.mjs)."
   },
   "transactions": {
    "type": "array",

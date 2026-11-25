@@ -92,7 +92,6 @@ export function validateSystem(map, sys, root) {
     if (s.tier === 'core' && !s.importance) err(`core service ${s.name}: missing "importance"`);
   }
   for (const n of known) if (!listed.has(n)) err(`scanned service "${n}" is not placed in any tier`);
-  if (map.services.filter((s) => s.tier === 'core').length > 8) err('more than 8 core services');
   for (const m of map.overview.sentence.matchAll(/\[\[([a-z][a-z0-9-]*)\|/g))
     if (!domains.has(m[1])) err(`system sentence: unknown domain "${m[1]}"`);
   const named = new Set([...known, ...sys.rest.map((r) => r.to)]);

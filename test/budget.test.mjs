@@ -7,15 +7,15 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CAPS, budgetFor, budgetWarnings, citeTarget, sectionWords, wordCount } from '../engine/validate.mjs';
-import { budgetLine } from '../engine/scan.mjs';
+import { CAPS, TIERS, budgetFor, budgetLine, budgetWarnings } from '../engine/budget.mjs';
+import { citeTarget, sectionWords, wordCount } from '../engine/validate.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const schema = JSON.parse(fs.readFileSync(path.join(REPO, 'schema', 'mindmodel.schema.json'), 'utf8'));
 const rules = fs.readFileSync(path.join(REPO, 'rules', 'core.md'), 'utf8');
 
-// The tier boundaries, in one place: 50/150/400 endpoints and the four ceilings.
-const TIER_ENDPOINTS = [50, 150, 400, 401];
+// One endpoint count per tier: each tier's upper bound, and Infinity for the open tier.
+const TIER_ENDPOINTS = [...TIERS.slice(0, -1).map((t) => t.maxEndpoints), Infinity];
 
 test('state.owners admits one row per concept the schema and validator allow', () => {
   const concepts = schema.properties.concepts.maxItems;
@@ -59,52 +59,6 @@ test('each tier’s section shares stay under the tier ceiling', () => {
     const sum = Object.values(b.sections).reduce((x, y) => x + y, 0);
     assert.ok(sum <= b.core, `tier ${b.tier}: sections sum ${sum} > core ${b.core}`);
   }
-});
-
-// The table in Part 7 is what the writer drafts to; the code is what the validator enforces. Parse one, compare.
-function part7Table() {
-  const part7 = rules.slice(rules.indexOf('## Part 7.'));
-  const rows = part7
-    .split('\n')
-    .filter((l) => l.startsWith('| ') && !l.startsWith('| Section') && !l.startsWith('|---'))
-    .map((l) =>
-      l
-        .split('|')
-        .slice(1, -1)
-        .map((c) => c.trim()),
-    );
-  const table = part7.slice(part7.indexOf('| Section'));
-  assert.ok(table, 'Part 7 has no per-tier section table');
-  return rows.filter((r) => r.length === 6);
-}
-
-test('the rules’ tier table and the validator agree, cell by cell', () => {
-  const rows = part7Table();
-  assert.equal(rows.length, 11, 'the Part 7 table holds core plus ten sections');
-  for (const [name, ...cells] of rows) {
-    const capCell = cells.pop();
-    const b = TIER_ENDPOINTS.map((n) => budgetFor(n));
-    const got = name === 'core' ? b.map((x) => x.core) : b.map((x) => x.sections[name]);
-    const want = cells.map((c) => +c.replace(/,/g, ''));
-    assert.deepStrictEqual(got, want, `Part 7 row "${name}" disagrees with budgetFor`);
-    const cap = capCell === '—' ? undefined : +capCell.replace(/,/g, '');
-    assert.equal(cap, CAPS[name], `Part 7 hard cap for "${name}" disagrees with CAPS`);
-  }
-});
-
-test('P8 points at Part 7, which states the tiers the code enforces — once', () => {
-  // The numbers live in the Part 7 table alone: P8 names the tiers and points there, so the two cannot drift apart.
-  const p8 = /\*\*P8\.[^\n]*/.exec(rules)?.[0];
-  assert.ok(p8, 'the rules must carry P8');
-  assert.match(p8, /Part 7/, 'P8 must point at Part 7 for the numbers');
-  assert.doesNotMatch(p8, /2,?200/, 'P8 must not restate the ceilings: Part 7 holds them');
-  // The endpoint bands, from the one table that states them.
-  const bands = /\| Section \| Tier 1 \(≤ (\d+) endpoints\) \| Tier 2 \(≤ (\d+)\) \| Tier 3 \(≤ (\d+)\) \| Tier 4 \(> (\d+)\) \|/
-    .exec(rules);
-  assert.ok(bands, 'the Part 7 table must state the endpoint bands');
-  assert.deepStrictEqual(bands.slice(1).map(Number), [50, 150, 400, 400]);
-  const coreRow = part7Table().find((r) => r[0] === 'core');
-  assert.deepStrictEqual(coreRow.slice(1, 5).map((c) => +c), [2200, 2800, 3600, 4200]);
 });
 
 test('the always-read core keeps its own budget: ≤ 180 lines and ≤ 5,000 tokens', () => {

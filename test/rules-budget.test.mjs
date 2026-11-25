@@ -6,13 +6,14 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CAPS } from '../engine/validate.mjs';
+import { CAPS, TIERS, budgetFor } from '../engine/budget.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const readText = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 const readSchema = (name) => JSON.parse(readText('schema', name));
 const MINDMODEL = readSchema('mindmodel.schema.json');
 const SYSTEM = readSchema('system.schema.json');
+const rules = readText('rules', 'core.md');
 
 // rules/core.md, Part 7, first table. "cap:" names a word cap enforced by engine/validate.mjs.
 const CORE_ROWS = {
@@ -33,7 +34,7 @@ const CORE_ROWS = {
 // rules/system-rules.md, Part 4.
 const SYSTEM_ROWS = {
   'Domains': ['domains.maxItems', null],
-  'Core service cards': [null],
+  'Core service cards': ['services.maxContains'],
   'Owner rows': [null, 'ownership.maxItems'],
   'Key contracts': ['contracts.maxItems'],
   'Flows': ['flows.minItems', 'flows.maxItems', 'flows.items.hops.maxItems'],
@@ -104,4 +105,46 @@ test('rules/core.md budget rows quote the mindmodel schema and the validator wor
 test('rules/system-rules.md budget rows quote the system schema', () => {
   const rows = budgetRows(readText('rules', 'system-rules.md'), '## Part 4.');
   checkRows(rows, SYSTEM_ROWS, SYSTEM, 'system-rules.md');
+});
+
+// Part 7's per-tier table: "| name | tier 1 | tier 2 | tier 3 | tier 4 | hard cap |", core first, then the sections.
+function part7Table() {
+  const part7 = rules.slice(rules.indexOf('## Part 7.'));
+  return part7
+    .split('\n')
+    .filter((l) => l.startsWith('| ') && !l.startsWith('| Section') && !l.startsWith('|---'))
+    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+    .filter((cells) => cells.length === 6);
+}
+
+// One endpoint count per tier: each tier's upper bound, and the widest tier's probe.
+const PROBES = [...TIERS.slice(0, -1).map((t) => t.maxEndpoints), Infinity];
+
+test('the rules’ tier table and the validator agree, cell by cell', () => {
+  const rows = part7Table();
+  assert.equal(rows.length, 11, 'the Part 7 table holds core plus ten sections');
+  for (const [name, ...cells] of rows) {
+    const capCell = cells.pop();
+    const b = PROBES.map((n) => budgetFor(n));
+    const got = name === 'core' ? b.map((x) => x.core) : b.map((x) => x.sections[name]);
+    const want = cells.map((c) => +c.replace(/,/g, ''));
+    assert.deepStrictEqual(got, want, `Part 7 row "${name}" disagrees with budgetFor`);
+    const cap = capCell === '—' ? undefined : +capCell.replace(/,/g, '');
+    assert.equal(cap, CAPS[name], `Part 7 hard cap for "${name}" disagrees with CAPS`);
+  }
+});
+
+test('P8 points at Part 7, which states the tiers the code enforces — once', () => {
+  // The numbers live in the Part 7 table alone: P8 names the tiers and points there, so the two cannot drift apart.
+  const p8 = /\*\*P8\.[^\n]*/.exec(rules)?.[0];
+  assert.ok(p8, 'the rules must carry P8');
+  assert.match(p8, /Part 7/, 'P8 must point at Part 7 for the numbers');
+  assert.doesNotMatch(p8, /2,?200/, 'P8 must not restate the ceilings: Part 7 holds them');
+  // The endpoint bands, from the one table that states them: tier 4 starts where tier 3 ends.
+  const bands = /Tier 1 \(≤ (\d+) endpoints\).*Tier 2 \(≤ (\d+)\).*Tier 3 \(≤ (\d+)\).*Tier 4 \(> (\d+)\)/.exec(rules);
+  assert.ok(bands, 'the Part 7 table must state the endpoint bands');
+  const bounds = TIERS.slice(0, -1).map((t) => t.maxEndpoints);
+  assert.deepStrictEqual(bands.slice(1).map(Number), [...bounds, bounds[bounds.length - 1]]);
+  const coreRow = part7Table().find((r) => r[0] === 'core');
+  assert.deepStrictEqual(coreRow.slice(1, 5).map((c) => +c), TIERS.map((t) => t.core));
 });

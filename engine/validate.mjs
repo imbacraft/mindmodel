@@ -10,43 +10,11 @@ import { fileURLToPath } from 'node:url';
 import { gitWindow, activityFor } from './activity.mjs';
 import { formatCite, parseCite } from './core/cite.mjs';
 import { checkSchema } from './core/schema.mjs';
+import { budgetFor, budgetWarnings, isThin } from './budget.mjs';
 
 const SCHEMA = JSON.parse(
   fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../schema/mindmodel.schema.json'), 'utf8'),
 );
-
-// P8 size tiers: the core ceiling scales with the app, because a 40-endpoint tool and a 900-endpoint platform cannot
-// say the same thing in the same number of words. Regions and state keep a flat cap: that is where overflow lives.
-const TIERS = [
-  { tier: 1, maxEndpoints: 50, core: 2200 },
-  { tier: 2, maxEndpoints: 150, core: 2800 },
-  { tier: 3, maxEndpoints: 400, core: 3600 },
-  { tier: 4, maxEndpoints: Infinity, core: 4200 },
-];
-const SECTION_SHARES = {
-  purpose: 0.04,
-  context: 0.08,
-  concepts: 0.18,
-  regions: 0.18,
-  state: 0.13,
-  runtime: 0.08,
-  background: 0.08,
-  rules: 0.13,
-  security: 0.07,
-  intros: 0.03,
-};
-// Hard caps whatever the tier, clamped onto the share so a section target never exceeds them.
-export const CAPS = { regions: 1000, state: 400 };
-
-// The budget for an app with this many endpoints (null when the count is unknown: use the widest tier, so a missing
-// facts file never makes a legal map look over budget).
-export function budgetFor(endpoints) {
-  const t = TIERS.find((x) => (endpoints ?? Infinity) <= x.maxEndpoints);
-  const sections = {};
-  for (const [name, share] of Object.entries(SECTION_SHARES))
-    sections[name] = Math.min(Math.round(t.core * share), CAPS[name] ?? Infinity);
-  return { tier: t.tier, endpoints, core: t.core, sections, caps: CAPS };
-}
 
 // Words, with JSON keys dropped and path/symbol tokens ignored: the page's prose, not its citations.
 export function wordCount(o) {
@@ -89,36 +57,6 @@ export function citeTarget(map) {
     (map.state?.owners?.length ?? 0) +
     6
   );
-}
-
-// A share is the room a section has, not a target to fill. Writing to the ceiling and stopping early is the mirror of
-// writing over it: the section stops answering its question. `intros` is exempt (version and project strings).
-const UNDER_SHARE = 0.6;
-
-// One warning per section over its share, plus the total: the writer fixes a section, never the whole map.
-export function budgetWarnings(counts, budget) {
-  const out = [];
-  for (const [name, n] of Object.entries(counts)) {
-    const target = budget.sections[name];
-    if (n <= target) continue;
-    const cap = CAPS[name];
-    out.push(
-      `${name}: ~${n} words > tier ${budget.tier} target ${target}${cap && n > cap ? ` (over the hard cap ${cap})` : ''}`,
-    );
-  }
-  for (const [name, n] of Object.entries(counts)) {
-    const target = budget.sections[name];
-    if (name === 'intros' || n >= target * UNDER_SHARE) continue;
-    out.push(`${name}: ~${n} words < ${Math.round(target * UNDER_SHARE)} (60% of the tier ${budget.tier} share ` +
-      `${target}): thin, answer the section's question before cutting`);
-  }
-  const total = Object.values(counts).reduce((n, x) => n + x, 0);
-  if (total > budget.core)
-    out.push(
-      `core map ~${total} words > tier ${budget.tier} budget ${budget.core}` +
-        `${budget.endpoints == null ? ' (no facts.json: endpoint count unknown)' : ` (${budget.endpoints} endpoints)`}`,
-    );
-  return out;
 }
 
 // A citation's target among the file's declarations: the same name, and the same arity when the cite gives one
@@ -714,7 +652,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (stats) {
     const parts = Object.entries(stats.sections).map(
       ([k, n]) =>
-        `${k} ${n}/${stats.targets[k]}${n > stats.targets[k] ? '!' : n < stats.targets[k] * UNDER_SHARE && k !== 'intros' ? '_' : ''}`,
+        `${k} ${n}/${stats.targets[k]}${n > stats.targets[k] ? '!' : isThin(k, n, stats.targets[k]) ? '_' : ''}`,
     );
     console.log(
       `budget: tier ${stats.tier} — core ${stats.coreWords}/${stats.budget} words · citations ${stats.citations}` +
