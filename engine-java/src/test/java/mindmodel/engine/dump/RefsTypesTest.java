@@ -130,4 +130,22 @@ class RefsTypesTest {
         assertEquals("java.util.List", size.path("recv").path("type").asText());
         assertEquals("demo.Order", size.path("recv").path("typeArgs").get(0).asText());
     }
+
+    /** A catch parameter is a named local: a read of it names a declaration, not a hole. */
+    @Test
+    void catchParameterReadIsALocalNotUnresolved() throws Exception {
+        String source = """
+                package demo;
+                public class Caught {
+                    Object m() {
+                        try { throw new RuntimeException(); }
+                        catch (RuntimeException e) { return e; }
+                    }
+                }
+                """;
+        JsonNode member = DumpRun.one(DumpRun.of(dir, Map.of("demo/Caught.java", source)).rows("members"), "name", "m");
+        JsonNode value = member.path("returned").get(0).path("value");
+        assertEquals("local", value.path("kind").asText());
+        assertEquals("e", value.path("text").asText());
+    }
 }

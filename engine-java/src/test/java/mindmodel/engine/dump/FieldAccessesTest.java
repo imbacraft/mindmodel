@@ -1,6 +1,7 @@
 package mindmodel.engine.dump;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -45,5 +46,47 @@ class FieldAccessesTest {
         List<JsonNode> hits = fields.stream().filter(f -> text.equals(f.path("value").path("text").asText())).toList();
         if (hits.size() != 1) throw new AssertionError(text + " matched " + hits.size() + " field rows");
         return hits.get(0);
+    }
+
+    /** A compound write stores the old value combined with the right-hand side: never the right-hand side alone. */
+    @Test
+    void compoundAssignmentIsUnresolvedNotItsRightHandSide() throws Exception {
+        String source = """
+                package demo;
+                public class Acc {
+                    int total;
+                    void add(int amount) {
+                        this.total += amount;
+                        this.total = amount;
+                    }
+                }
+                """;
+        List<JsonNode> fields = DumpRun.of(dir, Map.of("demo/Acc.java", source)).rows("fields");
+        JsonNode compound = fields.stream().filter(r -> r.path("line").asInt() == DumpRun.lineOf(source, "+="))
+                .findFirst().orElseThrow();
+        assertEquals("unresolved", compound.path("value").path("kind").asText());
+        assertEquals("compound-assignment", compound.path("value").path("reason").asText());
+        assertEquals("this.total += amount", compound.path("value").path("text").asText());
+        JsonNode plain = fields.stream().filter(r -> r.path("line").asInt() == DumpRun.lineOf(source, "this.total = "))
+                .findFirst().orElseThrow();
+        assertEquals("param", plain.path("value").path("kind").asText());
+    }
+
+    /** `X.class` is a class literal, not a field: it has no field row, and as an argument it is no field either. */
+    @Test
+    void classLiteralIsNotAFieldAccess() throws Exception {
+        String source = """
+                package demo;
+                public class Lit {
+                    void m() { use(String.class); use(Lit.class); }
+                    static void use(Object o) { }
+                }
+                """;
+        var run = DumpRun.of(dir, Map.of("demo/Lit.java", source));
+        for (JsonNode field : run.rows("fields"))
+            assertFalse(field.path("value").path("text").asText("").endsWith(".class"), "no field row: " + field);
+        for (JsonNode call : run.rows("calls"))
+            if ("use".equals(call.path("name").asText()))
+                for (JsonNode arg : call.path("args")) assertEquals("other", arg.path("kind").asText());
     }
 }

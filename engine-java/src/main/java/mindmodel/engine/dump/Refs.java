@@ -17,6 +17,7 @@ import spoon.reflect.code.CtLambda;
 import spoon.reflect.code.CtLiteral;
 import spoon.reflect.code.CtLocalVariable;
 import spoon.reflect.code.CtVariableRead;
+import spoon.reflect.code.CtCatchVariable;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtExecutable;
 import spoon.reflect.declaration.CtField;
@@ -33,7 +34,7 @@ import spoon.reflect.reference.CtWildcardReference;
  * <pre>{ "text": "A_COOKIE_NAME", "kind": "constant", "value": "fachverfahren", "type": "java.lang.String" }</pre>
  *
  * {@code kind} is what the expression <em>is</em> (literal, constant, param, local, field, call, lambda, methodRef, new,
- * conditional, other), never what it means. {@code text} is a display string cut at 80 characters and is never a fact.
+ * conditional, other), never what it means. {@code text} is a display string cut at 80 code points and is never a fact.
  * What Spoon cannot type is {@code unresolved} with a {@code reason}.
  *
  * <p>Type names are join keys: the dotted spelling of types.ndjson, or null. A type Spoon invented (a missing import) has
@@ -131,6 +132,8 @@ final class Refs {
     private Ref read(CtVariableRead<?> read, String text, String type) {
         CtElement declaration = read.getVariable() == null ? null : read.getVariable().getDeclaration();
         CtFieldReference<?> asField = read.getVariable() instanceof CtFieldReference<?> field ? field : null;
+        // `X.class` is a class literal Spoon writes as a read of a field named `class`: no field, no declaration.
+        if (asField != null && "class".equals(asField.getSimpleName())) return Ref.plain(text, "other", type);
         if (declaration instanceof CtParameter<?> parameter) {
             var owner = parameter.getParent(CtExecutable.class);
             int index = owner == null ? -1 : owner.getParameters().indexOf(parameter);
@@ -143,6 +146,8 @@ final class Refs {
             String from = values.size() == 1 ? from(values.get(0)) : null;
             return new Ref(text, "local", type, null, null, null, null, null, from, null, false, null, null, null);
         }
+        // A catch parameter is a named local: its value is the thrown exception, which no expression of the body gives.
+        if (declaration instanceof CtCatchVariable<?>) return Ref.plain(text, "local", type);
         // A constant is one whose value the compiler could write down; anything else is a field read.
         if (declaration instanceof CtField<?>) {
             String id = fieldId(asField);
@@ -330,7 +335,7 @@ final class Refs {
         if (expression == null) return null;
         try {
             String source = Names.sourceOf(expression);
-            return source == null ? null : clip(collapse(source));
+            return source == null ? null : clip(unterminated(collapse(source)));
         } catch (RuntimeException e) {
             failures.count("refs.textUnresolved");
             return null;
@@ -341,8 +346,10 @@ final class Refs {
     private static String collapse(String source) {
         StringBuilder out = new StringBuilder(source.length());
         boolean space = false;
-        for (int i = 0; i < source.length() && out.length() <= 80; i++) {
-            char c = source.charAt(i);
+        int i = 0;
+        while (i < source.length() && out.codePointCount(0, out.length()) <= 80) {
+            int c = source.codePointAt(i);
+            i += Character.charCount(c);
             if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
                 space = out.length() > 0;
                 continue;
@@ -351,12 +358,22 @@ final class Refs {
                 out.append(' ');
                 space = false;
             }
-            out.append(c);
+            out.appendCodePoint(c);
         }
         return out.toString();
     }
 
+    /**
+     * Spoon's position for an arrow arm's expression runs on through the `;` that ends the arm, so the display text
+     * keeps it. No expression ends in a semicolon, so the last one is dropped.
+     */
+    private static String unterminated(String text) {
+        return text.endsWith(";") ? text.substring(0, text.length() - 1).stripTrailing() : text;
+    }
+
+    /** At most 80 code points, so a surrogate pair is never cut in half. */
     private static String clip(String text) {
-        return text.length() > 80 ? text.substring(0, 80) : text;
+        if (text.codePointCount(0, text.length()) <= 80) return text;
+        return text.substring(0, text.offsetByCodePoints(0, 80));
     }
 }

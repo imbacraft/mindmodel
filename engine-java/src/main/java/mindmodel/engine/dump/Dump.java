@@ -60,10 +60,12 @@ public final class Dump {
         inputs.sort(null);
         Read read = readModel(root, inputs, compliance, classpath, generatedDirs);
         SourceModel model = read.model();
+        // The classpath that model actually read with: a dropped one is dropped for every later model too.
+        List<String> reads = read.dropped() == null ? classpath : List.of();
         Positions positions = new Positions(root);
         Failures failures = new Failures();
-        countDuplicateDeclarations(model, root, compliance, failures);
-        Declared declared = declaredTypes(model, inputs, compliance, positions);
+        countDuplicateDeclarations(model, root, compliance, reads, failures);
+        Declared declared = declaredTypes(model, inputs, compliance, reads, positions);
         List<CtType<?>> types = declared.types();
         // The generated sources are in the model for resolution only: a reader of call targets must know their
         // members, but not one row is written for them.
@@ -91,14 +93,14 @@ public final class Dump {
     private record Declared(List<CtType<?>> types, List<String> unread) {
     }
 
-    private static Declared declaredTypes(SourceModel model, List<String> inputs, int compliance, Positions positions)
-            throws IOException {
+    private static Declared declaredTypes(SourceModel model, List<String> inputs, int compliance,
+            List<String> classpath, Positions positions) throws IOException {
         List<Row> rows = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (CtType<?> t : model.allTypes()) collect(model, t, rows, seen, positions);
         // A file whose type came out as a bare shell is read again in its own model: the shell is a name and nothing
         // else, so the declaration has to be read where no static import has laid the shell first.
-        List<String> unread = recover(model, inputs, compliance, rows, seen, positions);
+        List<String> unread = recover(model, inputs, compliance, classpath, rows, seen, positions);
         rows.sort(ORDER);
         List<CtType<?>> types = new ArrayList<>();
         for (Row r : rows) types.add(r.type());
@@ -130,15 +132,15 @@ public final class Dump {
      *
      * @return the files still unread after that, to be reported rather than filled in.
      */
-    private static List<String> recover(SourceModel model, List<String> inputs, int compliance, List<Row> rows,
-            Set<String> seen, Positions positions) throws IOException {
+    private static List<String> recover(SourceModel model, List<String> inputs, int compliance, List<String> classpath,
+            List<Row> rows, Set<String> seen, Positions positions) throws IOException {
         List<String> ghosts = model.unreadFiles();
         if (ghosts.isEmpty()) return List.of();
         // The shells carry no position but they do carry their names, which is what the imports were written with.
         Set<String> skip = new HashSet<>(model.filesImporting(model.unreadNames()));
         List<String> rest = new ArrayList<>(inputs);
         rest.removeAll(skip);
-        SourceModel own = SourceModel.build(positions.root(), rest, compliance, List.of(), model.generatedDirs());
+        SourceModel own = SourceModel.build(positions.root(), rest, compliance, classpath, model.generatedDirs());
         for (CtType<?> t : own.allTypes()) collect(own, t, rows, seen, positions);
         return own.unreadFiles();
     }
@@ -162,12 +164,12 @@ public final class Dump {
      * nothing are read again alone, and each name one of them declares that the model kept is counted as
      * `types.duplicateFqn`. Only a run with such a file pays for the second read.
      */
-    private static void countDuplicateDeclarations(SourceModel model, Path root, int compliance, Failures failures)
-            throws IOException {
+    private static void countDuplicateDeclarations(SourceModel model, Path root, int compliance,
+            List<String> classpath, Failures failures) throws IOException {
         List<String> silent = model.unitsWithoutTypes();
         if (silent.isEmpty()) return;
         Set<String> kept = model.declaredNames();
-        SourceModel again = SourceModel.build(root, silent, compliance, List.of(), model.generatedDirs());
+        SourceModel again = SourceModel.build(root, silent, compliance, classpath, model.generatedDirs());
         for (String name : again.declaredNames()) if (kept.contains(name)) failures.count("types.duplicateFqn");
     }
 

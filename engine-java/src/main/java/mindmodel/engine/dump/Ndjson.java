@@ -45,7 +45,28 @@ public final class Ndjson implements AutoCloseable {
         // Rows are separated by a newline, never terminated by one: the file ends with its last row's closing brace.
         if (!first) file.write('\n');
         first = false;
-        file.write(text.toString());
+        file.write(escapeLoneSurrogates(text.toString()));
+    }
+
+    /**
+     * UTF-8 cannot hold an unpaired UTF-16 surrogate, and the file's encoder refuses one. A string that carries one (a
+     * backslash-u literal of a lone half, or a source text cut between the two halves of a pair) is written as its
+     * backslash-u escape, which every JSON reader decodes back to the same char. Pairs are written as they are. Every
+     * surrogate sits inside a JSON string, so the escape is valid where it lands.
+     */
+    static String escapeLoneSurrogates(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isHighSurrogate(c) && i + 1 < text.length() && Character.isLowSurrogate(text.charAt(i + 1))) {
+                out.append(c).append(text.charAt(++i));
+            } else if (Character.isSurrogate(c)) {
+                out.append(String.format("\\u%04X", (int) c));
+            } else {
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     public static void pos(JsonGenerator g, Positions.Pos p) throws IOException {
@@ -68,11 +89,19 @@ public final class Ndjson implements AutoCloseable {
      */
     public static void modifiers(JsonGenerator g, Collection<ModifierKind> modifiers) throws IOException {
         List<String> names = new ArrayList<>();
-        for (ModifierKind m : modifiers) names.add(m.toString());
+        for (ModifierKind m : modifiers) names.add(modifierName(m));
         Collections.sort(names);
         g.writeArrayFieldStart("modifiers");
         for (String m : names) g.writeString(m);
         g.writeEndArray();
+    }
+
+    /**
+     * The one spelling of a modifier: Java's own (`non-sealed`), never a case-folded enum name (locale-dependent, and
+     * `NON_SEALED` folds to `non_sealed`).
+     */
+    static String modifierName(ModifierKind modifier) {
+        return modifier.toString();
     }
 
     @Override

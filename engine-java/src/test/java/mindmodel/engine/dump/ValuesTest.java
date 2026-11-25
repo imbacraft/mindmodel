@@ -86,4 +86,48 @@ class ValuesTest {
         assertEquals("constant", withArgText(rows, "Mode.A").path("args").get(0).path("kind").asText(),
                 "an enum constant is one");
     }
+
+    /** JLS 4.12.4: a final String with a constant initializer is a constant, static or not; a final Object is never. */
+    @Test
+    void finalInstanceStringConstantIsAConstantAndAFinalObjectIsNot() throws Exception {
+        String source = """
+                package demo;
+                public class Konst {
+                    final String S = "x";
+                    static final Object O = "x";
+                    void m() { use(S); use(O); }
+                    static void use(Object o) { }
+                }
+                """;
+        var run = DumpRun.of(dir, Map.of("demo/Konst.java", source));
+        var calls = run.rows("calls");
+        JsonNode s = withArgText(calls, "S");
+        assertEquals("constant", s.path("args").path(0).path("kind").asText());
+        assertEquals("x", s.path("args").path(0).path("value").asText());
+        assertEquals("field", withArgText(calls, "O").path("args").path(0).path("kind").asText(),
+                "a final Object is not a constant variable");
+        JsonNode objectField = DumpRun.one(run.rows("members"), "name", "O");
+        assertEquals(false, objectField.has("value"), "no constant value for a non-constant-variable field");
+    }
+
+    /** Binary numeric promotion: a float times an int is a float, folded in float, not in double. */
+    @Test
+    void floatArithmeticStaysFloat() throws Exception {
+        String source = """
+                package demo;
+                public class Flt {
+                    static final float F = 1.1f * 3;
+                    static final double D = 1.1 * 3;
+                    void m() { use(F); }
+                    static void use(float f) { }
+                }
+                """;
+        var run = DumpRun.of(dir, Map.of("demo/Flt.java", source));
+        JsonNode f = DumpRun.one(run.rows("members"), "name", "F").path("value");
+        assertEquals("float", f.path("kind").asText());
+        assertEquals("3.3000002", f.path("value").asText(), "1.1f * 3 is the float 3.3000002, not the double");
+        JsonNode d = DumpRun.one(run.rows("members"), "name", "D").path("value");
+        assertEquals("double", d.path("kind").asText());
+        assertEquals("float", withArgText(run.rows("calls"), "F").path("args").path(0).path("valueKind").asText());
+    }
 }

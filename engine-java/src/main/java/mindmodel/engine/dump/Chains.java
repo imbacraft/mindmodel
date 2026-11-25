@@ -1,15 +1,22 @@
 package mindmodel.engine.dump;
 
+import java.util.List;
+
 import spoon.reflect.code.CtExpression;
+import spoon.reflect.code.CtFieldRead;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLocalVariable;
 import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.code.CtThisAccess;
 import spoon.reflect.code.CtVariableRead;
+import spoon.reflect.declaration.CtField;
+import spoon.reflect.declaration.CtFormalTypeDeclarer;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
+import spoon.reflect.declaration.CtTypeParameter;
 import spoon.reflect.reference.CtTypeParameterReference;
 import spoon.reflect.reference.CtTypeReference;
+import spoon.reflect.reference.CtWildcardReference;
 
 /**
  * The receiver type of an expression, chains included: `jmsContext.createProducer().send(...)` needs the return type of a
@@ -46,8 +53,52 @@ final class Chains {
                 return known(own) ? own : inferred(local);
             }
         }
+        // A field read of a type-parameter type (`cache.value`) is bound the way a call's return type is.
+        if (expression instanceof CtFieldRead<?> read && read.getVariable() != null
+                && read.getVariable().getDeclaration() != null) {
+            CtField<?> field = read.getVariable().getDeclaration();
+            return declared(field.getType(), null, field.getDeclaringType(), read.getTarget());
+        }
         CtTypeReference<?> type = expression.getType();
-        return type == null ? null : LibraryTypes.raw(Names.qualified(type));
+        return type == null ? null : rawType(type);
+    }
+
+    /**
+     * The receiver a declared type gives. A type parameter names no type of its own: it is the type argument the target
+     * was declared with (`Cache<Foo>` makes `Value` into `Foo`), or nothing when the target does not say.
+     */
+    private String declared(CtTypeReference<?> declared, CtFormalTypeDeclarer scope, CtType<?> owner,
+            CtExpression<?> target) {
+        if (declared instanceof CtTypeParameterReference)
+            return bound((CtTypeParameterReference) declared, scope, owner, target);
+        return rawType(declared);
+    }
+
+    /**
+     * The type argument a target's type gives a parameter of the owner class at the same position. A method's own type
+     * parameter, a target of another class (an inherited member) and a raw target all answer nothing.
+     */
+    private String bound(CtTypeParameterReference param, CtFormalTypeDeclarer scope, CtType<?> owner,
+            CtExpression<?> target) {
+        if (owner == null || target == null || target.getType() == null) return null;
+        if (scope != null && indexOf(scope.getFormalCtTypeParameters(), param) >= 0) return null;
+        CtTypeReference<?> held = target.getType();
+        if (!Names.qualified(owner).equals(Names.qualified(held))) return null;
+        List<CtTypeParameter> formals = owner.getFormalCtTypeParameters();
+        List<CtTypeReference<?>> actual = held.getActualTypeArguments();
+        int index = indexOf(formals, param);
+        if (index < 0 || actual.size() != formals.size()) return null;
+        CtTypeReference<?> argument = actual.get(index);
+        if (argument instanceof CtWildcardReference wildcard)
+            argument = wildcard.isUpper() ? wildcard.getBoundingType() : null;
+        return argument == null ? null : rawType(argument);
+    }
+
+    /** The position of the parameter with this name among the declared ones, or -1. */
+    private static int indexOf(List<CtTypeParameter> formals, CtTypeParameterReference param) {
+        for (int i = 0; i < formals.size(); i++)
+            if (formals.get(i).getSimpleName().equals(param.getSimpleName())) return i;
+        return -1;
     }
 
     /** The type a `var` local's initializer gives it, or null when no source in the dump can say. */
@@ -70,6 +121,7 @@ final class Chains {
         return type != null && !"java.lang.Object".equals(type) && !"?".equals(type);
     }
 
+    /** The receiver name of a type, or null: a type parameter is never a receiver, whatever its name. */
     private String rawType(CtTypeReference<?> type) {
         if (type == null || type instanceof CtTypeParameterReference) return null;
         try {
@@ -90,7 +142,7 @@ final class Chains {
         var ref = call.getExecutable();
         var declaration = ref == null ? null : ref.getDeclaration();
         if (declaration instanceof CtMethod<?> method && method.getDeclaringType() != null)
-            return LibraryTypes.raw(Names.qualified(method.getType()));
+            return declared(method.getType(), method, method.getDeclaringType(), call.getTarget());
         String owner = ref == null || ref.getDeclaringType() == null ? null : Names.qualified(ref.getDeclaringType());
         if (owner == null && ref != null) owner = receiver(call.getTarget());
         if (owner == null || ref == null) return null;

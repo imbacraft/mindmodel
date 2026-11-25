@@ -14,7 +14,6 @@ import spoon.reflect.declaration.CtField;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtType;
-import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtArrayTypeReference;
 import spoon.reflect.reference.CtTypeParameterReference;
 import spoon.reflect.reference.CtTypeReference;
@@ -110,10 +109,10 @@ public final class LibraryStubs {
             g.writeStringField("name", f.getSimpleName());
             // With generic arguments: `java.lang.ThreadLocal<com.acme.Ctx>` is what makes a holder's element readable.
             g.writeStringField("type", Names.typeText(f.getType()));
-            g.writeStringField("typeFqn", f.getType() == null ? "" : Names.qualified(f.getType()));
-            g.writeArrayFieldStart("modifiers");
-            for (ModifierKind m : f.getModifiers()) g.writeString(m.name().toLowerCase());
-            g.writeEndArray();
+            // A type variable names no type: a reader would take `Value` for a class, so the join key stays empty.
+            g.writeStringField("typeFqn", f.getType() == null || f.getType() instanceof CtTypeParameterReference
+                    ? "" : Names.qualified(f.getType()));
+            Ndjson.modifiers(g, f.getModifiers());
             g.writeEndObject();
         }
         g.writeEndArray();
@@ -125,9 +124,7 @@ public final class LibraryStubs {
             g.writeArrayFieldStart("params");
             for (CtParameter<?> p : m.getParameters()) g.writeString(Names.typeText(p.getType()));
             g.writeEndArray();
-            g.writeArrayFieldStart("modifiers");
-            for (ModifierKind kind : m.getModifiers()) g.writeString(kind.name().toLowerCase());
-            g.writeEndArray();
+            Ndjson.modifiers(g, m.getModifiers());
             g.writeEndObject();
         }
         g.writeEndArray();

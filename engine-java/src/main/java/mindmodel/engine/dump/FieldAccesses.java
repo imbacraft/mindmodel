@@ -8,9 +8,11 @@ import java.util.List;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 
+import spoon.reflect.code.CtAssignment;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtFieldAccess;
 import spoon.reflect.code.CtFieldWrite;
+import spoon.reflect.code.CtOperatorAssignment;
 import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtFieldReference;
@@ -42,9 +44,11 @@ final class FieldAccesses {
             Positions.Pos pos = positions.of(access);
             if (pos == null) continue;
             CtFieldReference<?> ref = access.getVariable();
+            // `X.class` is a class literal, not a field: no java field is named `class`, so the name says so.
+            if (ref != null && "class".equals(ref.getSimpleName())) continue;
             boolean write = access instanceof CtFieldWrite<?>;
             // A write says what the method put there; a read says which field it read.
-            Refs.Ref value = write ? refs.of(valueOf((CtFieldWrite<?>) access)) : refs.of(access);
+            Refs.Ref value = write ? writtenValue((CtFieldWrite<?>) access, refs) : refs.of(access);
             // The field's declared type's arguments: `GenericRepo<T>` is [T], and a reader that binds the parameter
             // knows what the field holds at that site.
             rows.add(new Row(methodId, Refs.fieldId(ref), isStatic(access, ref, refs.failures()), write ? "write" : "read",
@@ -72,12 +76,18 @@ final class FieldAccesses {
         }
     }
 
-    /** The value an assignment gives a field write, or the write itself when it is not a plain assignment. */
-    private static CtExpression<?> valueOf(CtFieldWrite<?> write) {
-        if (write.getParent() instanceof spoon.reflect.code.CtAssignment<?, ?> assignment
-                && assignment.getAssigned() == write)
-            return assignment.getAssignment();
-        return write;
+    /**
+     * What a field write stores. A plain assignment stores its right-hand side. A compound one (`+=`) stores the old
+     * value combined with the right-hand side, which no expression here gives: it is unresolved, and its text keeps
+     * the operator.
+     */
+    private static Refs.Ref writtenValue(CtFieldWrite<?> write, Refs refs) {
+        // A compound assignment is an assignment too, so it is tested first.
+        if (write.getParent() instanceof CtOperatorAssignment<?, ?> compound && compound.getAssigned() == write)
+            return Refs.Ref.unresolved(refs.textOf(compound), "compound-assignment");
+        if (write.getParent() instanceof CtAssignment<?, ?> assignment && assignment.getAssigned() == write)
+            return refs.of(assignment.getAssignment());
+        return refs.of(write);
     }
 
     /**

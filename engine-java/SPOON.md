@@ -20,6 +20,9 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 - `CtOperatorAssignment` (`+=`, `-=`, ...) extends `CtAssignment`. `getAssignment()` is only the right-hand side.
 - `CtCatchVariable` is not a `CtParameter`, `CtLocalVariable` or `CtField`. Handle it on its own.
 - Type parameters (`T`, `Value`, `Entity`) are `CtTypeParameterReference`. They are never receiver types.
+- A generic member's `getType()` is the declared type variable, not the bound argument: `c.get("a")` on a `Cache<Foo>`
+  is typed `Value`. Bind it from the target's `getActualTypeArguments()` at the same position.
+- A catch parameter read is a `CtVariableRead` whose declaration is a `CtCatchVariable` (not a local, not a parameter).
 
 ## Names
 - `getQualifiedName()` spells nested types `pkg.Outer$Inner`. The dump spells them dotted (`pkg.Outer.Inner`), so
@@ -40,8 +43,13 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 - Overrides: use `CtMethod.isOverriding(...)`, not name and arity.
 - Constants (JLS 4.12.4): a `final` variable of primitive or String type with a constant initializer, static or not.
   Fold with Java semantics: integer division, int and long overflow, float stays float.
-- `CtCase.getIncludesDefault()` marks `case null, default`; `getGuard()` holds a `when` guard.
 - Spoon keeps only the first declaration of a duplicate FQN, silently. The engine counts `types.duplicateFqn`.
+- `case null, default` is `getIncludesDefault()` true, and `getCaseExpressions()` holds only `null`. A `when` guard is
+  `getGuard()`. A type pattern label (`case String s`) has no source position, so its text is null.
+- An arrow arm's expression position runs on through the `;` that ends the arm: its source text is `compute();`.
+- `X.class` is a `CtFieldRead` of a field named `class`, not a field: no Java field has that name.
+- The implicit canonical constructor of a record carries its component types as written in the header
+  (`java.lang.String`), while the author's constructor may write `String`: compare resolved names.
 
 ## Output safety
 - JSON cannot hold `NaN` or `Infinity`; write such a value as unresolved.

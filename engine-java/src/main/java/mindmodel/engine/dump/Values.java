@@ -70,6 +70,7 @@ public final class Values {
         return null;
     }
 
+    /** A literal value. NaN and infinities are no JSON value: they are no value at all, and the caller says unresolved. */
     private static Value literal(Object value) {
         if (value == null) return new Value("null", null);
         if (value instanceof String) return new Value("string", value);
@@ -77,8 +78,8 @@ public final class Values {
         if (value instanceof Character c) return new Value("char", String.valueOf(c));
         if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte)
             return new Value("int", value);
-        if (value instanceof Double) return new Value("double", value);
-        if (value instanceof Float) return new Value("float", value);
+        if (value instanceof Double d) return Double.isFinite(d) ? new Value("double", d) : null;
+        if (value instanceof Float f) return Float.isFinite(f) ? new Value("float", f) : null;
         return null;
     }
 
@@ -93,8 +94,8 @@ public final class Values {
     }
 
     /**
-     * An enum constant is a constant. Any other field folds only when it is a constant variable of the language (static
-     * and final, every interface field included) and its initializer folds; everything else is a field read.
+     * An enum constant is a constant. Any other field folds only when it is a constant variable and its initializer
+     * folds; everything else is a field read.
      */
     private static Value field(CtFieldReference<?> ref) {
         CtTypeReference<?> owner = ref.getDeclaringType();
@@ -102,15 +103,22 @@ public final class Values {
         CtField<?> declaration = ref.getFieldDeclaration();
         if (type != null && type.isEnum() && (declaration == null || declaration instanceof CtEnumValue<?>))
             return new Value("enum", Names.dotted(Names.qualified(type), ref.getSimpleName()));
-        if (declaration == null || !constantVariable(declaration) || declaration.getDefaultExpression() == null)
+        if (declaration == null || !isConstantVariable(declaration) || declaration.getDefaultExpression() == null)
             return null;
         return of(declaration.getDefaultExpression());
     }
 
-    private static boolean constantVariable(CtField<?> field) {
+    /**
+     * JLS 4.12.4: a final variable of primitive or String type, with or without static, whose initializer is a constant
+     * expression. Every interface field is final. A final `Object` or `List` is never a constant, whatever its value.
+     */
+    public static boolean isConstantVariable(CtField<?> field) {
         CtType<?> owner = field.getDeclaringType();
-        if (owner != null && owner.isInterface()) return true;
-        return field.getModifiers().contains(ModifierKind.STATIC) && field.getModifiers().contains(ModifierKind.FINAL);
+        boolean isFinal = (owner != null && owner.isInterface()) || field.getModifiers().contains(ModifierKind.FINAL);
+        CtTypeReference<?> type = field.getType();
+        boolean constantType = type != null
+                && (type.isPrimitive() || "java.lang.String".equals(Names.qualified(type)));
+        return isFinal && constantType;
     }
 
     private static Value unary(CtUnaryOperator<?> op) {
@@ -140,9 +148,25 @@ public final class Values {
         }
         if (!(left.value() instanceof Number a) || !(right.value() instanceof Number b)) return null;
         if (isIntegral(a) && isIntegral(b)) return integral(kind, a, b);
-        double x = a.doubleValue();
-        double y = b.doubleValue();
+        // Binary numeric promotion: a double if either side is one, else a float if either side is one.
+        if (a instanceof Double || b instanceof Double) return floating(kind, a.doubleValue(), b.doubleValue());
+        return single(kind, a.floatValue(), b.floatValue());
+    }
+
+    private static Value floating(String kind, double x, double y) {
         Double result = switch (kind) {
+            case "PLUS" -> x + y;
+            case "MINUS" -> x - y;
+            case "MUL" -> x * y;
+            case "DIV" -> y == 0 ? null : x / y;
+            default -> null;
+        };
+        return result == null ? null : literal(result);
+    }
+
+    /** Float arithmetic: `1.1f * 3` is a float, and its float product is what the compiler folds to. */
+    private static Value single(String kind, float x, float y) {
+        Float result = switch (kind) {
             case "PLUS" -> x + y;
             case "MINUS" -> x - y;
             case "MUL" -> x * y;

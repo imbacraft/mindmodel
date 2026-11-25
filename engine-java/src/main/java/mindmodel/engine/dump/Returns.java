@@ -44,8 +44,11 @@ final class Returns {
                  List<Arm> arms) {
     }
 
-    /** One arm of a switch: its labels (empty for `default`) and the value it produces. */
-    record Arm(List<String> labels, Refs.Ref value) {
+    /**
+     * One arm of a switch: its labels (empty for `default`), whether it includes `default` (`case null, default`), its
+     * `when` guard as written (null when none) and the value it produces.
+     */
+    record Arm(List<String> labels, boolean includesDefault, String guard, Refs.Ref value) {
     }
 
     private Returns() {
@@ -127,14 +130,19 @@ final class Returns {
     private static Entry switchEntry(CtSwitchExpression<?, ?> choose, String form, String target, int line, int col,
             Refs refs) {
         List<Arm> arms = new ArrayList<>();
-        for (CtCase<?> arm : choose.getCases()) arms.add(new Arm(labels(arm, refs), refs.of(armValue(arm, null))));
+        for (CtCase<?> arm : choose.getCases()) arms.add(arm(arm, null, refs));
         return new Entry("switch", line, col, null, refs.of(choose.getSelector()), form, target, arms);
     }
 
     private static List<Arm> statementArms(CtSwitch<?> choose, String target, Refs refs) {
         List<Arm> arms = new ArrayList<>();
-        for (CtCase<?> arm : choose.getCases()) arms.add(new Arm(labels(arm, refs), refs.of(armValue(arm, target))));
+        for (CtCase<?> arm : choose.getCases()) arms.add(arm(arm, target, refs));
         return arms;
+    }
+
+    private static Arm arm(CtCase<?> arm, String target, Refs refs) {
+        String guard = arm.getGuard() == null ? null : refs.textOf(arm.getGuard());
+        return new Arm(labels(arm, refs), arm.getIncludesDefault(), guard, refs.of(armValue(arm, target)));
     }
 
     /** A case's labels as written; an empty list means `default`. */
@@ -196,7 +204,8 @@ final class Returns {
                     g.writeArrayFieldStart("labels");
                     for (String label : arm.labels()) g.writeString(label);
                     g.writeEndArray();
-                    g.writeBooleanField("default", arm.labels().isEmpty());
+                    g.writeBooleanField("default", arm.labels().isEmpty() || arm.includesDefault());
+                    if (arm.guard() != null) g.writeStringField("guard", arm.guard());
                     g.writeObjectFieldStart("value");
                     Refs.write(g, arm.value());
                     g.writeEndObject();

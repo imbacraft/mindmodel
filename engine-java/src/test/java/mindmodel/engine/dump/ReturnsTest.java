@@ -101,4 +101,40 @@ class ReturnsTest {
         if (chosen == null) throw new AssertionError("no switch that assigns s in " + g.path("returned"));
         assertEquals("\"b\"", chosen.path("arms").get(0).path("value").path("text").asText());
     }
+
+    /** `case null, default` is a default arm that also takes null, and a `when` guard is written with its arm. */
+    @Test
+    void defaultWithNullAndGuardAreWritten() throws Exception {
+        String source = """
+                package demo;
+                public class Sw {
+                    String m(Object o) { return switch (o) { case null, default -> "d"; }; }
+                    String g(Object o) {
+                        return switch (o) { case String s when s.length() > 2 -> "long"; default -> "x"; };
+                    }
+                }
+                """;
+        var members = DumpRun.of(dir, Map.of("demo/Sw.java", source), List.of("demo/Sw.java"), 21).rows("members");
+        JsonNode m = DumpRun.one(members, "name", "m").path("returned").get(0).path("arms").get(0);
+        assertEquals(true, m.path("default").asBoolean(), "case null, default includes default");
+        assertEquals("null", m.path("labels").get(0).asText());
+        JsonNode g = DumpRun.one(members, "name", "g").path("returned").get(0).path("arms").get(0);
+        assertEquals("s.length() > 2", g.path("guard").asText());
+    }
+
+    /** An arrow arm's value is its expression: the arm's own semicolon is not part of the text. */
+    @Test
+    void arrowArmTextHasNoSemicolon() throws Exception {
+        String source = """
+                package demo;
+                public class Arm {
+                    int h(int a) { return switch (a) { case 1 -> compute(); default -> 0; }; }
+                    int compute() { return 1; }
+                }
+                """;
+        var members = DumpRun.of(dir, Map.of("demo/Arm.java", source), List.of("demo/Arm.java"), 21).rows("members");
+        JsonNode arms = DumpRun.one(members, "name", "h").path("returned").get(0).path("arms");
+        assertEquals("compute()", arms.get(0).path("value").path("text").asText());
+        assertEquals("0", arms.get(1).path("value").path("text").asText());
+    }
 }

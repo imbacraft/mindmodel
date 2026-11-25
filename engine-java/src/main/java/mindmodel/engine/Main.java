@@ -43,8 +43,8 @@ public final class Main {
         List<String> generated = List.of();
         while (rest.size() >= 3 && rest.get(0).startsWith("--")) {
             String flag = rest.get(0);
-            if ("--contract".equals(flag)) contract = Integer.parseInt(rest.get(1));
-            else if ("--compliance".equals(flag)) compliance = Integer.parseInt(rest.get(1));
+            if ("--contract".equals(flag)) contract = number(rest.get(1));
+            else if ("--compliance".equals(flag)) compliance = number(rest.get(1));
             else if ("--classpath".equals(flag)) classpath = lines(rest.get(1));
             else if ("--generated".equals(flag)) generated = lines(rest.get(1));
             else usage();
@@ -58,6 +58,16 @@ public final class Main {
         if (rest.size() != 3) usage();
         Dump.run(Paths.get(rest.get(0)), Paths.get(rest.get(1)), Paths.get(rest.get(2)), compliance, classpath,
                 generated);
+    }
+
+    /** A numeric flag's value. Text that is no number is a usage error (exit 2), not a crash. */
+    private static int number(String text) {
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException e) {
+            usage();
+            return -1;
+        }
     }
 
     /** A flag's file argument: one entry per line, blank lines dropped, order kept (the classpath's order is fixed). */

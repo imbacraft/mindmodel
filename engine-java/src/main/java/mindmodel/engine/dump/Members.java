@@ -411,7 +411,7 @@ public final class Members {
     }
 
     private static void writeConstant(JsonGenerator g, CtField<?> field) throws IOException {
-        if (!field.getModifiers().contains(ModifierKind.FINAL) || field.getDefaultExpression() == null) return;
+        if (!Values.isConstantVariable(field) || field.getDefaultExpression() == null) return;
         Values.Value value = Values.of(field.getDefaultExpression());
         if (value == null) return;
         g.writeFieldName("value");

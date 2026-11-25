@@ -13,8 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * receiver is only reachable through a chain (`jmsContext.createProducer().send(...)`). It is data in the jar, not a
  * resolver: an entry is a fact somebody wrote down, and the dump marks every answer it produces with `origin: library`.
  *
- * Returns are normalised to a raw class: `java.util.stream.Stream<E>` becomes `java.util.stream.Stream`, a type variable
- * (`E`) becomes unknown, and primitives or void become unknown — a chain cannot continue through those.
+ * Returns are normalised to a raw class: `java.util.stream.Stream<E>` becomes `java.util.stream.Stream`, and primitives
+ * or void become unknown — a chain cannot continue through those. The table names no type variable.
  */
 public final class LibraryTypes {
 
@@ -58,13 +58,14 @@ public final class LibraryTypes {
         return methods.get(name + "/" + argc) != null ? methods.get(name + "/" + argc) : methods.get(name);
     }
 
-    /** A type name without generic arguments and without type variables: what a receiver can be. */
+    /**
+     * A type name without generic arguments: what a receiver can be. Primitives and void are no receiver. A name is
+     * never judged by its spelling: a type variable is told apart by its reference kind, before it becomes a name.
+     */
     public static String raw(String type) {
         if (type == null) return null;
         String text = type.replaceAll("<.*", "").replace("[]", "").trim();
         if (text.isEmpty()) return null;
-        String simple = text.substring(text.lastIndexOf('.') + 1);
-        if (simple.length() <= 2 && simple.equals(simple.toUpperCase())) return null; // E, T, R
         if (text.equals("void") || text.equals("boolean") || text.equals("int") || text.equals("long")
                 || text.equals("double") || text.equals("float") || text.equals("byte") || text.equals("short")
                 || text.equals("char")) return null;
@@ -76,6 +77,7 @@ public final class LibraryTypes {
         if (text == null) return null;
         String raw = raw(text);
         if (raw == null) return null;
-        return raw.contains(".") ? raw : "java.lang." + raw;
+        // A table name is always the dotted one; a bare name (a type variable, if one ever slipped in) is no receiver.
+        return raw.contains(".") ? raw : null;
     }
 }

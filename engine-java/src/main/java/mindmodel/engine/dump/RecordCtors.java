@@ -12,6 +12,7 @@ import spoon.reflect.declaration.CtRecordComponent;
 import spoon.reflect.declaration.CtTypeMember;
 import spoon.reflect.declaration.ModifierKind;
 import spoon.reflect.reference.CtTypeReference;
+import spoon.reflect.reference.CtWildcardReference;
 
 /**
  * A record's canonical constructor, read from its components.
@@ -47,13 +48,13 @@ final class RecordCtors {
      * compact constructor, or one whose parameter types are exactly the components' types, is the canonical one.
      */
     static CtConstructor<?> canonical(CtRecord record) {
-        List<String> wanted = typeTexts(componentTypes(record));
+        List<String> wanted = typeKeys(componentTypes(record));
         for (CtTypeMember member : record.getTypeMembers()) {
             if (!(member instanceof CtConstructor<?> ctor)) continue;
             if (ctor.isCompactConstructor()) return ctor;
             List<CtTypeReference<?>> params = new ArrayList<>();
             for (var p : ctor.getParameters()) params.add(p.getType());
-            if (typeTexts(params).equals(wanted)) return ctor;
+            if (typeKeys(params).equals(wanted)) return ctor;
         }
         return null;
     }
@@ -81,11 +82,31 @@ final class RecordCtors {
         return out;
     }
 
-    /** Type texts, sorted: two parameter lists describe the same signature whatever order Spoon wrote them in. */
-    private static List<String> typeTexts(List<CtTypeReference<?>> types) {
+    /**
+     * The resolved keys of a parameter list, sorted. The author may write `String` for a component the record header
+     * wrote `java.lang.String`: both name one type, so the comparison is on resolved names, never on the spelling.
+     */
+    private static List<String> typeKeys(List<CtTypeReference<?>> types) {
         List<String> out = new ArrayList<>();
-        for (CtTypeReference<?> type : types) out.add(Names.typeText(type));
+        for (CtTypeReference<?> type : types) out.add(resolvedKey(type));
         Collections.sort(out);
         return out;
+    }
+
+    /** A type's qualified name with its type arguments, each resolved the same way. */
+    static String resolvedKey(CtTypeReference<?> type) {
+        if (type == null) return "?";
+        if (type instanceof CtWildcardReference wildcard) {
+            CtTypeReference<?> bound = Names.wildcardBound(wildcard);
+            return bound == null ? "?" : (wildcard.isUpper() ? "? extends " : "? super ") + resolvedKey(bound);
+        }
+        StringBuilder out = new StringBuilder(Names.qualified(type));
+        List<CtTypeReference<?>> args = type.getActualTypeArguments();
+        if (!args.isEmpty()) {
+            out.append('<');
+            for (CtTypeReference<?> arg : args) out.append(resolvedKey(arg)).append(',');
+            out.append('>');
+        }
+        return out.toString();
     }
 }
