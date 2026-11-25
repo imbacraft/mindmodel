@@ -607,7 +607,7 @@ const seamText = (t) => {
     const runs = t.mechanism === 'synchronization' ? (t.runs ?? []).join(', ') || 'code' : t.mechanism;
     return `AFTER COMMIT ${short} (${at}): ${runs} runs once the transaction commits; a failure is not rolled back.`;
   }
-  return null;
+  return `${t.kind} ${short} (${at})`;
 };
 
 function transactionsSection(f) {
