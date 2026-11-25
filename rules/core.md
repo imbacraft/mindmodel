@@ -127,7 +127,7 @@ The ceiling follows the app's endpoint count; `facts.md` carries this app's tier
 | How a request travels | ≤ 7 steps, ≤ 5 lanes |
 | What runs on its own | ≤ 10 rows |
 | Rules | ≤ 5 |
-| Stories | 1–5, each ≤ 10 steps and about 250–500 words |
+| Stories | 3–5, each ≤ 10 steps and about 250–500 words |
 | Diagrams | 1: the request-path sequence |
 | Words, core map (everything except stories) | the tier's ceiling below |
 | Words, regions and state | flat caps: regions ≤ 1,000, state ≤ 400 |

@@ -388,7 +388,7 @@
    }
   },
   "regions": {
-   "description": "The codemap: at most 6 domain capabilities plus shared infrastructure, spanning frontend and backend, rendered as text cards in array order (order them along the user's journey), with a shared-infrastructure card last.",
+   "description": "The codemap: at most 7 domain capabilities plus shared infrastructure, spanning frontend and backend, rendered as text cards in array order (order them along the user's journey), with a shared-infrastructure card last.",
    "type": "array",
    "minItems": 2,
    "maxItems": 8,
@@ -631,7 +631,7 @@
   },
   "stories": {
    "type": "array",
-   "minItems": 1,
+   "minItems": 3,
    "maxItems": 5,
    "items": {
     "type": "object",
