@@ -207,7 +207,7 @@ A failure path qualifies only if its outcome changes core state in a way the dev
 - One **persona**, reused across stories, with values **valid in the code** (a real price type, duration or status), cited.
 - ≤ 10 steps, about 250–500 words. Each step: region, 1–3 sentences, citations.
 - **`careful` (optional, ≤ 2 per story):** only on a step that leaves something a rollback cannot undo (an outside call made, a job or event enqueued, a message published). Say what stays done if a later step fails, and **name the repair path**: automatic (retry, reconciler, cleanup job), an endpoint a person can call, or plainly *nothing*. One sentence, about 200 characters (hard cap 220), shown under the step as "Note:". Never on a step that leaves nothing behind.
-- **Importance line:** why it ranks here. **Takeaways:** 2–3 lines tying it to concepts, regions and rules.
+- **Importance line:** why it ranks here. **Takeaways:** 1–3 lines tying it to concepts, regions and rules.
 - Only the map's plain names. Never introduce a new concept name inside a story.
 
 **Never** write change stories ("you're asked to add a field…"): they teach a task, not the system. Never invent behavior: an untraceable step is marked `inferred: true` or removed. Never invent a flow to cover a region; regions no story runs through go to the critic.

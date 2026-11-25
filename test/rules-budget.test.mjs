@@ -16,7 +16,7 @@ const SYSTEM = readSchema('system.schema.json');
 
 // rules/core.md, Part 7, first table. "cap:" names a word cap enforced by engine/validate.mjs.
 const CORE_ROWS = {
-  'Overview': [null, null, 'purpose.boot.run.maxItems'],
+  'Overview': [null, null, 'purpose.boot.entries.maxItems', 'purpose.boot.run.maxItems'],
   'People & outside systems': ['context.actors.maxItems', 'context.externals.maxItems'],
   'Core concepts': ['concepts.maxItems', null],
   'Regions': ['regions.maxItems', null, 'regions.items.parts.maxItems'],

@@ -118,7 +118,7 @@ The ceiling follows the endpoint count. `facts.md` carries this app's tier and e
 
 | Element | Budget (a ceiling, never a target) |
 |---|---|
-| Overview | 1 purpose sentence, plus optional metaphor and non-goals (only if stated). Boot: 1 entry per deployable, ≤ 3 run steps |
+| Overview | 1 purpose sentence, plus optional metaphor and non-goals (only if stated). Boot: 1 entry per deployable (≤ 4), ≤ 3 run steps |
 | People & outside systems | ≤ 7 actors and ≤ 7 externals, each ranked |
 | Core concepts | ≤ 6 cards, plus 1 core sentence naming every concept |
 | Regions | ≤ 8 cards: 7 domain regions + Shared infrastructure (last); ≤ 7 parts each |
