@@ -1044,6 +1044,8 @@ const tableOf = (t) => /name\s*=\s*"([^"]+)"/.exec((t.ann ?? []).find((a) => a.n
             droppedTargets: callStats.droppedTargets,
             unanswered: callStats.unanswered,
             droppedSamples: callStats.droppedSamples?.slice(0, 8),
+            // What the engine could not answer and why; dotted keys only, the rest of counts are sizes.
+            failures: Object.fromEntries(Object.entries(dump.meta?.counts ?? {}).filter(([k]) => k.includes('.'))),
             dump: dumpRun.dir,
           }
         : { spoon: false, reason: dumpRun.reason },
