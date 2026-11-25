@@ -42,12 +42,12 @@ class InventedTypesTest {
         List<JsonNode> calls = DumpRun.of(dir, SOURCES).rows("calls");
 
         JsonNode fresh = DumpRun.one(calls, "name", "helper").path("args").get(0);
-        assertTrue(fresh.path("type").isNull(), "type: " + fresh.path("type"));
+        assertTrue(fresh.path("typeFqn").isNull(), "typeFqn: " + fresh.path("typeFqn"));
         assertTrue(fresh.path("created").isMissingNode(), "created: " + fresh.path("created"));
         assertEquals("new Widget()", fresh.path("text").asText());
 
         JsonNode turn = DumpRun.one(calls, "name", "turn");
-        assertTrue(turn.path("recv").path("type").isNull());
+        assertTrue(turn.path("recv").path("typeFqn").isNull());
         assertEquals("widget", turn.path("recv").path("text").asText());
         assertEquals("unresolved", turn.path("origin").asText());
     }
@@ -58,7 +58,7 @@ class InventedTypesTest {
         JsonNode returned = make.path("returned").get(0).path("value");
 
         assertEquals("w", returned.path("text").asText());
-        assertTrue(returned.path("type").isNull(), "type: " + returned.path("type"));
+        assertTrue(returned.path("typeFqn").isNull(), "typeFqn: " + returned.path("typeFqn"));
         assertTrue(returned.path("from").isMissingNode(), "from: " + returned.path("from"));
     }
 

@@ -323,7 +323,8 @@ public final class Sites {
                 w.row(g -> ctorRow(g, ctx, type, methodId, created, site.pos()));
         } catch (RuntimeException e) {
             // One element Spoon cannot type must not end a 5,000-file dump: name it, keep going.
-            w.row(g -> errorRow(g, methodId, site.element(), site.pos(), e, ctx.refs().failures()));
+            w.row(g -> errorRow(g, methodId, ctx.ids().id(site.element()), site.element(), site.pos(), e,
+                    ctx.refs().failures()));
         }
     }
 
@@ -331,14 +332,14 @@ public final class Sites {
     private static void callRow(JsonGenerator g, Ctx ctx, CtType<?> type, String methodId, CtInvocation<?> call,
             Positions.Pos pos) throws IOException {
         CtExecutableReference<?> ref = call.getExecutable();
-        String name = ref == null ? "?" : ref.getSimpleName();
+        String name = ref == null ? null : ref.getSimpleName();
         int argc = call.getArguments().size();
         String targetText = ctx.refs().textOf(call.getTarget());
         String fieldType = generatedFieldType(ctx.index(), type, targetText);
         String receiver = receiverOf(ctx, type, call, fieldType);
         List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
         Lombok.Item item = null;
-        if (targets.isEmpty()) {
+        if (targets.isEmpty() && ref != null) {
             // Unqualified call: its receiver is the class being written, so a generated sibling is the target.
             String owner = receiver != null ? receiver : Names.qualified(type);
             item = ctx.index().generated().method(owner, name, argc);
@@ -348,7 +349,7 @@ public final class Sites {
             }
         }
         Recv recv = Recv.of(ctx, type, receiver, fieldType != null);
-        head(g, methodId, ctx.ids().id(call), pos, name);
+        head(g, methodId, ctx.ids().id(call), "call", pos, name);
         g.writeNumberField("argc", argc);
         writeRecv(g, recv.invented() ? null : recv.type(), ctx, call.getTarget(), kind(call), how(call.getTarget()),
                 targetText);
@@ -394,20 +395,20 @@ public final class Sites {
     private static void methodRefRow(JsonGenerator g, Ctx ctx, CtType<?> type, String methodId,
             CtExecutableReferenceExpression<?, ?> expression, Positions.Pos pos) throws IOException {
         CtExecutableReference<?> ref = expression.getExecutable();
-        String name = ref == null ? "?" : ref.getSimpleName();
+        String name = ref == null ? null : ref.getSimpleName();
         // The referenced method's arity is the reference's own: a library method has no declaration to count.
-        int argc = ref == null ? 0 : ref.getParameters().size();
+        Integer argc = ref == null ? null : ref.getParameters().size();
         CtExpression<?> target = expression.getTarget();
         String receiver = target == null ? null : ctx.chains().receiver(target);
         if (receiver == null && ref != null && ref.getDeclaringType() != null)
             receiver = Names.nameOf(ref.getDeclaringType());
         if (receiver == null) receiver = Names.qualified(type);
-        List<Target> targets = targets(ref, ctx.index(), receiver, name, argc);
+        List<Target> targets = targets(ref, ctx.index(), receiver, name, argc == null ? 0 : argc);
         Recv recv = Recv.of(ctx, type, receiver, false);
         boolean unknownVar = varLocal(target);
-        head(g, methodId, ctx.ids().id(expression), pos, name);
+        head(g, methodId, ctx.ids().id(expression), "methodRef", pos, name);
         g.writeStringField("via", "methodRef");
-        g.writeNumberField("argc", argc);
+        writeArgc(g, argc);
         writeRecv(g, recv.invented() ? null : recv.type(), ctx, target,
                 ref != null && ref.isStatic() ? "static" : "instance", target == null ? "static" : how(target),
                 ctx.refs().textOf(expression));
@@ -437,7 +438,7 @@ public final class Sites {
         List<Target> targets = made != null ? List.of(new Target(made.id(), "declared"))
                 : targets(ref, ctx.index(), receiver, name, argc);
         Recv recv = Recv.of(ctx, type, receiver, false);
-        head(g, methodId, ctx.ids().id(call), pos, name);
+        head(g, methodId, ctx.ids().id(call), "new", pos, name);
         g.writeNumberField("argc", argc);
         writeRecv(g, recv.invented() ? null : recv.type(), ctx, null, "instance", "new", ctx.refs().textOf(call));
         writeTargets(g, targets);
@@ -461,59 +462,77 @@ public final class Sites {
         return index.generated().constructor(owner, argc);
     }
 
-    /** A site Spoon refused to type: recorded with its reason, never silently dropped and never guessed. */
-    private static void errorRow(JsonGenerator g, String methodId, CtElement site, Positions.Pos pos,
+    /**
+     * A site Spoon refused to type: the row every call row has, with each unknown value null and no target, and with
+     * `origin: error` and the reason. Never silently dropped, never guessed. Package-private so a test can write one.
+     */
+    static void errorRow(JsonGenerator g, String methodId, String id, CtElement site, Positions.Pos pos,
             RuntimeException e, Failures failures) throws IOException {
-        String name = "?";
+        String kind = site instanceof CtExecutableReferenceExpression<?, ?> ? "methodRef"
+                : site instanceof CtConstructorCall<?> ? "new" : "call";
+        String name = null;
         try {
             CtExecutableReference<?> ref = site instanceof CtInvocation<?> call ? call.getExecutable()
                     : site instanceof CtExecutableReferenceExpression<?, ?> expression ? expression.getExecutable()
                     : null;
-            name = ref == null ? "?" : ref.getSimpleName();
+            name = ref == null ? null : ref.getSimpleName();
         } catch (RuntimeException ignored) {
-            // The name is worth having but not worth failing for: the row keeps `?`, and the run says so.
+            // The name is worth having but not worth failing for: the row keeps null, and the run says so.
             failures.count("sites.nameUnresolved");
         }
-        head(g, methodId, null, pos, name);
-        g.writeNumberField("argc", site instanceof CtInvocation<?> call ? call.getArguments().size() : 0);
-        g.writeObjectFieldStart("recv");
-        g.writeNullField("type");
-        g.writeStringField("kind", "unknown");
-        g.writeEndObject();
-        g.writeArrayFieldStart("targets");
-        g.writeEndArray();
+        if (site instanceof CtConstructorCall<?>) name = "<init>";
+        head(g, methodId, id, kind, pos, name);
+        if (site instanceof CtExecutableReferenceExpression<?, ?>) g.writeStringField("via", "methodRef");
+        writeArgc(g, site instanceof CtInvocation<?> call ? call.getArguments().size()
+                : site instanceof CtConstructorCall<?> created ? created.getArguments().size() : null);
+        writeRecv(g, null, null, null, null, null, null);
+        writeTargets(g, List.of());
         g.writeBooleanField("uniqueImpl", false);
         g.writeArrayFieldStart("args");
         g.writeEndArray();
+        inLambda(g, site);
         g.writeStringField("origin", "error");
         g.writeStringField("reason", e.getClass().getSimpleName() + ": " + e.getMessage());
     }
 
-    /** The fields every site row starts with. */
-    private static void head(JsonGenerator g, String methodId, String id, Positions.Pos pos, String name)
+    /** The fields every site row starts with, in the order the call and method-reference rows write them. */
+    private static void head(JsonGenerator g, String methodId, String id, String kind, Positions.Pos pos, String name)
             throws IOException {
         g.writeStringField("method", methodId);
-        g.writeStringField("id", id);
+        if (id == null) g.writeNullField("id");
+        else g.writeStringField("id", id);
         g.writeStringField("file", pos.file());
         g.writeNumberField("line", pos.line());
         g.writeNumberField("col", pos.col());
-        g.writeStringField("name", name);
+        g.writeStringField("kind", kind);
+        if (name == null) g.writeNullField("name");
+        else g.writeStringField("name", name);
+    }
+
+    /** The number of arguments as written, or null when the site could not say how many it has. */
+    private static void writeArgc(JsonGenerator g, Integer argc) throws IOException {
+        if (argc == null) g.writeNullField("argc");
+        else g.writeNumberField("argc", argc);
     }
 
     /**
-     * The receiver object: its type (null when judged invented), its type arguments as the site writes them, how it is
-     * reached, and the text it is written as, which is how a reader names the site.
+     * The receiver object: its type as a join key (null when judged invented or unknown), its type arguments as the site
+     * writes them, how it is reached, and the text it is written as, which is how a reader names the site. All null and
+     * empty for a site that could not be typed.
      */
     private static void writeRecv(JsonGenerator g, String type, Ctx ctx, CtExpression<?> target, String kind,
             String how, String text) throws IOException {
         g.writeObjectFieldStart("recv");
-        if (type == null) g.writeNullField("type");
-        else g.writeStringField("type", type);
+        if (type == null) g.writeNullField("typeFqn");
+        else g.writeStringField("typeFqn", type);
         g.writeArrayFieldStart("typeArgs");
-        for (String arg : ctx.refs().typeArgs(target == null ? null : target.getType(), target)) g.writeString(arg);
+        if (ctx != null) for (String arg : ctx.refs().typeArgs(target == null ? null : target.getType(), target))
+            g.writeString(arg);
         g.writeEndArray();
-        g.writeStringField("kind", kind);
-        g.writeStringField("how", how);
+        if (kind == null) g.writeNullField("kind");
+        else g.writeStringField("kind", kind);
+        if (how == null) g.writeNullField("how");
+        else g.writeStringField("how", how);
         if (text == null) g.writeNullField("text");
         else g.writeStringField("text", text);
         g.writeEndObject();
@@ -542,8 +561,9 @@ public final class Sites {
         g.writeEndArray();
     }
 
+    /** Every site says whether it sits inside a lambda, where it may run later or never. */
     private static void inLambda(JsonGenerator g, CtElement site) throws IOException {
-        if (site.getParent(CtLambda.class) != null) g.writeBooleanField("inLambda", true);
+        g.writeBooleanField("inLambda", site.getParent(CtLambda.class) != null);
     }
 
     private static String callOrigin(Ctx ctx, List<Target> targets, Lombok.Item generated,

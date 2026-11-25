@@ -46,7 +46,7 @@ class ReturnsTest {
         JsonNode arm = outer.path("arms").get(0);
         assertEquals("1", arm.path("labels").get(0).asText());
         assertEquals("7", arm.path("value").path("text").asText(), "the outer arm yields 7, not the nested 10");
-        assertEquals("0", outer.path("arms").get(1).path("value").path("value").asText());
+        assertEquals("0", outer.path("arms").get(1).path("value").path("value").path("value").asText());
     }
 
     /** The same trap with a `return` switch whose arm yields a local the nested switch's arms also name. */
@@ -70,7 +70,7 @@ class ReturnsTest {
 
         JsonNode outer = f.path("returned").get(0);
         assertEquals("v", outer.path("arms").get(0).path("value").path("text").asText());
-        assertEquals("z", outer.path("arms").get(1).path("value").path("value").asText());
+        assertEquals("z", outer.path("arms").get(1).path("value").path("value").path("value").asText());
     }
 
     /** A statement switch that fills one local: an arm's value is its assignment, not a return from a nested switch. */

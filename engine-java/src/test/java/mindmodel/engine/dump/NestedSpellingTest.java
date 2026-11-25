@@ -57,11 +57,11 @@ class NestedSpellingTest {
         List<JsonNode> takes = calls(DumpRun.of(dir, SOURCES), "take");
 
         JsonNode fresh = argument(takes, "new").path("args").get(0);
-        assertEquals("demo.Outer.In", fresh.path("type").asText());
+        assertEquals("demo.Outer.In", fresh.path("typeFqn").asText());
         assertEquals("demo.Outer.In", fresh.path("created").asText());
 
         JsonNode local = argument(takes, "local").path("args").get(0);
-        assertEquals("demo.Outer.In", local.path("type").asText());
+        assertEquals("demo.Outer.In", local.path("typeFqn").asText());
         assertEquals("new demo.Outer.In", local.path("from").asText());
     }
 
@@ -77,7 +77,7 @@ class NestedSpellingTest {
     void lombokChainUsesTheDottedName() throws Exception {
         JsonNode label = DumpRun.one(DumpRun.of(dir, SOURCES).rows("calls"), "name", "label");
 
-        assertEquals("demo.Outer.In", label.path("recv").path("type").asText());
+        assertEquals("demo.Outer.In", label.path("recv").path("typeFqn").asText());
         assertEquals("demo.Outer.In#label()", label.path("targets").get(0).path("id").asText());
     }
 

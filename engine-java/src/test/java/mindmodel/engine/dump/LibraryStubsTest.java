@@ -61,12 +61,12 @@ class LibraryStubsTest {
                 .anyMatch(m -> "private".equals(m.asText())), "private is spelled private");
     }
 
-    /** A field whose type is a type variable names no type, so its typeFqn is empty rather than the variable's name. */
+    /** A field whose type is a type variable names no type, so its typeFqn is null rather than the variable's name. */
     @Test
     void aTypeVariableFieldHasNoTypeKey() throws Exception {
         Path classes = DumpRun.compile(dir, Map.of("lib/Holder.java", HOLDER));
         JsonNode holder = DumpRun.one(libraryRows(classes), "fqn", "lib.Holder");
-        assertEquals("", field(holder, "value").path("typeFqn").asText(), "T is no type: the key is empty, not T");
+        assertTrue(field(holder, "value").path("typeFqn").isNull(), "T is no type: the key is null, not T");
     }
 
     private List<JsonNode> libraryRows(Path classes) throws IOException {

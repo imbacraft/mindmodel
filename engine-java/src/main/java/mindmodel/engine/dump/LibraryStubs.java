@@ -2,7 +2,9 @@ package mindmodel.engine.dump;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -94,35 +96,52 @@ public final class LibraryStubs {
         return ref;
     }
 
+    /**
+     * One library type's row. Its lists are sorted: Spoon reads a class's fields and methods by reflection, whose
+     * order the JVM does not promise, and the section must not depend on it. Fields by name; methods by name, then
+     * parameter types.
+     */
     private static void type(JsonGenerator g, String fqn, CtType<?> t) throws IOException {
         g.writeStringField("fqn", fqn);
         g.writeStringField("kind", Types.kind(t));
         g.writeStringField("origin", "library");
         g.writeArrayFieldStart("supers");
-        for (CtTypeReference<?> s : t.getSuperInterfaces()) g.writeString(Names.qualified(s));
+        for (CtTypeReference<?> s : t.getSuperInterfaces()) Types.supertype(g, "interface", s, Names.qualified(s));
         if (t.getSuperclass() != null && !"java.lang.Object".equals(Names.qualified(t.getSuperclass())))
-            g.writeString(Names.qualified(t.getSuperclass()));
+            Types.supertype(g, "class", t.getSuperclass(), Names.qualified(t.getSuperclass()));
         g.writeEndArray();
+        List<CtField<?>> fields = new ArrayList<>(t.getFields());
+        fields.sort(Comparator.comparing((CtField<?> f) -> f.getSimpleName()));
         g.writeArrayFieldStart("fields");
-        for (CtField<?> f : t.getFields()) {
+        for (CtField<?> f : fields) {
             g.writeStartObject();
             g.writeStringField("name", f.getSimpleName());
             // With generic arguments: `java.lang.ThreadLocal<com.acme.Ctx>` is what makes a holder's element readable.
             g.writeStringField("type", Names.typeText(f.getType()));
-            // A type variable names no type: a reader would take `Value` for a class, so the join key stays empty.
-            g.writeStringField("typeFqn", f.getType() == null || f.getType() instanceof CtTypeParameterReference
-                    ? "" : Names.qualified(f.getType()));
+            // A type variable names no type: a reader would take `Value` for a class, so the join key is null.
+            if (f.getType() == null || f.getType() instanceof CtTypeParameterReference) g.writeNullField("typeFqn");
+            else g.writeStringField("typeFqn", Names.qualified(f.getType()));
             Ndjson.modifiers(g, f.getModifiers());
             g.writeEndObject();
         }
         g.writeEndArray();
+        List<CtMethod<?>> methods = new ArrayList<>(t.getMethods());
+        methods.sort(Comparator.comparing((CtMethod<?> m) -> m.getSimpleName())
+                .thenComparing(m -> paramTexts(m)));
         g.writeArrayFieldStart("methods");
-        for (CtMethod<?> m : t.getMethods()) {
+        for (CtMethod<?> m : methods) {
             g.writeStartObject();
             g.writeStringField("name", m.getSimpleName());
             g.writeStringField("returns", Names.typeText(m.getType()));
             g.writeArrayFieldStart("params");
-            for (CtParameter<?> p : m.getParameters()) g.writeString(Names.typeText(p.getType()));
+            for (CtParameter<?> p : m.getParameters()) {
+                // A class file keeps no parameter names the dump may give: the name is unknown, not `arg0`.
+                g.writeStartObject();
+                g.writeStringField("type", Names.typeText(p.getType()));
+                g.writeNullField("name");
+                g.writeBooleanField("varargs", p.isVarArgs());
+                g.writeEndObject();
+            }
             g.writeEndArray();
             Ndjson.modifiers(g, m.getModifiers());
             g.writeEndObject();
@@ -130,13 +149,29 @@ public final class LibraryStubs {
         g.writeEndArray();
     }
 
-    private static void unreadable(JsonGenerator g, String fqn, Throwable failure) throws IOException {
+    /** A method's parameter types, comma-joined, as the sort key that tells overloads apart. */
+    private static String paramTexts(CtMethod<?> m) {
+        List<String> texts = new ArrayList<>();
+        for (CtParameter<?> p : m.getParameters()) texts.add(Names.typeText(p.getType()));
+        return String.join(",", texts);
+    }
+
+    /**
+     * A library type Spoon could not read, with the error shape every error row has: `origin: error`, `reason`, and the
+     * same keys as a readable row, with the unknown ones null or empty (`kind` is unknown, nothing was read).
+     */
+    static void unreadable(JsonGenerator g, String fqn, Throwable failure) throws IOException {
         g.writeStringField("fqn", fqn);
-        g.writeStringField("origin", "library");
-        g.writeStringField("unresolved", "library-class-unreadable");
+        g.writeNullField("kind");
+        g.writeStringField("origin", "error");
         String why = failure.getClass().getSimpleName();
         if (failure.getMessage() != null && !failure.getMessage().isBlank()) why += ": " + failure.getMessage();
         g.writeStringField("reason", why.length() > 200 ? why.substring(0, 200) : why);
+        g.writeArrayFieldStart("supers");
+        g.writeEndArray();
+        g.writeArrayFieldStart("fields");
+        g.writeEndArray();
+        g.writeArrayFieldStart("methods");
+        g.writeEndArray();
     }
-
 }

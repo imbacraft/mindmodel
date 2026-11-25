@@ -81,7 +81,7 @@ class LombokTest {
             JsonNode info = DumpRun.one(DumpRun.of(dir, Map.of("demo/Logged.java", source)).rows("calls"),
                     "name", "info");
 
-            assertEquals(entry.getValue(), info.path("recv").path("type").asText(), annotation);
+            assertEquals(entry.getValue(), info.path("recv").path("typeFqn").asText(), annotation);
         }
     }
 

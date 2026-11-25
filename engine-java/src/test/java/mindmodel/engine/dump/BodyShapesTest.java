@@ -46,19 +46,19 @@ class BodyShapesTest {
                 "demo.Loops#run(int)");
 
         JsonNode loop = run.path("loops").get(0);
-        assertEquals(lineOf(LOOPS, "for (int i"), loop.path("start").asInt());
-        assertEquals(lineOf(LOOPS, "if (i > 2)") + 1, loop.path("end").asInt());
+        assertEquals(lineOf(LOOPS, "for (int i"), loop.path("line").asInt());
+        assertEquals(lineOf(LOOPS, "if (i > 2)") + 1, loop.path("endLine").asInt());
 
         List<String> kinds = new ArrayList<>();
         run.path("branches").forEach(arm -> kinds.add(arm.path("kind").asText()));
         assertEquals(List.of("else", "if", "catch"), kinds);
-        assertEquals(lineOf(LOOPS, "if (i > 2)"), run.path("branches").get(1).path("start").asInt());
+        assertEquals(lineOf(LOOPS, "if (i > 2)"), run.path("branches").get(1).path("line").asInt());
 
         JsonNode attempt = run.path("tryBlocks").get(0);
-        assertEquals(lineOf(LOOPS, "try {"), attempt.path("start").asInt());
-        assertEquals(lineOf(LOOPS, "} catch"), attempt.path("end").asInt());
-        assertEquals(lineOf(LOOPS, "} finally {"), attempt.path("finallyStart").asInt());
-        assertEquals(lineOf(LOOPS, "total--;") + 1, attempt.path("finallyEnd").asInt());
+        assertEquals(lineOf(LOOPS, "try {"), attempt.path("line").asInt());
+        assertEquals(lineOf(LOOPS, "} catch"), attempt.path("endLine").asInt());
+        assertEquals(lineOf(LOOPS, "} finally {"), attempt.path("finallyLine").asInt());
+        assertEquals(lineOf(LOOPS, "total--;") + 1, attempt.path("finallyEndLine").asInt());
     }
 
     @Test

@@ -103,7 +103,7 @@ class ValuesTest {
         var calls = run.rows("calls");
         JsonNode s = withArgText(calls, "S");
         assertEquals("constant", s.path("args").path(0).path("kind").asText());
-        assertEquals("x", s.path("args").path(0).path("value").asText());
+        assertEquals("x", s.path("args").path(0).path("value").path("value").asText());
         assertEquals("field", withArgText(calls, "O").path("args").path(0).path("kind").asText(),
                 "a final Object is not a constant variable");
         JsonNode objectField = DumpRun.one(run.rows("members"), "name", "O");
@@ -128,6 +128,6 @@ class ValuesTest {
         assertEquals("3.3000002", f.path("value").asText(), "1.1f * 3 is the float 3.3000002, not the double");
         JsonNode d = DumpRun.one(run.rows("members"), "name", "D").path("value");
         assertEquals("double", d.path("kind").asText());
-        assertEquals("float", withArgText(run.rows("calls"), "F").path("args").path(0).path("valueKind").asText());
+        assertEquals("float", withArgText(run.rows("calls"), "F").path("args").path(0).path("value").path("kind").asText());
     }
 }

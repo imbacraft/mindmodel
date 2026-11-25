@@ -217,7 +217,7 @@ class SitesTest {
 
         for (JsonNode call : calls) {
             assertEquals(List.of(), targetIds(call), "Thread's setName is a library method");
-            assertEquals("java.lang.Thread", call.path("recv").path("type").asText(),
+            assertEquals("java.lang.Thread", call.path("recv").path("typeFqn").asText(),
                     "the receiver is the anonymous class's supertype, never Outer and never an empty package");
         }
     }

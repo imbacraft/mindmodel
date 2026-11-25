@@ -131,24 +131,34 @@ final class FieldAccesses {
             // A field written through a type Spoon could not name: the access is real, its identity is not.
             g.writeStringField("origin", "unresolved");
             g.writeStringField("reason", "no-declaring-type");
+        } else {
+            g.writeStringField("origin", "java");
         }
-        g.writeObjectFieldStart("value");
-        Refs.write(g, row.value());
-        g.writeEndObject();
+        writeValue(g, row.value());
     }
 
-    private static void errorRow(JsonGenerator g, Row row, RuntimeException e) throws IOException {
+    /** An access Spoon could not describe: the row's keys, a null field and value, `origin: error` and the reason. */
+    static void errorRow(JsonGenerator g, Row row, RuntimeException e) throws IOException {
         head(g, row);
         g.writeStringField("origin", "error");
         g.writeStringField("reason", e.getClass().getSimpleName() + ": " + e.getMessage());
+        writeValue(g, Refs.Ref.unresolved(null, "error"));
     }
 
+    private static void writeValue(JsonGenerator g, Refs.Ref value) throws IOException {
+        g.writeObjectFieldStart("value");
+        Refs.write(g, value);
+        g.writeEndObject();
+    }
+
+    /** The keys every field row starts with; `field` is null when Spoon could not name the field's owner. */
     private static void head(JsonGenerator g, Row row) throws IOException {
         g.writeStringField("method", row.method());
         if (row.field() == null) g.writeNullField("field");
         else g.writeStringField("field", row.field());
         g.writeBooleanField("static", row.isStatic());
         g.writeStringField("op", row.op());
+        g.writeStringField("kind", "access");
         g.writeArrayFieldStart("typeArgs");
         for (String argument : row.typeArgs()) g.writeString(argument);
         g.writeEndArray();

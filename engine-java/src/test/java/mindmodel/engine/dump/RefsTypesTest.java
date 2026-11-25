@@ -42,13 +42,13 @@ class RefsTypesTest {
 
         JsonNode base = repo.path("supertypes").get(0);
         assertEquals("class", base.path("kind").asText());
-        assertEquals("demo.Base", base.path("fqn").asText());
-        assertEquals("Base<Order>", base.path("text").asText());
+        assertEquals("demo.Base", base.path("typeFqn").asText());
+        assertEquals("Base<Order>", base.path("type").asText());
 
         JsonNode store = repo.path("supertypes").get(1);
         assertEquals("interface", store.path("kind").asText());
-        assertEquals("demo.Store", store.path("fqn").asText());
-        assertEquals("Store<Order, String>", store.path("text").asText());
+        assertEquals("demo.Store", store.path("typeFqn").asText());
+        assertEquals("Store<Order, String>", store.path("type").asText());
     }
 
     @Test
@@ -127,7 +127,7 @@ class RefsTypesTest {
     void receiverParameterCarriesItsTypeArgumentsIntoTheCall() throws Exception {
         JsonNode size = DumpRun.one(DumpRun.of(dir, SOURCES).rows("calls"), "name", "size");
 
-        assertEquals("java.util.List", size.path("recv").path("type").asText());
+        assertEquals("java.util.List", size.path("recv").path("typeFqn").asText());
         assertEquals("demo.Order", size.path("recv").path("typeArgs").get(0).asText());
     }
 

@@ -44,8 +44,10 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 - Constants (JLS 4.12.4): a `final` variable of primitive or String type with a constant initializer, static or not.
   Fold with Java semantics: integer division, int and long overflow, float stays float.
 - Spoon keeps only the first declaration of a duplicate FQN, silently. The engine counts `types.duplicateFqn`.
+- A type or record pattern case label (`case String s`, `case Pair(String l, int r)`) is a `CtCasePattern` wrapping the
+  `CtTypePattern` or `CtRecordPattern`; the pattern has no source position, so its text is built from its parts.
 - `case null, default` is `getIncludesDefault()` true, and `getCaseExpressions()` holds only `null`. A `when` guard is
-  `getGuard()`. A type pattern label (`case String s`) has no source position, so its text is null.
+  `getGuard()`. A type pattern label has no source position: see the `CtCasePattern` entry below.
 - An arrow arm's expression position runs on through the `;` that ends the arm: its source text is `compute();`.
 - `X.class` is a `CtFieldRead` of a field named `class`, not a field: no Java field has that name.
 - The implicit canonical constructor of a record carries its component types as written in the header

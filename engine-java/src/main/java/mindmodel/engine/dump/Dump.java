@@ -27,7 +27,7 @@ import mindmodel.engine.SourceModel;
  */
 public final class Dump {
 
-    public static final int CONTRACT = 7;
+    public static final int CONTRACT = 8;
     public static final String ENGINE = "spoon-11.5.0";
 
     private Dump() {
@@ -72,7 +72,7 @@ public final class Dump {
         List<CtType<?>> known = new ArrayList<>(types);
         for (CtType<?> t : model.allTypes()) if (model.isGenerated(t) && declared(t)) known.add(t);
         Map<String, List<Lombok.Item>> synth = Lombok.synthesize(types, positions, failures);
-        Types.write(types, positions, outDir.resolve("types.ndjson"));
+        Types.write(types, positions, outDir.resolve("types.ndjson"), failures);
         // Every body is walked once; the call rows carry the ids the other sections name, so calls are written first.
         Walk.Bodies bodies = new Walk.Bodies(types, positions);
         CallIds ids = new CallIds();
@@ -179,8 +179,9 @@ public final class Dump {
     }
 
     /** Parse errors by project-relative file, so the dump names what it could not read. */
-    private static Map<String, List<String>> problems(SourceModel model, Positions positions, List<String> unread) {
-        Map<String, List<String>> out = new LinkedHashMap<>();
+    private static Map<String, List<Files.FileError>> problems(SourceModel model, Positions positions,
+            List<String> unread) {
+        Map<String, List<Files.FileError>> out = new LinkedHashMap<>();
         Path base = positions.root();
         for (var problem : model.problems()) {
             char[] name = problem.getOriginatingFileName();
@@ -192,10 +193,14 @@ public final class Dump {
             Path file = Path.of(new String(name)).toAbsolutePath().normalize();
             if (!file.startsWith(base) || model.isGeneratedFile(file)) continue;
             String rel = base.relativize(file).toString().replace('\\', '/');
-            out.computeIfAbsent(rel, k -> new ArrayList<>()).add(message);
+            int line = problem.getSourceLineNumber();
+            out.computeIfAbsent(rel, k -> new ArrayList<>())
+                    .add(new Files.FileError("syntax", message, line > 0 ? line : null));
         }
         // A file whose type is still a bare shell after the second read: the row says so rather than claiming a type.
-        for (String rel : unread) out.computeIfAbsent(rel, k -> new ArrayList<>()).add("type-without-position");
+        for (String rel : unread)
+            out.computeIfAbsent(rel, k -> new ArrayList<>())
+                    .add(new Files.FileError("type-without-position", "type-without-position", null));
         return out;
     }
 

@@ -51,16 +51,16 @@ class ReceiverTypesTest {
         var run = DumpRun.of(dir, Map.of("demo/Cache.java", CACHE, "demo/Foo.java", FOO, "demo/Use.java", USE));
         List<JsonNode> calls = run.rows("calls");
         int bound = DumpRun.lineOf(USE, "void bound");
-        assertEquals("demo.Foo", callOn(calls, bound, "bar").path("recv").path("type").asText());
+        assertEquals("demo.Foo", callOn(calls, bound, "bar").path("recv").path("typeFqn").asText());
         int wildcard = DumpRun.lineOf(USE, "void wildcard");
-        assertEquals("demo.Foo", callOn(calls, wildcard, "bar").path("recv").path("type").asText(),
+        assertEquals("demo.Foo", callOn(calls, wildcard, "bar").path("recv").path("typeFqn").asText(),
                 "? extends Foo has Foo as its upper bound");
         int field = DumpRun.lineOf(USE, "void field");
-        assertEquals("demo.Foo", callOn(calls, field, "bar").path("recv").path("type").asText(),
+        assertEquals("demo.Foo", callOn(calls, field, "bar").path("recv").path("typeFqn").asText(),
                 "a field of type Value is bound by its target's type argument too");
         // pick(T) is bound by the method, not by Cache's type argument: it is never a Value, and never a bare T.
         int method = DumpRun.lineOf(USE, "void method");
-        String picked = callOn(calls, method, "bar").path("recv").path("type").textValue();
+        String picked = callOn(calls, method, "bar").path("recv").path("typeFqn").textValue();
         assertFalse("T".equals(picked) || "Value".equals(picked), "a method's type variable is no receiver");
     }
 
@@ -70,8 +70,8 @@ class ReceiverTypesTest {
         List<JsonNode> calls = run.rows("calls");
         int raw = DumpRun.lineOf(USE, "void raw");
         JsonNode bar = callOn(calls, raw, "bar");
-        assertNull(bar.path("recv").path("type").textValue(), "a raw target binds nothing: unknown, not Value");
-        for (JsonNode call : calls) assertFalse("Value".equals(call.path("recv").path("type").textValue()));
+        assertNull(bar.path("recv").path("typeFqn").textValue(), "a raw target binds nothing: unknown, not Value");
+        for (JsonNode call : calls) assertFalse("Value".equals(call.path("recv").path("typeFqn").textValue()));
     }
 
     /**
@@ -94,6 +94,6 @@ class ReceiverTypesTest {
         var run = DumpRun.of(dir.resolve("run"), Map.of("demo/Short.java", source), List.of("demo/Short.java"), 17,
                 List.of(classes.toString()));
         int chain = DumpRun.lineOf(source, "void chain");
-        assertEquals("lib.ID", callOn(run.rows("calls"), chain, "go").path("recv").path("type").asText());
+        assertEquals("lib.ID", callOn(run.rows("calls"), chain, "go").path("recv").path("typeFqn").asText());
     }
 }

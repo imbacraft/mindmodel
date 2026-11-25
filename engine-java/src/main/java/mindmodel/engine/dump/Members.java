@@ -38,15 +38,18 @@ import spoon.reflect.reference.CtTypeReference;
 /**
  * members.ndjson: fields, methods, constructors, enum constants and record components. A generated member (Lombok) is
  * added by the synthesis pass with {@code generated: "lombok"}, positioned at the annotated declaration.
+ *
+ * <p>Every executable row (a method or constructor, declared, anonymous, generated or a record's) carries the
+ * same keys, so a reader needs one shape for them: the body facts are empty arrays for a row with no body, never absent.
  */
 public final class Members {
 
     /** One decision arm of a body: the lines its statement(s) occupy, and which decision put them there. */
-    private record Arm(int start, int end, String kind) {
+    private record Arm(int line, int endLine, String kind) {
     }
 
-    /** One `try` in a body: the lines of its block and, when it has one, of its finalizer. */
-    private record TryRange(int start, int end, int finallyStart, int finallyEnd) {
+    /** One `try` in a body: the lines of its block and, when it has one, of its finalizer (0 when it has none). */
+    private record TryRange(int line, int endLine, int finallyLine, int finallyEndLine) {
     }
 
     /** What every row reads: the run's bodies, positions, returns and failure counts. */
@@ -54,43 +57,81 @@ public final class Members {
                        Failures failures) {
     }
 
+    /**
+     * One member row, with what its type's rows are ordered by: the position (null last), then kind, name and id. The
+     * body writes the row once it is put in that order.
+     */
+    private record Entry(Positions.Pos pos, String kind, String name, String id, Ndjson.Body body) {
+    }
+
+    private static final Comparator<Entry> ORDER = Comparator
+            .comparing((Entry e) -> e.pos() == null)
+            .thenComparingInt(e -> e.pos() == null ? 0 : e.pos().line())
+            .thenComparingInt(e -> e.pos() == null ? 0 : e.pos().col())
+            .thenComparing(Entry::kind)
+            .thenComparing(Entry::name)
+            .thenComparing(Entry::id);
+
     private Members() {
     }
 
+    /**
+     * Writes members.ndjson: grouped by owner in types.ndjson order; within an owner, by source position, then kind,
+     * name and id. Generated members are placed by their annotated element's position like the declared ones.
+     */
     public static void write(List<CtType<?>> types, Map<String, List<Lombok.Item>> synth, Walk.Bodies bodies,
             Positions positions, Path out, Map<CtExecutable<?>, List<Returns.Entry>> returns, Failures failures)
             throws IOException {
         Ctx ctx = new Ctx(bodies, positions, returns, failures);
         try (Ndjson w = new Ndjson(out)) {
-            for (CtType<?> t : types) writeType(w, t, synth.getOrDefault(Names.qualified(t), List.of()), ctx);
+            for (CtType<?> t : types) {
+                List<Entry> entries = entries(t, synth.getOrDefault(Names.qualified(t), List.of()), ctx);
+                entries.sort(ORDER);
+                for (Entry entry : entries) w.row(entry.body());
+            }
         }
     }
 
-    /** One type's rows, in the order the section has always written them. */
-    private static void writeType(Ndjson w, CtType<?> t, List<Lombok.Item> generated, Ctx ctx) throws IOException {
+    /** Every row one type owns, unsorted: anonymous methods, enum constants, members, generated and record parts. */
+    private static List<Entry> entries(CtType<?> t, List<Lombok.Item> generated, Ctx ctx) {
+        List<Entry> out = new ArrayList<>();
         // Methods of anonymous and local classes written in a member's body: the type's own body work.
-        for (Walk.Anon anon : ctx.bodies().anonymous(t)) w.row(g -> anonymous(g, t, anon, ctx));
+        for (Walk.Anon anon : ctx.bodies().anonymous(t)) {
+            CtMethod<?> method = anon.method();
+            out.add(new Entry(ctx.positions().of(method), "method", method.getSimpleName(), anon.id(),
+                    g -> anonymous(g, t, anon, ctx)));
+        }
         if (t instanceof CtEnum<?> e)
-            for (CtEnumValue<?> value : e.getEnumValues()) w.row(g -> enumConstant(g, t, value, ctx));
-        for (CtTypeMember member : t.getTypeMembers()) writeMember(w, t, member, ctx);
+            for (CtEnumValue<?> value : e.getEnumValues())
+                out.add(new Entry(ctx.positions().of(value), "enumConstant", value.getSimpleName(), "",
+                        g -> enumConstant(g, t, value, ctx)));
+        for (CtTypeMember member : t.getTypeMembers()) memberEntry(t, member, ctx, out);
         Set<String> declaredIds = declaredIds(t);
         // An explicit member wins over a generated one.
-        for (Lombok.Item item : generated) if (!declaredIds.contains(item.id())) w.row(g -> synthRow(g, item));
-        if (t instanceof CtRecord record) writeRecord(w, record, ctx);
+        for (Lombok.Item item : generated)
+            if (!declaredIds.contains(item.id()))
+                out.add(new Entry(item.pos(), item.kind(), item.name(), item.id(), g -> synthRow(g, item, ctx)));
+        if (t instanceof CtRecord record) recordEntries(record, ctx, out);
+        return out;
     }
 
-    private static void writeMember(Ndjson w, CtType<?> t, CtTypeMember member, Ctx ctx) throws IOException {
+    private static void memberEntry(CtType<?> t, CtTypeMember member, Ctx ctx, List<Entry> out) {
         // Enum constants are written with the enum's own rows; Spoon also lists them as fields, which they are not.
         if (member instanceof CtEnumValue<?>) return;
         if (member instanceof CtField<?> field) {
-            w.row(g -> field(g, t, field, ctx));
+            out.add(new Entry(ctx.positions().of(field), "field", field.getSimpleName(), "",
+                    g -> field(g, t, field, ctx)));
         } else if (member instanceof CtConstructor<?> ctor) {
             // A record's canonical constructor is written from its components: Spoon 11.5 hands it back in another
             // order, and leaves it out entirely for a nested record.
             if (t instanceof CtRecord record && RecordCtors.isCanonical(record, ctor)) return;
-            w.row(g -> executable(g, t, ctor, Names.executableId(t, ctor), false, ctx));
+            String id = Names.executableId(t, ctor);
+            out.add(new Entry(ctx.positions().of(ctor), "constructor", t.getSimpleName(), id,
+                    g -> executable(g, t, ctor, id, false, ctx)));
         } else if (member instanceof CtMethod<?> method && !compilerWritten(t, method)) {
-            w.row(g -> executable(g, t, method, Names.executableId(t, method), false, ctx));
+            String id = Names.executableId(t, method);
+            out.add(new Entry(ctx.positions().of(method), "method", method.getSimpleName(), id,
+                    g -> executable(g, t, method, id, false, ctx)));
         }
     }
 
@@ -113,17 +154,25 @@ public final class Members {
         return ids;
     }
 
-    private static void writeRecord(Ndjson w, CtRecord record, Ctx ctx) throws IOException {
-        w.row(g -> recordConstructor(g, record, ctx));
+    /** A record's rows: its canonical constructor, then each component and the accessor the compiler writes for it. */
+    private static void recordEntries(CtRecord record, Ctx ctx, List<Entry> out) {
+        CtConstructor<?> canonical = RecordCtors.canonical(record);
+        out.add(new Entry(RecordCtors.citation(record, canonical, ctx.positions()), "constructor",
+                record.getSimpleName(), RecordCtors.id(record), g -> recordConstructor(g, record, ctx)));
         for (CtRecordComponent component : record.getRecordComponents()) {
-            w.row(g -> recordComponent(g, record, component, ctx));
+            out.add(new Entry(ctx.positions().of(component), "recordComponent", component.getSimpleName(), "",
+                    g -> recordComponent(g, record, component, ctx)));
             // The accessor is generated by the compiler but real to every caller, so it is a member with a position:
             // the component's own line. Spoon may already expose it, with a body the author wrote: nothing to add then.
             boolean authored = record.getMethods().stream()
                     .anyMatch(m -> m.getSimpleName().equals(component.getSimpleName())
                             && m.getParameters().isEmpty()
                             && m.getPosition() != null && m.getPosition().isValidPosition());
-            if (!authored) w.row(g -> recordAccessor(g, record, component, ctx));
+            if (!authored) {
+                String id = Names.methodId(record, component.getSimpleName(), List.of());
+                out.add(new Entry(ctx.positions().of(component), "method", component.getSimpleName(), id,
+                        g -> recordAccessor(g, record, component, ctx)));
+            }
         }
     }
 
@@ -134,7 +183,7 @@ public final class Members {
         g.writeStringField("type", Names.typeText(f.getType()));
         // The type as the compiler names it: a declaration's field type is a fact, not something Node resolves. A type
         // Spoon invented has no name here: the written name stays in `type`, and the run counts it.
-        g.writeStringField("typeFqn", Refs.joinKey(f.getType(), f, ctx.failures()));
+        writeKey(g, "typeFqn", Refs.joinKey(f.getType(), f, ctx.failures()));
         Ndjson.modifiers(g, f.getModifiers());
         Anns.write(g, f.getAnnotations());
         Ndjson.pos(g, ctx.positions().of(f));
@@ -158,7 +207,7 @@ public final class Members {
 
     /**
      * One constructor or method: its signature, modifiers, body facts and position. An anonymous method is the same row
-     * with its line-suffixed id and `anonymous: true`.
+     * with its line-suffixed id and `anonymous: true`. Methods carry `returns` and `isMain`; constructors do not.
      */
     private static void executable(JsonGenerator g, CtType<?> owner, CtExecutable<?> e, String id, boolean anonymous,
             Ctx ctx) throws IOException {
@@ -171,11 +220,12 @@ public final class Members {
         if (e instanceof CtMethod<?> method) {
             g.writeStringField("returns", Names.typeText(method.getType()));
             // An entry point is a shape of the code, not a conclusion: `public static void main(String[])`.
-            if (!anonymous) g.writeBooleanField("isMain", isMain(method));
+            // An anonymous method is never one.
+            g.writeBooleanField("isMain", !anonymous && isMain(method));
         }
         Ndjson.modifiers(g, ((CtModifiable) e).getModifiers());
         g.writeBooleanField("hasBody", e.getBody() != null);
-        if (anonymous) g.writeBooleanField("anonymous", true);
+        g.writeBooleanField("anonymous", anonymous);
         throwsOf(g, e.getThrownTypes());
         Anns.write(g, e.getAnnotations());
         body(g, e, ctx);
@@ -208,6 +258,7 @@ public final class Members {
         g.writeStringField("id", RecordCtors.id(owner));
         Ndjson.modifiers(g, RecordCtors.modifiers(owner, ctor));
         g.writeBooleanField("hasBody", ctor == null || ctor.getBody() != null);
+        g.writeBooleanField("anonymous", false);
         Collection<? extends CtTypeReference<?>> thrown = ctor == null ? List.of() : ctor.getThrownTypes();
         throwsOf(g, thrown);
         Anns.write(g, ctor == null ? List.of() : ctor.getAnnotations());
@@ -221,10 +272,12 @@ public final class Members {
         g.writeStringField("owner", Names.qualified(owner));
         g.writeStringField("name", c.getSimpleName());
         g.writeStringField("type", Names.typeText(c.getType()));
+        writeKey(g, "typeFqn", Refs.joinKey(c.getType(), owner, ctx.failures()));
         Anns.write(g, c.getAnnotations());
         Ndjson.pos(g, ctx.positions().of(c));
     }
 
+    /** A record's accessor, which the compiler writes: a method with the component's name and no body of its own. */
     private static void recordAccessor(JsonGenerator g, CtRecord owner, CtRecordComponent c, Ctx ctx)
             throws IOException {
         g.writeStringField("kind", "method");
@@ -234,44 +287,67 @@ public final class Members {
         g.writeEndArray();
         g.writeStringField("id", Names.methodId(owner, c.getSimpleName(), List.of()));
         g.writeStringField("returns", Names.typeText(c.getType()));
+        g.writeBooleanField("isMain", false);
         g.writeArrayFieldStart("modifiers");
         g.writeEndArray();
         g.writeBooleanField("hasBody", false);
-        g.writeStringField("generated", "record");
+        g.writeBooleanField("anonymous", false);
         g.writeArrayFieldStart("throws");
         g.writeEndArray();
         g.writeArrayFieldStart("ann");
         g.writeEndArray();
+        body(g, null, ctx);
         Ndjson.pos(g, ctx.positions().of(c));
+        g.writeStringField("generated", "record");
+        g.writeNullField("generatedBy"); // no annotation wrote it: the record header did
     }
 
-    /** A Lombok-generated member: same shape as a declared one, marked, positioned at the annotated element. */
-    private static void synthRow(JsonGenerator g, Lombok.Item item) throws IOException {
+    /**
+     * A Lombok- or compiler-generated member: the shape of a declared one of its kind, marked, positioned at the
+     * annotated element. A generated field has the field's keys; a generated method or constructor has the executable's,
+     * with empty body facts because it has no body to read.
+     */
+    private static void synthRow(JsonGenerator g, Lombok.Item item, Ctx ctx) throws IOException {
         g.writeStringField("kind", item.kind());
         g.writeStringField("owner", item.owner());
         g.writeStringField("name", item.name());
-        if (item.type() != null && !"method".equals(item.kind()) && !"constructor".equals(item.kind()))
+        if ("field".equals(item.kind())) {
             g.writeStringField("type", item.type());
-        if ("method".equals(item.kind()) || "constructor".equals(item.kind())) {
+            writeKey(g, "typeFqn", item.typeFqn());
+            Ndjson.modifiers(g, item.modifiers());
+            g.writeArrayFieldStart("ann");
+            g.writeEndArray();
+            Ndjson.pos(g, item.pos());
+        } else {
+            boolean method = "method".equals(item.kind());
             g.writeArrayFieldStart("params");
             for (String p : item.params()) {
                 g.writeStartObject();
                 g.writeStringField("type", p);
+                g.writeNullField("name");
+                g.writeBooleanField("varargs", false);
+                g.writeArrayFieldStart("ann");
+                g.writeEndArray();
                 g.writeEndObject();
             }
             g.writeEndArray();
             g.writeStringField("id", item.id());
-            if (item.type() != null) g.writeStringField("returns", item.type());
+            if (method) {
+                g.writeStringField("returns", item.type());
+                g.writeBooleanField("isMain", false);
+            }
+            Ndjson.modifiers(g, item.modifiers());
+            g.writeBooleanField("hasBody", false);
+            g.writeBooleanField("anonymous", false);
+            g.writeArrayFieldStart("throws");
+            g.writeEndArray();
+            g.writeArrayFieldStart("ann");
+            g.writeEndArray();
+            body(g, null, ctx);
+            Ndjson.pos(g, item.pos());
         }
-        Ndjson.modifiers(g, item.modifiers());
-        g.writeBooleanField("hasBody", false);
         g.writeStringField("generated", item.origin());
         g.writeStringField("generatedBy", item.from());
-        g.writeArrayFieldStart("throws");
-        g.writeEndArray();
-        g.writeArrayFieldStart("ann");
-        g.writeEndArray();
-        Ndjson.pos(g, item.pos());
     }
 
     private static void params(JsonGenerator g, List<CtParameter<?>> params) throws IOException {
@@ -294,7 +370,10 @@ public final class Members {
         g.writeEndArray();
     }
 
-    /** The body facts of one executable (none for a record without a canonical constructor): shape, then returns. */
+    /**
+     * The body facts of one executable: loops, branches, try blocks, then returns. A row with no body (abstract,
+     * generated, or a record accessor) writes every one of them empty.
+     */
     private static void body(JsonGenerator g, CtExecutable<?> e, Ctx ctx) throws IOException {
         Walk.Body body = e == null ? null : ctx.bodies().of(e);
         loops(g, body, ctx.positions());
@@ -311,8 +390,8 @@ public final class Members {
                 Positions.Pos p = positions.of(loop);
                 if (p == null) continue;
                 g.writeStartObject();
-                g.writeNumberField("start", p.line());
-                g.writeNumberField("end", p.endLine());
+                g.writeNumberField("line", p.line());
+                g.writeNumberField("endLine", p.endLine());
                 g.writeEndObject();
             }
         }
@@ -329,8 +408,8 @@ public final class Members {
         g.writeArrayFieldStart("branches");
         for (Arm a : arms) {
             g.writeStartObject();
-            g.writeNumberField("start", a.start());
-            g.writeNumberField("end", a.end());
+            g.writeNumberField("line", a.line());
+            g.writeNumberField("endLine", a.endLine());
             g.writeStringField("kind", a.kind());
             g.writeEndObject();
         }
@@ -350,7 +429,7 @@ public final class Members {
         for (CtCase<?> c : body.cases())
             for (CtStatement s : c.getStatements()) arm(arms, s, "case", positions);
         // Source order, so the dump is byte-identical across runs and a reader can scan it.
-        arms.sort(Comparator.comparingInt(Arm::start).thenComparingInt(Arm::end).thenComparing(Arm::kind));
+        arms.sort(Comparator.comparingInt(Arm::line).thenComparingInt(Arm::endLine).thenComparing(Arm::kind));
         return arms;
     }
 
@@ -370,11 +449,12 @@ public final class Members {
         g.writeArrayFieldStart("tryBlocks");
         for (TryRange b : blocks) {
             g.writeStartObject();
-            g.writeNumberField("start", b.start());
-            g.writeNumberField("end", b.end());
-            if (b.finallyStart() > 0) {
-                g.writeNumberField("finallyStart", b.finallyStart());
-                g.writeNumberField("finallyEnd", b.finallyEnd());
+            g.writeNumberField("line", b.line());
+            g.writeNumberField("endLine", b.endLine());
+            // Written only for a try that has a finalizer.
+            if (b.finallyLine() > 0) {
+                g.writeNumberField("finallyLine", b.finallyLine());
+                g.writeNumberField("finallyEndLine", b.finallyEndLine());
             }
             g.writeEndObject();
         }
@@ -392,7 +472,7 @@ public final class Members {
                     fin == null ? 0 : fin.line(), fin == null ? 0 : fin.endLine()));
         }
         // Source order, so the dump is byte-identical across runs.
-        blocks.sort(Comparator.comparingInt(TryRange::start).thenComparingInt(TryRange::end));
+        blocks.sort(Comparator.comparingInt(TryRange::line).thenComparingInt(TryRange::endLine));
         return blocks;
     }
 
@@ -416,5 +496,11 @@ public final class Members {
         if (value == null) return;
         g.writeFieldName("value");
         Anns.writeValue(g, value);
+    }
+
+    /** A type-valued key: the name, or null when the dump has none (a key is never written as an empty string). */
+    private static void writeKey(JsonGenerator g, String key, String value) throws IOException {
+        if (value == null) g.writeNullField(key);
+        else g.writeStringField(key, value);
     }
 }

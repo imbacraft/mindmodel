@@ -31,6 +31,13 @@ public final class Files {
     private Files() {
     }
 
+    /**
+     * One error a file carries: its kind (`syntax`, `not-read`, `type-without-position`), the reason as the parser or the
+     * dump wrote it, and the line the parser gave (null when it gave none, and for every kind but `syntax`).
+     */
+    record FileError(String kind, String reason, Integer line) {
+    }
+
     /** One import as written: the name, whether it ends in `*`, and whether it is static. */
     private record Import(String name, boolean wildcard, boolean isStatic) implements Comparable<Import> {
         @Override
@@ -44,7 +51,8 @@ public final class Files {
 
     /** @return how many input files carry at least one error. */
     public static int write(List<String> inputs, List<CtType<?>> types, Map<String, String> packages,
-            Map<String, List<String>> problems, Positions positions, Path out, Failures failures) throws IOException {
+            Map<String, List<FileError>> problems, Positions positions, Path out, Failures failures)
+            throws IOException {
         // A file's package is the one its own header declares, read from its compilation unit. Taking it from a type
         // borrowed the type's file instead: a file that declares no type (all of it commented out) has a package and no
         // type, and a file whose type Spoon built as a bare shell has neither — the row has to say which file it is.
@@ -61,11 +69,13 @@ public final class Files {
         int failed = 0;
         try (Ndjson w = new Ndjson(out)) {
             for (String path : rows) {
-                String pkg = packages.getOrDefault(path, pkgOf.get(path));
-                List<String> errors = new ArrayList<>(problems.getOrDefault(path, List.of()));
+                // The default package is no package: an empty name is never written.
+                String found = packages.getOrDefault(path, pkgOf.get(path));
+                String pkg = found == null || found.isEmpty() ? null : found;
+                List<FileError> errors = new ArrayList<>(problems.getOrDefault(path, List.of()));
                 // A file Spoon read no compilation unit for is the one genuine parse failure left: nothing about it was
                 // read. A file whose unit exists was parsed, whether it declares a type or nothing but comments.
-                if (!packages.containsKey(path)) errors.add("not-read");
+                if (!packages.containsKey(path)) errors.add(new FileError("not-read", "not-read", null));
                 if (!errors.isEmpty()) failed++;
                 Imports own = imports.get(path);
                 w.row(g -> row(g, path, pkg, errors, own.list(), own.origin()));
@@ -198,7 +208,7 @@ public final class Files {
         return out;
     }
 
-    private static void row(JsonGenerator g, String path, String pkg, List<String> errors, List<Import> imports,
+    private static void row(JsonGenerator g, String path, String pkg, List<FileError> errors, List<Import> imports,
             String origin) throws IOException {
         g.writeStringField("path", path);
         if (pkg == null) g.writeNullField("package");
@@ -216,9 +226,12 @@ public final class Files {
         if ("unresolved".equals(origin)) g.writeStringField("importsReason", "header-unreadable");
         g.writeBooleanField("test", path.matches(".*(^|/)(test|integration-test|it)/.*"));
         g.writeArrayFieldStart("errors");
-        for (String error : errors) {
+        for (FileError error : errors) {
             g.writeStartObject();
-            g.writeStringField("reason", error);
+            g.writeStringField("kind", error.kind());
+            g.writeStringField("reason", error.reason());
+            if (error.line() == null) g.writeNullField("line");
+            else g.writeNumberField("line", error.line());
             g.writeEndObject();
         }
         g.writeEndArray();

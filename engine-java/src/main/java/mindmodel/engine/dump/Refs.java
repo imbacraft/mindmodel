@@ -136,7 +136,8 @@ final class Refs {
         if (asField != null && "class".equals(asField.getSimpleName())) return Ref.plain(text, "other", type);
         if (declaration instanceof CtParameter<?> parameter) {
             var owner = parameter.getParent(CtExecutable.class);
-            int index = owner == null ? -1 : owner.getParameters().indexOf(parameter);
+            int position = owner == null ? -1 : owner.getParameters().indexOf(parameter);
+            Integer index = position < 0 ? null : position;
             boolean lambda = owner instanceof CtLambda<?>;
             return new Ref(text, "param", type, null, null, null, null, null, null, index, lambda, null, null, null);
         }
@@ -274,19 +275,21 @@ final class Refs {
         return out;
     }
 
-    /** One type argument as written: `Voucher`, `T`, `? extends Number`. An invented argument keeps its written name. */
+    /**
+     * One type argument: `shop.Voucher`, a type parameter by its letter (`T`), a wildcard as `?`, `? extends X` or
+     * `? super X`. A type the dump cannot name is null, the same unknown as every other join key; its position stays.
+     */
     private String typeName(CtTypeReference<?> type, CtElement context) {
-        if (type == null) return "?";
+        if (type == null) return null;
         // A wildcard is a type parameter reference too in Spoon, so it is named before the parameter test can take it.
         if (type instanceof CtWildcardReference wildcard) {
             CtTypeReference<?> bound = Names.wildcardBound(wildcard);
-            return bound == null ? "?" : Names.wildcard(wildcard.isUpper(), typeName(bound, context));
+            if (bound == null) return "?";
+            String named = typeName(bound, context);
+            return named == null ? null : Names.wildcard(wildcard.isUpper(), named);
         }
         if (type instanceof CtTypeParameterReference parameter) return parameter.getSimpleName();
-        String fqn = joinKey(type, context, failures);
-        if (fqn != null) return fqn;
-        String simple = type.getSimpleName();
-        return simple == null || simple.isEmpty() ? "?" : simple;
+        return joinKey(type, context, failures);
     }
 
     /** Writes one reference into the object the caller has started; every field it knows, nothing it does not. */
@@ -301,18 +304,19 @@ final class Refs {
         if (ref.text() == null) g.writeNullField("text");
         else g.writeStringField("text", ref.text());
         g.writeStringField("kind", ref.kind());
-        if (ref.type() == null) g.writeNullField("type");
-        else g.writeStringField("type", ref.type());
+        if (ref.type() == null) g.writeNullField("typeFqn");
+        else g.writeStringField("typeFqn", ref.type());
+        // A folded value has the one shape every value has (`{kind, value}`); `kind` here is the expression's own.
         if (ref.valueKind() != null) {
-            g.writeStringField("valueKind", ref.valueKind());
             g.writeFieldName("value");
-            Anns.writeRaw(g, ref.value());
+            Anns.writeValue(g, new Values.Value(ref.valueKind(), ref.value()));
         }
         if (ref.field() != null) g.writeStringField("field", ref.field());
         if (ref.call() != null) g.writeStringField("call", ref.call());
         if (ref.from() != null) g.writeStringField("from", ref.from());
         if (ref.index() != null) g.writeNumberField("index", ref.index());
-        if (ref.inLambda()) g.writeBooleanField("inLambda", true);
+        // Only a parameter says whether it is a lambda's: every other reference has no such answer and writes none.
+        if ("param".equals(ref.kind())) g.writeBooleanField("inLambda", ref.inLambda());
         if (ref.created() != null) g.writeStringField("created", ref.created());
         if (ref.reason() != null) g.writeStringField("reason", ref.reason());
         if (ref.then() != null) {

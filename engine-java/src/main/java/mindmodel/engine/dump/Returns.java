@@ -10,13 +10,17 @@ import com.fasterxml.jackson.core.JsonGenerator;
 import spoon.reflect.code.CtAbstractSwitch;
 import spoon.reflect.code.CtAssignment;
 import spoon.reflect.code.CtCase;
+import spoon.reflect.code.CtCasePattern;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtLambda;
 import spoon.reflect.code.CtLocalVariable;
+import spoon.reflect.code.CtPattern;
+import spoon.reflect.code.CtRecordPattern;
 import spoon.reflect.code.CtReturn;
 import spoon.reflect.code.CtStatement;
 import spoon.reflect.code.CtSwitch;
 import spoon.reflect.code.CtSwitchExpression;
+import spoon.reflect.code.CtTypePattern;
 import spoon.reflect.code.CtVariableWrite;
 import spoon.reflect.code.CtYieldStatement;
 import spoon.reflect.declaration.CtElement;
@@ -145,14 +149,32 @@ final class Returns {
         return new Arm(labels(arm, refs), arm.getIncludesDefault(), guard, refs.of(armValue(arm, target)));
     }
 
-    /** A case's labels as written; an empty list means `default`. */
+    /**
+     * A case's labels as written, in source order; an empty list means `default`. A label with no text is null. A type or
+     * record pattern has no source position of its own (Spoon gives it none), so its text is built from its parts.
+     */
     private static List<String> labels(CtCase<?> arm, Refs refs) {
         List<String> out = new ArrayList<>();
-        for (CtExpression<?> label : arm.getCaseExpressions()) {
-            String text = refs.textOf(label);
-            out.add(text == null ? "" : text);
-        }
+        for (CtExpression<?> label : arm.getCaseExpressions()) out.add(labelText(label, refs));
         return out;
+    }
+
+    /** One label's text: `String s`, `Point(int x, int y)`, or the source text of any other label. */
+    static String labelText(CtElement label, Refs refs) {
+        // Spoon wraps a pattern label in a case-pattern node; the pattern inside is the label.
+        if (label instanceof CtCasePattern wrapped) return wrapped.getPattern() == null ? null
+                : labelText(wrapped.getPattern(), refs);
+        if (label instanceof CtTypePattern pattern) {
+            CtLocalVariable<?> variable = pattern.getVariable();
+            if (variable == null) return null;
+            return Names.typeText(variable.getType()) + " " + variable.getSimpleName();
+        }
+        if (label instanceof CtRecordPattern record) {
+            List<String> parts = new ArrayList<>();
+            for (CtPattern part : record.getPatternList()) parts.add(labelText(part, refs));
+            return Names.typeText(record.getRecordType()) + "(" + String.join(", ", parts) + ")";
+        }
+        return label instanceof CtExpression<?> expression ? refs.textOf(expression) : null;
     }
 
     /**
@@ -183,11 +205,10 @@ final class Returns {
         return null;
     }
 
-    /** Writes the array, or nothing at all when the method returns nothing worth a row. */
+    /** Writes `returned`: the entries, or an empty array when the body hands back nothing it chose. */
     static void write(JsonGenerator g, List<Entry> entries) throws IOException {
-        if (entries == null || entries.isEmpty()) return;
         g.writeArrayFieldStart("returned");
-        for (Entry entry : entries) {
+        if (entries != null) for (Entry entry : entries) {
             g.writeStartObject();
             g.writeStringField("kind", entry.kind());
             g.writeNumberField("line", entry.line());

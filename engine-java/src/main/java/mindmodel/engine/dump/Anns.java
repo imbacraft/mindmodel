@@ -21,10 +21,13 @@ public final class Anns {
             g.writeStringField("name", writtenName(a));
             // The argument list as written: the extractors evaluate path strings and role expressions from this text,
             // and a value tree cannot carry `${...}` or a constant reference.
-            g.writeStringField("raw", rawArgs(a));
+            String raw = rawArgs(a);
+            if (raw == null) g.writeNullField("raw");
+            else g.writeStringField("raw", raw);
             // The line the annotation is written on: a citation names where the declaration starts, annotations included.
             var where = a.getPosition();
-            g.writeNumberField("line", where == null || !where.isValidPosition() ? 0 : where.getLine());
+            if (where == null || !where.isValidPosition()) g.writeNullField("line");
+            else g.writeNumberField("line", where.getLine());
             g.writeObjectFieldStart("args");
             for (Map.Entry<String, Values.Value> e : Values.annotationArgs(a).entrySet()) {
                 g.writeFieldName(e.getKey());
@@ -58,13 +61,14 @@ public final class Anns {
         return a.getAnnotationType().getSimpleName();
     }
 
-    /** The source between the annotation's parentheses, verbatim; empty when it has none. */
+    /** The source between the annotation's parentheses, verbatim; null when it writes no arguments (`@Entity`, `@X()`). */
     private static String rawArgs(CtAnnotation<?> a) {
         String source = Names.sourceOf(a);
-        if (source == null) return "";
+        if (source == null) return null;
         int open = source.indexOf('(');
         int close = source.lastIndexOf(')');
-        return open >= 0 && close > open ? source.substring(open + 1, close).trim() : "";
+        String inner = open >= 0 && close > open ? source.substring(open + 1, close).trim() : "";
+        return inner.isEmpty() ? null : inner;
     }
 
     public static void writeValue(JsonGenerator g, Values.Value v) throws IOException {
