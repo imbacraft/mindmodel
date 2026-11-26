@@ -1,19 +1,22 @@
 // Where the Lombok jar comes from, for a project that uses Lombok. The members Lombok generates (getters, builders)
 // are not in the source, so the engine needs the jar to see them. The version is the one the project's own build
-// names. The jar is taken from the user's Maven repository or Gradle cache when present; otherwise it is fetched
-// from Maven Central once per version and kept in the mindmodel cache, after its digest is checked against the one
-// Central publishes.
+// names, or the one the Spring Boot BOM it inherits manages. The jar is taken from the user's Maven repository or
+// Gradle cache when present; otherwise it is fetched from Maven Central once per version and kept in the mindmodel cache,
+// after its digest is checked against the one Central publishes.
 //
 // Preflight asks for it and never blocks: without a jar the hand-written Lombok rules are used, and the map says so.
-// MINDMODEL_LOMBOK=off turns all of this off; MINDMODEL_LOMBOK=local keeps the local lookup and forbids the download.
+// MINDMODEL_LOMBOK=off turns the fetch off; MINDMODEL_LOMBOK=local keeps the local lookup and forbids the download.
 import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readBuild } from './build.mjs';
-import { buildFileOf, readVersionCatalog } from '../evidence/build.mjs';
+import { buildFileOf, pomPropertyOf, readVersionCatalog } from '../evidence/build.mjs';
 import { cacheRoot, fetchVerified, hashFile } from './download.mjs';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const TABLE = path.join(HERE, '..', 'catalogs', 'versions', 'lombok-by-boot.json');
 const CENTRAL = 'https://repo1.maven.org/maven2/org/projectlombok/lombok';
 const DIGEST_HEX_CHARS = { sha512: 128, sha1: 40 };
 // The build files that name a version. A root-level `libs.versions.toml` is not Gradle's convention, so not read.
@@ -24,6 +27,14 @@ const MAX_DEPTH = 6;
 
 const mode = () => process.env.MINDMODEL_LOMBOK || 'auto';
 const isFile = (file) => fs.existsSync(file) && fs.statSync(file).isFile();
+const gradleHome = () => process.env.GRADLE_USER_HOME || path.join(os.homedir(), '.gradle');
+const listDir = (dir) => {
+  try {
+    return fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+};
 
 /**
  * A version Maven Central could hold: dotted digits, then optional dash parts (`1.18.34`, `1.18.36-edge-SNAPSHOT`).
@@ -31,6 +42,18 @@ const isFile = (file) => fs.existsSync(file) && fs.statSync(file).isFile();
  */
 export function validVersion(version) {
   return typeof version === 'string' && /^\d+(\.\d+)+(-[A-Za-z0-9]+)*$/.test(version);
+}
+
+/** Numeric parts in order; a release sorts after its own pre-release (`1.18.36` after `1.18.36-edge`). */
+export function compareVersions(a, b) {
+  const parts = (v) => v.split('-')[0].split('.').map(Number);
+  const x = parts(a);
+  const y = parts(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d) return d;
+  }
+  return (a.includes('-') ? 0 : 1) - (b.includes('-') ? 0 : 1);
 }
 
 /** `~/.cache/mindmodel/lombok/<version>/lombok.jar`. The version is checked again here: it is a path. */
@@ -45,6 +68,20 @@ export function declaredLombok(builds) {
   const used = builds.some((b) => (b.deps ?? []).some(isLombok));
   const versions = builds.flatMap((b) => [...(b.deps ?? []), ...(b.managedDeps ?? [])]).filter(isLombok);
   return { used, version: versions.map((d) => d.version).find(validVersion) ?? null };
+}
+
+// The Spring Boot version a build names: a Maven parent, an imported BOM, a Gradle plugin or a platform() dependency.
+const isBootBom = (d) => d.group === 'org.springframework.boot' && d.artifact === 'spring-boot-dependencies';
+export function bootVersionOf(builds) {
+  const found = builds.flatMap((b) => [
+    b.parent?.group === 'org.springframework.boot' && b.parent.artifact === 'spring-boot-starter-parent'
+      ? b.parent.version
+      : null,
+    ...(b.deps ?? []).filter(isBootBom).map((d) => d.version),
+    ...(b.managedDeps ?? []).filter(isBootBom).map((d) => d.version),
+    ...(b.plugins ?? []).filter((p) => p.id === 'org.springframework.boot').map((p) => p.version),
+  ]);
+  return found.find(validVersion) ?? null;
 }
 
 // The build files under `root`, shallowest first, so the root's declaration wins over a module's.
@@ -70,20 +107,24 @@ function buildFilesOf(root) {
   return found.sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
 }
 
-/** The Lombok declaration of the checkout at `root`. Reads the build files only; nothing is run. */
-export function lombokOf(root) {
-  return declaredLombok(readBuild(root, buildFilesOf(root)));
+// Gradle's files sit under a hash directory per download: `<version>/<hash>/<file>`.
+function gradleFileOf(versionDir, file) {
+  return listDir(versionDir)
+    .map((h) => path.join(versionDir, h, file))
+    .find(isFile) ?? null;
 }
 
-// Gradle's jars sit under a hash directory per download: `<version>/<hash>/lombok-<version>.jar`.
-function gradleJarOf(versionDir, jar) {
-  let hashes;
-  try {
-    hashes = fs.readdirSync(versionDir);
-  } catch {
-    return null;
-  }
-  return hashes.map((h) => path.join(versionDir, h, jar)).find(isFile) ?? null;
+/**
+ * An artifact file the user already has: the Maven repository, then the Gradle cache. `group` is dotted. Returns
+ * `{ path, source }` or null. Nothing is downloaded or written.
+ */
+export function localFile(group, artifact, version, file) {
+  if (!validVersion(version)) return null;
+  const maven = path.join(os.homedir(), '.m2', 'repository', ...group.split('.'), artifact, version, file);
+  if (isFile(maven)) return { path: maven, source: 'maven-repo' };
+  const versionDir = path.join(gradleHome(), 'caches', 'modules-2', 'files-2.1', group, artifact, version);
+  const gradle = gradleFileOf(versionDir, file);
+  return gradle ? { path: gradle, source: 'gradle-cache' } : null;
 }
 
 /**
@@ -92,17 +133,66 @@ function gradleJarOf(versionDir, jar) {
  */
 export function locateLombok(version) {
   if (mode() === 'off' || !validVersion(version)) return null;
-  const jar = `lombok-${version}.jar`;
-  const home = os.homedir();
-  const maven = path.join(home, '.m2', 'repository', 'org', 'projectlombok', 'lombok', version, jar);
-  if (isFile(maven)) return { path: maven, source: 'maven-repo' };
-  const gradleHome = process.env.GRADLE_USER_HOME || path.join(home, '.gradle');
-  const gradleDir = path.join(gradleHome, 'caches', 'modules-2', 'files-2.1', 'org.projectlombok', 'lombok', version);
-  const gradle = gradleJarOf(gradleDir, jar);
-  if (gradle) return { path: gradle, source: 'gradle-cache' };
+  const local = localFile('org.projectlombok', 'lombok', version, `lombok-${version}.jar`);
+  if (local) return local;
   const cached = cacheFile(version);
-  if (isFile(cached)) return { path: cached, source: 'cache' };
-  return null;
+  return isFile(cached) ? { path: cached, source: 'cache' } : null;
+}
+
+// The Lombok version a Spring Boot BOM manages, when that BOM's pom is local. Null when there is no such file.
+function lombokFromBootBom(boot) {
+  const pom = `spring-boot-dependencies-${boot}.pom`;
+  const found = localFile('org.springframework.boot', 'spring-boot-dependencies', boot, pom);
+  if (!found) return null;
+  let version = null;
+  try {
+    version = pomPropertyOf(fs.readFileSync(found.path, 'utf8'), 'lombok.version');
+  } catch {
+    return null; // an unreadable BOM is no BOM to read from
+  }
+  if (!validVersion(version)) return null;
+  return { version, detail: `the lombok.version of the spring-boot-dependencies ${boot} BOM (${found.source})` };
+}
+
+// The Lombok version for a Spring Boot minor line, from the table beside the catalogs. Null when the line has no row.
+function lombokFromTable(boot) {
+  const minor = boot.split('.').slice(0, 2).join('.');
+  const version = JSON.parse(fs.readFileSync(TABLE, 'utf8')).lombok?.[minor];
+  if (!validVersion(version)) return null;
+  return { version, detail: `the Spring Boot ${minor} row of engine/catalogs/versions/lombok-by-boot.json` };
+}
+
+/** The newest Lombok version with a jar in any local store, or null. A guess: the project's own version is unknown. */
+export function newestLocalLombok() {
+  const names = [
+    ...listDir(path.join(os.homedir(), '.m2', 'repository', 'org', 'projectlombok', 'lombok')),
+    ...listDir(path.join(gradleHome(), 'caches', 'modules-2', 'files-2.1', 'org.projectlombok', 'lombok')),
+    ...listDir(path.join(cacheRoot(), 'lombok')),
+  ];
+  const present = [...new Set(names)].filter((v) => locateLombok(v) !== null).sort(compareVersions);
+  return present[present.length - 1] ?? null;
+}
+
+const choice = (version, rule, detail, approximate = false) => ({ used: true, version, rule, detail, approximate });
+
+/**
+ * The Lombok declaration of the checkout at `root`, and the rule that chose its version: `declared` (the build names
+ * it), `boot-bom` (the Spring Boot BOM's pom is local), `boot-table` (the table row for the Boot line), or
+ * `newest-local` (an approximation). `version` is null when no rule applies. Reads files only; nothing is run.
+ */
+export function lombokOf(root) {
+  const builds = readBuild(root, buildFilesOf(root));
+  const declared = declaredLombok(builds);
+  if (!declared.used) return { used: false, version: null, rule: null, detail: null, approximate: false };
+  if (declared.version) return choice(declared.version, 'declared', 'declared in the build files');
+  const boot = bootVersionOf(builds);
+  const bom = boot && lombokFromBootBom(boot);
+  if (bom) return choice(bom.version, 'boot-bom', bom.detail);
+  const row = boot && lombokFromTable(boot);
+  if (row) return choice(row.version, 'boot-table', row.detail);
+  const newest = newestLocalLombok();
+  if (newest) return choice(newest, 'newest-local', 'the newest Lombok already local', true);
+  return choice(null, null, 'no version declared, and no Spring Boot BOM, table row or local Lombok jar gives one');
 }
 
 // The digest Central publishes beside the jar: sha512 where it exists, else sha1. Never none: an unverified jar is
@@ -140,8 +230,7 @@ export async function downloadLombok(version, fetch = globalThis.fetch) {
  */
 export async function ensureLombok(version, { download = true, fetch = globalThis.fetch } = {}) {
   if (mode() === 'off') return { ok: false, reason: 'MINDMODEL_LOMBOK=off' };
-  if (!version)
-    return { ok: false, reason: 'the build files declare no Lombok version; a parent or BOM may manage it' };
+  if (!version) return { ok: false, reason: 'no Lombok version could be chosen' };
   if (!validVersion(version)) return { ok: false, reason: `"${version}" is not a Lombok version` };
   const found = locateLombok(version);
   if (found) return { ok: true, ...found };
@@ -159,6 +248,12 @@ export async function ensureLombok(version, { download = true, fetch = globalThi
   for (const v of ['../1.0', '1.0/../2', '1..2', '[1.18,)', '${lombok.version}', '', undefined, '1.18.34\n'])
     assert.equal(validVersion(v), false, String(v));
   assert.throws(() => cacheFile('1.0/../../x'), /not a Lombok version/);
+}
+
+{
+  assert.ok(compareVersions('1.18.34', '1.18.9') > 0);
+  assert.ok(compareVersions('1.18.36', '1.18.36-edge-SNAPSHOT') > 0);
+  assert.equal(compareVersions('1.18.36', '1.18.36'), 0);
 }
 
 {
@@ -206,4 +301,21 @@ export async function ensureLombok(version, { download = true, fetch = globalThi
   );
   const kts = buildFileOf('build.gradle.kts', 'dependencies { compileOnly(libs.lombok) }', libs);
   assert.deepStrictEqual(declaredLombok([kts]), { used: true, version: '1.18.36' });
+}
+
+{
+  const parent = buildFileOf(
+    'pom.xml',
+    `<project><parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId>
+     <version>3.4.1</version></parent><artifactId>app</artifactId></project>`,
+  );
+  assert.equal(bootVersionOf([parent]), '3.4.1');
+  const plugin = buildFileOf('build.gradle', "plugins { id 'org.springframework.boot' version '3.3.5' }");
+  assert.equal(bootVersionOf([plugin]), '3.3.5');
+  const platform = buildFileOf(
+    'build.gradle',
+    "dependencies { implementation platform('org.springframework.boot:spring-boot-dependencies:3.2.0') }",
+  );
+  assert.equal(bootVersionOf([platform]), '3.2.0');
+  assert.equal(bootVersionOf([buildFileOf('pom.xml', '<project><artifactId>x</artifactId></project>')]), null);
 }

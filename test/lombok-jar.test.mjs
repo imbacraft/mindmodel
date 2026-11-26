@@ -1,5 +1,5 @@
-// The Lombok jar's lookup and fetch, with a fake HOME: the user's Maven repository, Gradle cache and mindmodel
-// cache are temporary folders, and the network is an injected fetch. Nothing here reaches Maven Central.
+// The Lombok jar's lookup, fetch and version rules, with a fake HOME: the user's Maven repository, Gradle cache and
+// mindmodel cache are temporary folders, and the network is an injected fetch. Nothing here reaches Maven Central.
 import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert';
@@ -7,11 +7,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { cacheFile, declaredLombok, ensureLombok, locateLombok, lombokOf } from '../engine/io/lombok-jar.mjs';
 
 const VERSION = '1.18.34';
 const JAR = Buffer.from('not really a jar, but bytes Central would serve');
 const CENTRAL = `https://repo1.maven.org/maven2/org/projectlombok/lombok/${VERSION}/lombok-${VERSION}.jar`;
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const TABLE = JSON.parse(fs.readFileSync(path.join(REPO, 'engine/catalogs/versions/lombok-by-boot.json'), 'utf8'));
 
 // A fake HOME with the variables the lookup reads; the real environment is put back by `restore`.
 function sandbox(env = {}) {
@@ -46,6 +49,19 @@ function putFile(file, body = JAR) {
   return file;
 }
 
+// A project folder with the given files (relative path -> text).
+function projectWith(dir, files) {
+  for (const [rel, text] of Object.entries(files)) putFile(path.join(dir, rel), Buffer.from(text));
+  return dir;
+}
+
+const mavenRepo = (home, ...rest) => path.join(home, '.m2', 'repository', ...rest);
+const bootPom = (lombok) => `<project><properties><lombok.version>${lombok}</lombok.version></properties></project>`;
+const bootParentPom = (boot) =>
+  `<project><parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId>` +
+  `<version>${boot}</version></parent><artifactId>app</artifactId><dependencies><dependency>` +
+  `<groupId>org.projectlombok</groupId><artifactId>lombok</artifactId></dependency></dependencies></project>`;
+
 // A fetch that serves `files` (url -> body) and answers 404 for anything else; `calls` records every URL asked for.
 function fakeFetch(files) {
   const calls = [];
@@ -75,8 +91,7 @@ test('locate: the Maven repository first, then the Gradle cache, then the mindmo
     );
     assert.deepStrictEqual(locateLombok(VERSION), { path: gradle, source: 'gradle-cache' });
 
-    const maven = putFile(path.join(s.dir, '.m2', 'repository', 'org', 'projectlombok', 'lombok', VERSION,
-      `lombok-${VERSION}.jar`));
+    const maven = putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', VERSION, `lombok-${VERSION}.jar`));
     assert.deepStrictEqual(locateLombok(VERSION), { path: maven, source: 'maven-repo' });
   } finally {
     s.restore();
@@ -86,10 +101,8 @@ test('locate: the Maven repository first, then the Gradle cache, then the mindmo
 test('locate: a sources jar or another version is not the jar', () => {
   const s = sandbox();
   try {
-    putFile(path.join(s.dir, '.m2', 'repository', 'org', 'projectlombok', 'lombok', VERSION,
-      `lombok-${VERSION}-sources.jar`));
-    putFile(path.join(s.dir, '.m2', 'repository', 'org', 'projectlombok', 'lombok', '1.18.30',
-      'lombok-1.18.30.jar'));
+    putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', VERSION, `lombok-${VERSION}-sources.jar`));
+    putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', '1.18.30', 'lombok-1.18.30.jar'));
     assert.equal(locateLombok(VERSION), null);
   } finally {
     s.restore();
@@ -184,7 +197,7 @@ test('ensure: downloads off, local-only mode, no version, and a bad version all 
     const { fetch, calls } = fakeFetch(new Map([[CENTRAL, JAR]]));
     assert.equal((await ensureLombok(VERSION, { download: false, fetch })).ok, false);
     assert.match((await ensureLombok(VERSION, { download: false, fetch })).reason, /downloads are off/);
-    assert.match((await ensureLombok(null, { fetch })).reason, /declare no Lombok version/);
+    assert.match((await ensureLombok(null, { fetch })).reason, /could be chosen/);
     assert.match((await ensureLombok('../1.0', { fetch })).reason, /not a Lombok version/);
     process.env.MINDMODEL_LOMBOK = 'local';
     assert.match((await ensureLombok(VERSION, { fetch })).reason, /downloads are off/);
@@ -196,32 +209,137 @@ test('ensure: downloads off, local-only mode, no version, and a bad version all 
   }
 });
 
-test('lombokOf reads the project: a POM version, a managed version, and a Gradle catalog', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'mm-lombok-project-'));
+test('lombokOf, rule declared: a POM version, a managed version, and a Gradle catalog', () => {
+  const s = sandbox();
   try {
-    fs.writeFileSync(path.join(dir, 'pom.xml'), `<project><artifactId>app</artifactId><dependencyManagement><dependencies>
-      <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId>
-      <version>1.18.30</version></dependency>
-      </dependencies></dependencyManagement><dependencies><dependency><groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId></dependency></dependencies></project>`);
-    // The module declares the use; the root pins the version, so the root's version is the one reported.
-    fs.mkdirSync(path.join(dir, 'core'));
-    fs.writeFileSync(path.join(dir, 'core', 'pom.xml'), '<project><artifactId>core</artifactId></project>');
-    assert.deepStrictEqual(lombokOf(dir), { used: true, version: '1.18.30' });
+    const dir = projectWith(path.join(s.dir, 'project'), {
+      'pom.xml': `<project><artifactId>app</artifactId><dependencyManagement><dependencies>
+        <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId>
+        <version>1.18.30</version></dependency>
+        </dependencies></dependencyManagement><dependencies><dependency><groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId></dependency></dependencies></project>`,
+      // A module declares no version; the root's pin is the one reported.
+      'core/pom.xml': '<project><artifactId>core</artifactId></project>',
+    });
+    const first = lombokOf(dir);
+    assert.equal(first.version, '1.18.30');
+    assert.equal(first.rule, 'declared');
 
     fs.rmSync(path.join(dir, 'pom.xml'));
-    fs.mkdirSync(path.join(dir, 'gradle'));
-    fs.writeFileSync(path.join(dir, 'gradle', 'libs.versions.toml'),
-      '[versions]\nlombok = "1.18.36"\n[libraries]\n' +
-      'lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }\n');
-    fs.writeFileSync(path.join(dir, 'build.gradle.kts'), 'dependencies { annotationProcessor(libs.lombok) }');
-    assert.deepStrictEqual(lombokOf(dir), { used: true, version: '1.18.36' });
+    projectWith(dir, {
+      'gradle/libs.versions.toml':
+        '[versions]\nlombok = "1.18.36"\n[libraries]\n' +
+        'lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }\n',
+      'build.gradle.kts': 'dependencies { annotationProcessor(libs.lombok) }',
+    });
+    assert.deepStrictEqual(
+      [lombokOf(dir).version, lombokOf(dir).rule],
+      ['1.18.36', 'declared'],
+    );
 
     // A project without Lombok: nothing to say, nothing to fetch.
     fs.rmSync(path.join(dir, 'build.gradle.kts'));
-    assert.deepStrictEqual(lombokOf(dir), { used: false, version: null });
+    assert.deepStrictEqual(lombokOf(dir), { used: false, version: null, rule: null, detail: null, approximate: false });
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    s.restore();
+  }
+});
+
+test('lombokOf, rule boot-bom (Maven parent): the local Spring Boot BOM names the Lombok version', () => {
+  const s = sandbox();
+  try {
+    putFile(mavenRepo(s.dir, 'org', 'springframework', 'boot', 'spring-boot-dependencies', '2.4.0',
+      'spring-boot-dependencies-2.4.0.pom'), Buffer.from(bootPom('1.18.16')));
+    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom('2.4.0') });
+    const r = lombokOf(dir);
+    assert.equal(r.version, '1.18.16');
+    assert.equal(r.rule, 'boot-bom');
+    assert.equal(r.approximate, false);
+    assert.match(r.detail, /spring-boot-dependencies 2\.4\.0 BOM \(maven-repo\)/);
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf, rule boot-bom: an imported BOM (Maven) and a Gradle plugin, the BOM in the Gradle cache', () => {
+  const s = sandbox();
+  try {
+    const hash = path.join(s.dir, 'gradle-home', 'caches', 'modules-2', 'files-2.1', 'org.springframework.boot',
+      'spring-boot-dependencies', '2.4.0', 'f00d');
+    putFile(path.join(hash, 'spring-boot-dependencies-2.4.0.pom'), Buffer.from(bootPom('1.18.16')));
+
+    const imported = projectWith(path.join(s.dir, 'maven-import'), {
+      'pom.xml': `<project><artifactId>app</artifactId><dependencyManagement><dependencies>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-dependencies</artifactId>
+        <version>2.4.0</version><type>pom</type><scope>import</scope></dependency></dependencies></dependencyManagement>
+        <dependencies><dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId></dependency>
+        </dependencies></project>`,
+    });
+    assert.equal(lombokOf(imported).rule, 'boot-bom');
+    assert.equal(lombokOf(imported).version, '1.18.16');
+
+    const plugin = projectWith(path.join(s.dir, 'gradle-plugin'), {
+      'build.gradle': "plugins { id 'org.springframework.boot' version '2.4.0' }\n" +
+        "dependencies { compileOnly 'org.projectlombok:lombok' }\n",
+    });
+    const r = lombokOf(plugin);
+    assert.equal(r.version, '1.18.16');
+    assert.match(r.detail, /\(gradle-cache\)/);
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf, rule boot-table: no BOM is local, so the Spring Boot line row decides', () => {
+  const s = sandbox();
+  try {
+    // The line's row, and a patch version of that line: the row is per minor line.
+    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom('2.4.5') });
+    const r = lombokOf(dir);
+    assert.equal(r.version, TABLE.lombok['2.4']);
+    assert.equal(r.rule, 'boot-table');
+
+    // An unreadable BOM is no BOM to read from: the table answers instead.
+    putFile(mavenRepo(s.dir, 'org', 'springframework', 'boot', 'spring-boot-dependencies', '2.4.5',
+      'spring-boot-dependencies-2.4.5.pom'), Buffer.from('<project><properties><lombok.version>'));
+    assert.equal(lombokOf(dir).rule, 'boot-table');
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf, rule newest-local: no version, no BOM and no row, so the newest local jar, approximate', () => {
+  const s = sandbox();
+  try {
+    putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', '1.18.30', 'lombok-1.18.30.jar'));
+    putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', '1.18.34', 'lombok-1.18.34.jar'));
+    putFile(path.join(s.dir, 'gradle-home', 'caches', 'modules-2', 'files-2.1', 'org.projectlombok', 'lombok',
+      '1.18.9', 'f00d', 'lombok-1.18.9.jar'));
+    const dir = projectWith(path.join(s.dir, 'project'), {
+      'build.gradle': "dependencies { compileOnly 'org.projectlombok:lombok' }\n",
+    });
+    const r = lombokOf(dir);
+    assert.equal(r.version, '1.18.34', 'numeric order: 1.18.34 is newer than 1.18.9');
+    assert.equal(r.rule, 'newest-local');
+    assert.equal(r.approximate, true);
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf, no rule applies: used, with no version and a reason', () => {
+  const s = sandbox();
+  try {
+    const dir = projectWith(path.join(s.dir, 'project'), {
+      'build.gradle': "dependencies { compileOnly 'org.projectlombok:lombok' }\n",
+    });
+    const r = lombokOf(dir);
+    assert.equal(r.used, true);
+    assert.equal(r.version, null);
+    assert.equal(r.rule, null);
+    assert.match(r.detail, /no version declared/);
+  } finally {
+    s.restore();
   }
 });
 

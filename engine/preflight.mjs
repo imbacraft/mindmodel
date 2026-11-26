@@ -148,25 +148,26 @@ function preflightInner(root) {
 // The Lombok jar, when the project uses Lombok. Its outcome is an info line, never a block: without the jar the
 // hand-written Lombok rules are used and the map is degraded. Returns null when the project does not use Lombok.
 async function lombokStatus(root, warnings) {
-  const { used, version } = lombokOf(root);
+  const { used, version, rule, detail, approximate } = lombokOf(root);
   if (!used) return null;
-  const found = await ensureLombok(version);
+  const chosen = `version from ${detail}${approximate ? ' (approximate)' : ''}`;
+  const found = version ? await ensureLombok(version) : { ok: false, reason: detail };
   if (!found.ok) {
     warnings.push({
       level: 'info',
       text: `Lombok not available (${found.reason}): hand-written Lombok rules are used, degraded.`,
     });
-    return { ok: false, version, reason: found.reason };
+    return { ok: false, version, rule, reason: found.reason };
   }
   const mb = (fs.statSync(found.path).size / 1048576).toFixed(1);
   warnings.push({
     level: 'info',
     text:
       found.source === 'download'
-        ? `Lombok ${version} downloaded once (${mb} MB) into the mindmodel cache.`
-        : `Lombok ${version} located (${found.source}, ${mb} MB): ${tildify(found.path)}`,
+        ? `Lombok ${version} downloaded once (${mb} MB) into the mindmodel cache; ${chosen}.`
+        : `Lombok ${version} located (${found.source}, ${mb} MB): ${tildify(found.path)}; ${chosen}.`,
   });
-  return { ok: true, path: found.path, source: found.source, version };
+  return { ok: true, path: found.path, source: found.source, version, rule };
 }
 
 /**

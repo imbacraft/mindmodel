@@ -271,6 +271,15 @@ export function isBuildFile(rel) {
   return BUILD_FILE.test(rel) && !/(^|\/)(node_modules|build|target|dist)\//.test(rel);
 }
 
+/**
+ * One property of a POM, read straight from the text. readPom keeps only the first 40 properties, which a Spring Boot
+ * BOM (where `lombok.version` sits) exceeds; this reads the one key asked for.
+ */
+export function pomPropertyOf(text, key) {
+  const project = childOf(parseXml(text), 'project');
+  return textOf(childOf(childOf(project, 'properties'), key)) || null;
+}
+
 /** One build file, parsed from its text (io/build.mjs reads the text). `libs` is the version catalog's map. */
 export function buildFileOf(rel, text, libs = new Map()) {
   if (/pom\.xml$/.test(rel)) return readPom(text, rel);
@@ -430,4 +439,11 @@ export function coordinatesOf(build) {
     }`);
   const coords = [...new Set(g.deps.map((d) => `${d.group}:${d.artifact}`))];
   assert.deepStrictEqual(coords, ['ch.qos.logback:logback-classic', 'org.projectlombok:lombok']);
+}
+
+{
+  const bom = '<project><properties><a>1</a><lombok.version>1.18.16</lombok.version></properties></project>';
+  assert.equal(pomPropertyOf(bom, 'lombok.version'), '1.18.16');
+  assert.equal(pomPropertyOf(bom, 'missing'), null);
+  assert.equal(pomPropertyOf('<project/>', 'lombok.version'), null);
 }
