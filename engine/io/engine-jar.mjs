@@ -6,13 +6,12 @@
 // in the user's cache, verified before every use, and fetched once when preflight finds no jar at all.
 //
 // Resolution order: $MINDMODEL_ENGINE_JAR (a developer's or air-gapped machine's own jar, used as given), the cache,
-// then `engine-java/target/` (a checkout that has run `mvn package`). Only the last step of `ensure` touches the network,
-// and it is the only network access in the whole product.
+// then `engine-java/target/` (a checkout that has run `mvn package`). Only the download step of `ensure` touches the
+// network; the fetch and its checks are the shared helper's (io/download.mjs).
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { cacheRoot, fetchVerified, hashFile } from './download.mjs';
 
 // This file sits in engine/io/, so the checkout is two levels up.
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -27,12 +26,11 @@ export function lock() {
 
 /** `~/.cache/mindmodel/engine/<version>/mindmodel-engine.jar`, honouring XDG_CACHE_HOME. */
 export function cacheJar(version = lock().version) {
-  const base = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
-  return path.join(base, 'mindmodel', 'engine', version, 'mindmodel-engine.jar');
+  return path.join(cacheRoot(), 'engine', version, 'mindmodel-engine.jar');
 }
 
 export function sha256(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  return hashFile(file);
 }
 
 /** Does this file match what the lock pins? Size first: it answers in one stat for the common mismatched-file case. */
@@ -87,16 +85,15 @@ export async function ensure({ download = true, log = () => {} } = {}) {
     };
   log(`downloading the mindmodel engine ${held.version} (${Math.round(held.bytes / 1048576)} MB, once per version)`);
   const dir = path.dirname(cached);
-  fs.mkdirSync(dir, { recursive: true });
-  const temp = `${cached}.${process.pid}.tmp`;
   try {
-    const response = await fetch(held.url, { redirect: 'follow' });
-    if (!response.ok) throw new Error(`HTTP ${response.status} from ${held.url}`);
-    fs.writeFileSync(temp, Buffer.from(await response.arrayBuffer()));
-    if (!matches(temp, held)) throw new Error('checksum mismatch: the downloaded jar is not the published one');
-    fs.renameSync(temp, cached);
+    await fetchVerified({
+      url: held.url,
+      dest: cached,
+      verify: (temp) => {
+        if (!matches(temp, held)) throw new Error('checksum mismatch: the downloaded jar is not the published one');
+      },
+    });
   } catch (error) {
-    fs.rmSync(temp, { force: true });
     return {
       ok: false,
       reason: `engine download failed (${error.message}); offline? set MINDMODEL_ENGINE_JAR to a local jar`,

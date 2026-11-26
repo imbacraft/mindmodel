@@ -24,8 +24,12 @@ A Claude Code plugin that writes a one-page mental model of a codebase (`/mindmo
 
 ## Ground rules
 - **No installed Node dependencies; Node 18+.** No newer-than-18 APIs (e.g. iterator helpers like `matchAll(...).map`).
-  Nothing third-party is vendored any more: the Spoon jar is the only outside code (pinned by `engine-java/engine.lock`),
+  Nothing third-party is vendored any more: the Spoon jar is the only pinned outside code (`engine-java/engine.lock`),
   and no `npm install`, no `node_modules`, no native build is involved.
+- **Network only in preflight, verified and cached.** Preflight fetches the engine jar (pinned by `engine.lock`) and,
+  when the project uses Lombok, its Lombok jar from Maven Central (checked against the digest Central publishes). Both
+  are cached under `~/.cache/mindmodel/`. `MINDMODEL_LOMBOK=off` disables the Lombok fetch; `MINDMODEL_LOMBOK=local`
+  keeps the local lookup and forbids the download. Nothing else goes over the network.
 - **The Java engine needs JDK 17+ and Maven to build** (`mvn -f engine-java/pom.xml package`). It replaces the Node
   resolver's guesses with Spoon's answers wherever it can; a scan without the jar still runs on the guesses, so
   preflight blocks only when no JDK 17+ is on PATH. Nothing downloads the analyzed project's dependencies or runs its

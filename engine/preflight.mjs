@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // Pre-flight for /mindmodel: is the code about to be mapped a clean, current state, and can the engine run here? It
-// never touches the network for the project's code; its one fetch is the engine jar, once per version
-// (io/engine-jar.mjs).
+// never touches the network for the project's code; its fetches are the engine jar, once per version
+// (io/engine-jar.mjs), and the Lombok jar when the project uses Lombok (io/lombok-jar.mjs).
 // Usage: node preflight.mjs <projectRoot>   Prints JSON: { ok, node, git, warnings[] }. ok=false means: ask the user before continuing.
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensure } from './io/engine-jar.mjs';
+import { ensureLombok, lombokOf } from './io/lombok-jar.mjs';
 import { git } from './io/git.mjs';
 import { javaVersionText } from './io/java.mjs';
-import { preflightLines as classpathLines } from './io/classpath.mjs';
+import { preflightLines as classpathLines, tildify } from './io/classpath.mjs';
 
 // "## main...origin/main [ahead 1, behind 3]" → { branch, upstream, ahead, behind }
 export function parseBranchLine(line) {
@@ -144,6 +145,30 @@ function preflightInner(root) {
   };
 }
 
+// The Lombok jar, when the project uses Lombok. Its outcome is an info line, never a block: without the jar the
+// hand-written Lombok rules are used and the map is degraded. Returns null when the project does not use Lombok.
+async function lombokStatus(root, warnings) {
+  const { used, version } = lombokOf(root);
+  if (!used) return null;
+  const found = await ensureLombok(version);
+  if (!found.ok) {
+    warnings.push({
+      level: 'info',
+      text: `Lombok not available (${found.reason}): hand-written Lombok rules are used, degraded.`,
+    });
+    return { ok: false, version, reason: found.reason };
+  }
+  const mb = (fs.statSync(found.path).size / 1048576).toFixed(1);
+  warnings.push({
+    level: 'info',
+    text:
+      found.source === 'download'
+        ? `Lombok ${version} downloaded once (${mb} MB) into the mindmodel cache.`
+        : `Lombok ${version} located (${found.source}, ${mb} MB): ${tildify(found.path)}`,
+  });
+  return { ok: true, path: found.path, source: found.source, version };
+}
+
 /**
  * The gate a run passes through: the project's own state, the JDK, and an engine jar that is present and verified.
  * `ok: false` means a block-level warning, and the caller must ask before going on.
@@ -153,6 +178,7 @@ export async function preflight(root) {
   const engine = await ensure({ log: (text) => r.warnings.push({ level: 'info', text }) });
   if (!engine.ok) r.warnings.push({ level: 'block', text: engine.reason });
   r.engine = { ok: engine.ok, source: engine.source ?? null, path: engine.path ?? null };
+  r.lombok = await lombokStatus(root, r.warnings);
   r.ok = !r.warnings.some((w) => w.level !== 'info');
   return r;
 }
