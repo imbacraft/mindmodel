@@ -11,6 +11,7 @@ import spoon.reflect.code.CtThisAccess;
 import spoon.reflect.code.CtTypeAccess;
 import spoon.reflect.code.CtVariableRead;
 import spoon.reflect.declaration.CtField;
+import spoon.reflect.declaration.CtParameter;
 import spoon.reflect.declaration.CtFormalTypeDeclarer;
 import spoon.reflect.declaration.CtMethod;
 import spoon.reflect.declaration.CtType;
@@ -79,8 +80,24 @@ public final class Chains {
             CtField<?> field = read.getVariable().getDeclaration();
             return declared(field.getType(), null, field.getDeclaringType(), read.getTarget());
         }
-        CtTypeReference<?> type = expression.getType();
+        CtTypeReference<?> type = typeOf(expression);
         return type == null ? null : rawType(type);
+    }
+
+    /**
+     * The type an expression has as the dump names it. A parameter or a local read takes the type its declaration
+     * writes: a read inside a lambda can lose its own type when the lambda's target type is not on the classpath. Any
+     * other expression has the type Spoon gives it.
+     */
+    static CtTypeReference<?> typeOf(CtExpression<?> expression) {
+        if (expression instanceof CtVariableRead<?> read && read.getVariable() != null) {
+            var declaration = read.getVariable().getDeclaration();
+            if (declaration instanceof CtParameter<?> parameter && parameter.getType() != null)
+                return parameter.getType();
+            if (declaration instanceof CtLocalVariable<?> local && !local.isInferred() && local.getType() != null)
+                return local.getType();
+        }
+        return expression.getType();
     }
 
     /**

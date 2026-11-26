@@ -42,6 +42,62 @@ class CallsWriterTest {
                     + " public String greet(String n) { return n; } }",
             "demo/Util.java", "package demo; public class Util { public static String clean(String s) { return s; } }");
 
+    /**
+     * A call in a chain is written at its own method name, not at the start of the chain: each `.name(` is its own
+     * call on its own line.
+     */
+    @Test
+    void aChainedCallIsPlacedAtItsOwnMethodName() throws Exception {
+        String source = """
+                package demo;
+                public class Chain {
+                    Result make() {
+                        return Result.builder()
+                                .label("(")
+                                .provider(null)
+                                .attempts(1)
+                                .build();
+                    }
+                }
+                """;
+        String result = "package demo; public class Result { public static Builder builder() { return new Builder(); }"
+                + " public static class Builder { public Builder provider(String p) { return this; }"
+                + " public Builder label(String l) { return this; }"
+                + " public Builder attempts(int n) { return this; } public Result build() { return new Result(); } } }";
+        var run = DumpRun.of(dir, Map.of("demo/Chain.java", source, "demo/Result.java", result));
+        List<JsonNode> calls = run.rows("calls");
+        int line = DumpRun.lineOf(source, ".provider(null)");
+        JsonNode provider = DumpRun.one(calls, "name", "provider");
+        assertEquals(line, provider.path("line").asInt());
+        assertEquals(source.split("\n", -1)[line - 1].indexOf("provider") + 1, provider.path("col").asInt());
+        JsonNode build = DumpRun.one(calls, "name", "build");
+        int buildLine = DumpRun.lineOf(source, ".build()");
+        assertEquals(buildLine, build.path("line").asInt());
+        assertEquals(source.split("\n", -1)[buildLine - 1].indexOf("build") + 1, build.path("col").asInt());
+    }
+
+    /** A varargs call names the member the dump writes for it, so the call's target is a lookup. */
+    @Test
+    void aVarargsCallTargetsTheIdTheMemberRowWrites() throws Exception {
+        String util = """
+                package demo;
+                public class Util {
+                    public static String firstNonBlank(String... values) { return values[0]; }
+                }
+                """;
+        String caller = """
+                package demo;
+                public class Caller {
+                    String pick(String a) { return Util.firstNonBlank(a, "b", "c"); }
+                }
+                """;
+        var run = DumpRun.of(dir, Map.of("demo/Util.java", util, "demo/Caller.java", caller));
+        String member = DumpRun.one(run.rows("members"), "name", "firstNonBlank").path("id").asText();
+        JsonNode call = DumpRun.one(run.rows("calls"), "name", "firstNonBlank");
+        assertEquals(member, call.path("targets").get(0).path("id").asText());
+        assertEquals("demo.Util#firstNonBlank(String[])", member);
+    }
+
     @Test
     void projectStaticCallResolvesToItsDeclaration() throws Exception {
         JsonNode call = DumpRun.one(DumpRun.of(dir, SOURCES).rows("calls"), "name", "clean");

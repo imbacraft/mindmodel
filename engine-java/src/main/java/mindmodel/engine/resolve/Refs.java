@@ -211,7 +211,7 @@ public final class Refs {
     /** The type as the compiler names it, as a join key; null when there is none, and the invention is counted. */
     private String typeOf(CtExpression<?> expression) {
         try {
-            return joinKey(expression.getType(), expression, failures);
+            return joinKey(Chains.typeOf(expression), expression, failures);
         } catch (RuntimeException e) {
             failures.count(Failures.Key.TYPE_UNRESOLVED);
             return null;

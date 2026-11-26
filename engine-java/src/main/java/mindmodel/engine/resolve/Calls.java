@@ -161,8 +161,25 @@ public final class Calls {
         out.add(new Target(Names.executableId(owner, method), "declared"));
         boolean open = owner.isInterface() || owner.getModifiers().contains(ModifierKind.ABSTRACT);
         if (!open) return out;
-        for (String subtype : index.subtypes().getOrDefault(Names.qualified(owner), Set.of()))
+        for (String subtype : reachableSubtypes(Names.qualified(owner), receiver))
             addTarget(out, overrideIn(subtype, method), "override");
+        return out;
+    }
+
+    /**
+     * The subtypes of {@code owner} a call on {@code receiver} can dispatch to: those of the receiver's own type, and
+     * the receiver's type itself. An override in a sibling branch is never reached through the receiver. A receiver the
+     * checkout does not place under {@code owner} (unknown, or an enclosing class's method called without a receiver)
+     * narrows nothing, so every subtype stays.
+     */
+    private Set<String> reachableSubtypes(String owner, String receiver) {
+        Set<String> all = index.subtypes().getOrDefault(owner, Set.of());
+        boolean under = receiver != null && (receiver.equals(owner) || all.contains(receiver));
+        if (!under) return all;
+        Set<String> below = new TreeSet<>(index.subtypes().getOrDefault(receiver, Set.of()));
+        below.add(receiver);
+        Set<String> out = new TreeSet<>(all);
+        out.retainAll(below);
         return out;
     }
 
@@ -194,6 +211,45 @@ public final class Calls {
     public boolean inheritedFromEnum(Recv recv, String name, int argc) {
         CtType<?> owner = recv.declared() ? index.types().get(recv.type()) : null;
         return owner != null && owner.isEnum() && ENUM_INHERITED.contains(Names.shape(name, argc));
+    }
+
+    /**
+     * True when a call on a project type names a method no project type declares, and a supertype of that type (of it,
+     * or of a project supertype) is outside the checkout: the library declares the method. A project declaration of the
+     * name, in the receiver or any project supertype, answers first, so such a call is never a library call.
+     */
+    public boolean inheritsFromLibrary(Recv recv, String name) {
+        if (!recv.declared() || name == null) return false;
+        boolean outside = false;
+        for (String fqn : projectClosure(recv.type())) {
+            if (declaresName(fqn, name)) return false;
+            CtType<?> owner = index.types().get(fqn);
+            for (CtTypeReference<?> superRef : supers(owner))
+                if (!index.declared().contains(Names.qualified(superRef))) outside = true;
+        }
+        return outside;
+    }
+
+    /** A type and every project type it inherits from, transitively, itself included. */
+    private Set<String> projectClosure(String fqn) {
+        Set<String> seen = new TreeSet<>();
+        ArrayDeque<String> queue = new ArrayDeque<>();
+        queue.add(fqn);
+        while (!queue.isEmpty()) {
+            String next = queue.poll();
+            if (seen.add(next)) queue.addAll(index.supertypes().getOrDefault(next, Set.of()));
+        }
+        return seen;
+    }
+
+    /** True when a project type declares a method of this name: written, a record component, or Lombok's. */
+    private boolean declaresName(String fqn, String name) {
+        if (generated.named(fqn, name)) return true;
+        CtType<?> owner = index.types().get(fqn);
+        for (CtMethod<?> method : owner.getMethods())
+            if (name.equals(method.getSimpleName())) return true;
+        return owner instanceof CtRecord record && record.getRecordComponents().stream()
+                .anyMatch(c -> name.equals(c.getSimpleName()));
     }
 
     /** True when a call's resolved declaration is a library's, or has no declaring type at all. */

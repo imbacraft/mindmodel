@@ -38,6 +38,32 @@ class LombokTest {
         assertEquals("ToString", toString.path("generatedBy").asText());
     }
 
+    /**
+     * Lombok names the builder of `@Builder` on `EmailSendResult` `EmailSendResultBuilder`, nested in it. A chain on the
+     * builder is typed as that class, and so is the builder's own method row.
+     */
+    @Test
+    void aBuilderChainIsTypedAsTheClassLombokNamesForTheType() throws Exception {
+        String result = """
+                package demo;
+                import lombok.Builder;
+                @Builder
+                public class EmailSendResult { String provider; }
+                """;
+        String use = """
+                package demo;
+                public class Use {
+                    Object send() { return EmailSendResult.builder().provider(null).build(); }
+                }
+                """;
+        var run = DumpRun.of(dir, Map.of("demo/EmailSendResult.java", result, "demo/Use.java", use));
+        JsonNode provider = DumpRun.one(run.rows("calls"), "name", "provider");
+        assertEquals("demo.EmailSendResult.EmailSendResultBuilder", provider.path("recv").path("typeFqn").asText());
+        assertEquals("demo.EmailSendResult.EmailSendResultBuilder#provider(String)",
+                provider.path("targets").get(0).path("id").asText());
+        assertEquals("lombok", provider.path("origin").asText());
+    }
+
     /** The ids of the members a source's annotations generated (`generatedBy` set), as the dump writes them. */
     private static Set<String> generated(Path dir, String file, String source) throws Exception {
         return DumpRun.of(dir, Map.of(file, source)).rows("members").stream()

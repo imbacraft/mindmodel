@@ -33,6 +33,10 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 - An inherited library field that Spoon cannot see still has a declaring type. That is how it differs from an undeclared
   name: a read with no declaring type is the only case the rule above applies to.
 
+- A class with no `extends` has no superclass reference in noclasspath mode: `getSuperclass()` is null, and `Object`
+  is never a written supertype. The library rule in `Calls.inheritsFromLibrary` relies on that
+  (`InheritedLibraryCallsTest`).
+
 ## Constructors
 - `new Base(7) { ... }` and an enum constant with a body create an anonymous class. The call's executable is that
   class's implicit constructor, which is not in the checkout's index. The call reaches the superclass constructor of the
@@ -69,8 +73,26 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
   `getGuard()`. A type pattern label has no source position: see the `CtCasePattern` entry below.
 - An arrow arm's expression position runs on through the `;` that ends the arm: its source text is `compute();`.
 - `X.class` is a `CtFieldRead` of a field named `class`, not a field: no Java field has that name.
+- A parameter or local read inside a lambda whose target type is not on the classpath can have a null `getType()`,
+  while its declaration (`CtParameter`, `CtLocalVariable`) keeps the written type. `Chains.typeOf` reads the
+  declaration's type.
+- A method reference to a name with one member in the checkout resolves. With several overloads and no library
+  signature to choose by, it does not: the declaration is null and `getParameters()` is empty (arity 0), so the arity
+  says nothing. The dump gives such a reference no target, and does not guess one.
 - The implicit canonical constructor of a record carries its component types as written in the header
   (`java.lang.String`), while the author's constructor may write `String`: compare resolved names.
+
+## Positions
+- An invocation starts at its target: `a.b().c()` is one element that starts at `a`, and the method name's token has no
+  position of its own. `Positions.ofCall` reads the name from the source: the identifier before the last top-level `(`
+  of the span, which is the call's own argument list. Strings, characters, comments and brackets are skipped.
+- Spoon's column (`SourcePositionImpl.searchColumnNumber`) is 1-based and counts a tab as one character on lines 2 and
+  up. Two quirks: on the file's first line it is 0-based (`position`, not `position + 1`), and on its last line (after
+  the final line separator) a tab counts as the tabulation size (4). `Positions` keeps Spoon's numbers, quirks included,
+  so a column is a character index only on the middle lines of a file. Open: fix both in `Positions`.
+- `SourcePositionImpl` has a public constructor, `new SourcePositionImpl(unit, start, end,
+  unit.getLineSeparatorPositions())`: it gives Spoon's own line and column for any offset of the unit, the only way to
+  get those for a sub-range.
 
 ## Output safety
 - JSON cannot hold `NaN` or `Infinity`; write such a value as unresolved.

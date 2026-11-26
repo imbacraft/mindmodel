@@ -115,7 +115,8 @@ public final class CallsWriter {
         List<Site> sites = new ArrayList<>();
         for (CtElement element : elements) {
             // Spoon inserts an implicit super() with no source position; it is not a call anyone wrote.
-            Positions.Pos pos = ctx.positions().of(element);
+            Positions.Pos pos = element instanceof CtInvocation<?> call ? ctx.positions().ofCall(call)
+                    : ctx.positions().of(element);
             if (pos == null) continue;
             ctx.ids().assign(element, methodId, pos);
             sites.add(new Site(element, pos));
@@ -163,7 +164,8 @@ public final class CallsWriter {
             }
         }
         Recv recv = calls.recv(type, receiver, fieldType != null, unnamed);
-        boolean inherited = targets.isEmpty() && calls.inheritedFromEnum(recv, name, argc);
+        boolean inherited = targets.isEmpty() && (calls.inheritedFromEnum(recv, name, argc)
+                || calls.inheritsFromLibrary(recv, name));
         head(g, methodId, ctx.ids().id(call), "call", pos, name);
         g.writeNumberField("argc", argc);
         writeRecv(g, recv.invented() ? null : recv.type(), ctx, call.getTarget(), Calls.kind(call),
@@ -192,8 +194,12 @@ public final class CallsWriter {
         boolean unnamed = calls.undeclared(target);
         String receiver = unnamed ? null : calls.methodRefReceiver(type, ref, target);
         List<Target> targets = unnamed ? List.of() : calls.targets(ref, receiver, name, argc == null ? 0 : argc);
+        // Spoon types no Lombok member, so a getter named by a reference (`Booking::getId`) is the synthesis's alone.
+        Lombok.Item made = !unnamed && targets.isEmpty() ? calls.generated().onlyMethod(receiver, name) : null;
+        if (made != null) targets = List.of(new Target(made.id(), "declared"));
         Recv recv = calls.recv(type, receiver, false, unnamed);
         boolean unknownVar = Calls.varLocal(target);
+        boolean inherited = targets.isEmpty() && calls.inheritsFromLibrary(recv, name);
         head(g, methodId, ctx.ids().id(expression), "methodRef", pos, name);
         g.writeStringField("via", "methodRef");
         writeArgc(g, argc);
@@ -204,10 +210,11 @@ public final class CallsWriter {
         g.writeBooleanField("uniqueImpl", Calls.uniqueImpl(ref, targets));
         writeArgs(g, ctx, List.of());
         inLambda(g, expression);
-        g.writeStringField("origin", !targets.isEmpty() ? "java"
+        g.writeStringField("origin", made != null ? "lombok" : !targets.isEmpty() ? "java" : inherited ? "library"
                 : recv.declared() || unknownVar || recv.invented() ? "unresolved" : "library");
         if (targets.isEmpty())
             g.writeStringField("reason", recv.invented() ? "unresolved-name"
+                    : inherited ? "library-signature"
                     : recv.declared() ? "no-declaration-here" : unknownVar ? "var-unresolved" : "library-signature");
     }
 

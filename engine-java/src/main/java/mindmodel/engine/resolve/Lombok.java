@@ -50,7 +50,7 @@ public final class Lombok {
      * by `owner#<init>/argc`, and the owners that have any (Spoon's implicit default constructor is not theirs).
      */
     public record Index(Map<String, Item> methods, Map<String, Item> fields, Set<String> builders,
-            Map<String, Item> constructors, Set<String> constructed) {
+            Map<String, Item> constructors, Set<String> constructed, Set<String> named) {
 
         /** Indexes the synthesized members by the type they were synthesized for. */
         public static Index of(Map<String, List<Item>> synth) {
@@ -59,10 +59,11 @@ public final class Lombok {
             Set<String> builders = new HashSet<>();
             Map<String, Item> constructors = new HashMap<>();
             Set<String> constructed = new HashSet<>();
+            Set<String> names = new HashSet<>();
             for (Map.Entry<String, List<Item>> entry : synth.entrySet()) {
                 Map<String, List<Item>> byName = new HashMap<>();
                 for (Item item : entry.getValue()) {
-                    if (item.typeFqn() != null && item.typeFqn().endsWith(".Builder")) builders.add(item.typeFqn());
+                    if ("builder".equals(item.name()) && "Builder".equals(item.from())) builders.add(item.typeFqn());
                     if ("constructor".equals(item.kind())) {
                         constructors.putIfAbsent(constructorKey(item.owner(), item.params().size()), item);
                         constructed.add(item.owner());
@@ -71,6 +72,7 @@ public final class Lombok {
                     } else if ("method".equals(item.kind())) {
                         methods.putIfAbsent(Names.member(item.owner(), Names.shape(item.name(), item.params().size())),
                                 item);
+                        names.add(Names.member(item.owner(), item.name()));
                         byName.computeIfAbsent(item.name(), k -> new ArrayList<>()).add(item);
                     }
                 }
@@ -80,7 +82,7 @@ public final class Lombok {
                     if (named.getValue().size() == 1)
                         methods.putIfAbsent(Names.member(entry.getKey(), named.getKey()), named.getValue().get(0));
             }
-            return new Index(methods, fields, builders, constructors, constructed);
+            return new Index(methods, fields, builders, constructors, constructed, names);
         }
 
         /** The generated method a call names: by name and argument count, else by name alone; null when none. */
@@ -95,6 +97,16 @@ public final class Lombok {
          */
         public Item constructor(String owner, int argc) {
             return constructors.get(constructorKey(owner, argc));
+        }
+
+        /** The one generated method of this name on the type, when it has exactly one shape; null otherwise. */
+        public Item onlyMethod(String owner, String name) {
+            return methods.get(Names.member(owner, name));
+        }
+
+        /** True when Lombok writes a method of this name on the type, whatever its arity. */
+        public boolean named(String owner, String name) {
+            return named.contains(Names.member(owner, name));
         }
 
         /** True when Lombok writes any constructor for the type. */
@@ -293,7 +305,7 @@ public final class Lombok {
 
     /** builder(), Builder.setX(...) and Builder.build(); the builder type is a member owner, not a dumped type. */
     private static void builder(CtType<?> type, String owner, Sink sink) {
-        String builderFqn = owner + ".Builder";
+        String builderFqn = owner + "." + builderName(type);
         sink.add(owner, "method", "builder", builderFqn, List.of(), Set.of(ModifierKind.PUBLIC, ModifierKind.STATIC),
                 type, "Builder");
         for (CtField<?> field : type.getFields()) {
@@ -302,6 +314,20 @@ public final class Lombok {
                     Set.of(ModifierKind.PUBLIC), field, "Builder");
         }
         sink.add(builderFqn, "method", "build", owner, List.of(), Set.of(ModifierKind.PUBLIC), type, "Builder");
+    }
+
+    /**
+     * The simple name of the builder class: the {@code builderClassName} the annotation writes as a string, else
+     * Lombok's default {@code <Type>Builder}. Lombok nests the class in the type it builds.
+     */
+    static String builderName(CtType<?> type) {
+        for (CtAnnotation<?> a : type.getAnnotations()) {
+            if (!"Builder".equals(a.getAnnotationType().getSimpleName())
+                    && !"SuperBuilder".equals(a.getAnnotationType().getSimpleName())) continue;
+            Values.Value written = Values.annotationArgs(a).get("builderClassName");
+            if (written != null && written.value() instanceof String name && !name.isEmpty()) return name;
+        }
+        return type.getSimpleName() + "Builder";
     }
 
     private static void method(CtType<?> type, String owner, String name, String returns, List<String> params,
