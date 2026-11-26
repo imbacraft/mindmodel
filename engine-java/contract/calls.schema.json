@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: calls.ndjson row",
+  "description": "One call site: a call, a method reference (via methodRef) or a new. A row with no target carries a reason; a row with a target does not. An error row has the same keys, with unknown values null and no target.",
+  "type": "object",
+  "required": ["method", "id", "file", "line", "col", "kind", "name", "argc", "recv", "targets", "uniqueImpl", "args", "inLambda", "origin"],
+  "additionalProperties": false,
+  "properties": {
+    "method": { "$ref": "common.schema.json#/$defs/text" },
+    "id": { "$ref": "common.schema.json#/$defs/text" },
+    "file": { "$ref": "common.schema.json#/$defs/text" },
+    "line": { "$ref": "common.schema.json#/$defs/line" },
+    "col": { "$ref": "common.schema.json#/$defs/line" },
+    "kind": { "enum": ["call", "methodRef", "new"] },
+    "name": { "$ref": "common.schema.json#/$defs/nullableText" },
+    "argc": { "type": ["integer", "null"], "minimum": 0 },
+    "via": { "const": "methodRef" },
+    "recv": { "$ref": "#/$defs/recv" },
+    "targets": { "type": "array", "items": { "$ref": "#/$defs/target" } },
+    "uniqueImpl": { "type": "boolean" },
+    "args": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/expression" } },
+    "inLambda": { "type": "boolean" },
+    "origin": { "enum": ["java", "arity", "lombok", "compiler", "library", "unresolved", "error"] },
+    "reason": { "$ref": "common.schema.json#/$defs/text" }
+  },
+  "allOf": [
+    {
+      "description": "Only a method reference has via.",
+      "if": { "properties": { "kind": { "const": "methodRef" } }, "required": ["kind"] },
+      "then": { "required": ["via"] },
+      "else": { "not": { "required": ["via"] } }
+    },
+    {
+      "description": "A call or a new has an integer argument count; a method reference may not know its arity.",
+      "if": { "properties": { "kind": { "enum": ["call", "new"] } }, "required": ["kind"] },
+      "then": { "properties": { "argc": { "type": "integer", "minimum": 0 } } }
+    },
+    {
+      "description": "A row with no target says why; a row with a target has no reason.",
+      "if": { "properties": { "targets": { "maxItems": 0 } }, "required": ["targets"] },
+      "then": { "required": ["reason"] },
+      "else": { "not": { "required": ["reason"] } }
+    }
+  ],
+  "$defs": {
+    "recv": {
+      "description": "The receiver: its static type as a join key, its type arguments, how it is reached, and its text. All null or empty for a site that could not be typed.",
+      "type": "object",
+      "required": ["typeFqn", "typeArgs", "kind", "how", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "typeFqn": { "$ref": "common.schema.json#/$defs/nullableText" },
+        "typeArgs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/nullableText" } },
+        "kind": { "enum": ["static", "super", "implicit", "instance", null] },
+        "how": {
+          "enum": [
+            "static", "super", "this", "implicit", "field", "param", "lambda", "local", "chain", "new", "expr", null
+          ]
+        },
+        "text": { "$ref": "common.schema.json#/$defs/nullableText" }
+      }
+    },
+    "target": {
+      "description": "A declaration the site reaches: the declared member, or an override in a subtype.",
+      "type": "object",
+      "required": ["id", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "common.schema.json#/$defs/text" },
+        "kind": { "enum": ["declared", "override"] }
+      }
+    }
+  }
+}

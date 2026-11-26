@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: shared definitions",
+  "description": "Shapes the dump's sections share: a position, a folded value, an annotation, a supertype, an expression and the modifier spelling. Referenced by the other schemas in this folder. Unknown is null; see CONTRACT.md, Conventions.",
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nullableText": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "modifier": {
+      "enum": [
+        "public", "protected", "private", "abstract", "static", "final", "transient", "volatile",
+        "synchronized", "native", "strictfp", "default", "sealed", "non-sealed"
+      ]
+    },
+    "modifiers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/modifier" }
+    },
+    "pos": {
+      "description": "A declaration's position, or null when the element has none.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["file", "line", "col", "endLine", "endCol"],
+          "additionalProperties": false,
+          "properties": {
+            "file": { "$ref": "#/$defs/text" },
+            "line": { "$ref": "#/$defs/line" },
+            "col": { "$ref": "#/$defs/line" },
+            "endLine": { "$ref": "#/$defs/line" },
+            "endCol": { "$ref": "#/$defs/line" }
+          }
+        }
+      ]
+    },
+    "value": {
+      "description": "A folded value: its kind, and the value in JSON form. Null and unresolved carry a null value.",
+      "type": "object",
+      "required": ["kind", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["string", "bool", "char", "int", "double", "float", "null", "array", "annotation", "class", "enum", "unresolved"]
+        },
+        "value": {}
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "enum": ["null", "unresolved"] } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "null" } } } },
+        { "if": { "properties": { "kind": { "const": "bool" } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "boolean" } } } },
+        { "if": { "properties": { "kind": { "const": "int" } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "integer" } } } },
+        { "if": { "properties": { "kind": { "enum": ["double", "float"] } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "number" } } } },
+        { "if": { "properties": { "kind": { "enum": ["string", "char", "class", "enum"] } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "string" } } } },
+        { "if": { "properties": { "kind": { "const": "array" } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "type": "array", "items": { "$ref": "#/$defs/value" } } } } },
+        { "if": { "properties": { "kind": { "const": "annotation" } }, "required": ["kind"] },
+          "then": { "properties": { "value": { "$ref": "#/$defs/annotationValue" } } } }
+      ]
+    },
+    "annotationValue": {
+      "description": "An annotation as a value (nested inside another annotation): its full name and its arguments.",
+      "type": "object",
+      "required": ["name", "args"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "args": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/value" }
+        }
+      }
+    },
+    "annotation": {
+      "description": "One annotation on an element. Its arguments are values, sorted by element name.",
+      "type": "object",
+      "required": ["name", "raw", "line", "args"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/text" },
+        "raw": { "$ref": "#/$defs/nullableText" },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "args": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/value" }
+        }
+      }
+    },
+    "supertype": {
+      "description": "One supertype: the relation (class or interface), the type as written, and its join key.",
+      "type": "object",
+      "required": ["kind", "type", "typeFqn"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["class", "interface"] },
+        "type": { "$ref": "#/$defs/text" },
+        "typeFqn": { "$ref": "#/$defs/nullableText" }
+      }
+    },
+    "expression": {
+      "description": "One expression as data. Each kind writes only the keys it knows; text, kind and typeFqn are always present.",
+      "type": "object",
+      "required": ["text", "kind", "typeFqn"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "$ref": "#/$defs/nullableText" },
+        "kind": {
+          "enum": [
+            "literal", "lambda", "methodRef", "new", "call", "other", "conditional", "param", "local",
+            "constant", "field", "unresolved"
+          ]
+        },
+        "typeFqn": { "$ref": "#/$defs/nullableText" },
+        "reason": { "$ref": "#/$defs/text" },
+        "value": { "$ref": "#/$defs/value" },
+        "field": { "$ref": "#/$defs/text" },
+        "call": { "$ref": "#/$defs/text" },
+        "from": { "$ref": "#/$defs/text" },
+        "index": { "type": "integer", "minimum": 0 },
+        "inLambda": { "type": "boolean" },
+        "created": { "$ref": "#/$defs/text" },
+        "then": { "$ref": "#/$defs/expression" },
+        "otherwise": { "$ref": "#/$defs/expression" }
+      },
+      "allOf": [
+        {
+          "description": "Only a parameter says whether it is a lambda's.",
+          "if": { "properties": { "kind": { "const": "param" } }, "required": ["kind"] },
+          "then": { "required": ["inLambda"] },
+          "else": { "not": { "required": ["inLambda"] } }
+        },
+        {
+          "description": "An unresolved expression says why.",
+          "if": { "properties": { "kind": { "const": "unresolved" } }, "required": ["kind"] },
+          "then": { "required": ["reason"] }
+        },
+        {
+          "description": "A conditional has its two branches, and no other kind has them.",
+          "if": { "properties": { "kind": { "const": "conditional" } }, "required": ["kind"] },
+          "then": { "required": ["then", "otherwise"] },
+          "else": { "not": { "anyOf": [{ "required": ["then"] }, { "required": ["otherwise"] }] } }
+        }
+      ]
+    }
+  }
+}

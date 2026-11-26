@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: types.ndjson row",
+  "description": "One declared type: its dotted name, its kind, modifiers, enclosing type, type parameters, supertypes, annotations and position.",
+  "type": "object",
+  "required": ["fqn", "kind", "modifiers", "enclosing", "typeParams", "supertypes", "ann", "pos"],
+  "additionalProperties": false,
+  "properties": {
+    "fqn": { "$ref": "common.schema.json#/$defs/text" },
+    "kind": { "enum": ["class", "interface", "enum", "record", "annotation"] },
+    "modifiers": { "$ref": "common.schema.json#/$defs/modifiers" },
+    "enclosing": { "$ref": "common.schema.json#/$defs/nullableText" },
+    "typeParams": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/text" } },
+    "supertypes": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/supertype" } },
+    "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } },
+    "pos": { "$ref": "common.schema.json#/$defs/pos" }
+  }
+}

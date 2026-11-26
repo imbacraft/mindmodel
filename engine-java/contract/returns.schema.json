@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: returned entries",
+  "description": "One entry of a method or constructor's returned array: a return, or a switch expression or statement that hands a value back. It has no file of its own; each member row carries its entries.",
+  "oneOf": [
+    { "$ref": "#/$defs/returnEntry" },
+    { "$ref": "#/$defs/switchEntry" }
+  ],
+  "$defs": {
+    "returnEntry": {
+      "type": "object",
+      "required": ["kind", "line", "col", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "return" },
+        "line": { "$ref": "common.schema.json#/$defs/line" },
+        "col": { "$ref": "common.schema.json#/$defs/line" },
+        "value": { "$ref": "common.schema.json#/$defs/expression" }
+      }
+    },
+    "switchEntry": {
+      "type": "object",
+      "required": ["kind", "line", "col", "form", "on", "arms"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "switch" },
+        "line": { "$ref": "common.schema.json#/$defs/line" },
+        "col": { "$ref": "common.schema.json#/$defs/line" },
+        "form": { "enum": ["expression", "statement"] },
+        "on": { "$ref": "common.schema.json#/$defs/expression" },
+        "target": { "$ref": "common.schema.json#/$defs/text" },
+        "arms": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/arm" }
+        }
+      }
+    },
+    "arm": {
+      "description": "One arm: its labels (empty for default), whether it is the default, its guard when it has one, and its value.",
+      "type": "object",
+      "required": ["labels", "default", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": { "$ref": "common.schema.json#/$defs/text" }
+        },
+        "default": { "type": "boolean" },
+        "guard": { "$ref": "common.schema.json#/$defs/text" },
+        "value": { "$ref": "common.schema.json#/$defs/expression" }
+      }
+    }
+  }
+}

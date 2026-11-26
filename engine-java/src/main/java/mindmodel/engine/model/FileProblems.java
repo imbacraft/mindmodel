@@ -38,7 +38,7 @@ public final class FileProblems {
             String rel = base.relativize(file).toString().replace('\\', '/');
             int line = problem.getSourceLineNumber();
             out.computeIfAbsent(rel, k -> new ArrayList<>())
-                    .add(new Problem("syntax", message, line > 0 ? line : null));
+                    .add(new Problem("syntax", Failures.scrub(message), line > 0 ? line : null));
         }
         for (String rel : unread)
             out.computeIfAbsent(rel, k -> new ArrayList<>())

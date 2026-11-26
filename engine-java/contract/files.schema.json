@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: files.ndjson row",
+  "description": "One input file: its package, its imports and where they were read from, and the problems it carries. A file that cannot be parsed keeps its row, with its errors.",
+  "type": "object",
+  "required": ["path", "package", "imports", "importsOrigin", "test", "errors"],
+  "additionalProperties": false,
+  "properties": {
+    "path": { "$ref": "common.schema.json#/$defs/text" },
+    "package": { "$ref": "common.schema.json#/$defs/nullableText" },
+    "imports": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "wildcard", "static"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "$ref": "common.schema.json#/$defs/text" },
+          "wildcard": { "type": "boolean" },
+          "static": { "type": "boolean" }
+        }
+      }
+    },
+    "importsOrigin": { "enum": ["spoon", "header", "unresolved"] },
+    "importsReason": { "const": "header-unreadable" },
+    "test": { "type": "boolean" },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "reason", "line"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "enum": ["syntax", "not-read", "type-without-position"] },
+          "reason": { "$ref": "common.schema.json#/$defs/text" },
+          "line": { "type": ["integer", "null"], "minimum": 1 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "description": "importsReason is written exactly when the imports could not be read.",
+      "if": { "properties": { "importsOrigin": { "const": "unresolved" } }, "required": ["importsOrigin"] },
+      "then": { "required": ["importsReason"] },
+      "else": { "not": { "required": ["importsReason"] } }
+    }
+  ]
+}

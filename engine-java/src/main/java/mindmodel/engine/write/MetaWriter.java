@@ -19,7 +19,7 @@ import mindmodel.engine.model.Failures;
 public final class MetaWriter {
 
     /** What the run read, for the meta.json fields that describe the inputs rather than the failures. */
-    public record Facts(Path root, List<String> inputs, List<CtType<?>> types, int failedFiles, int compliance,
+    public record Facts(List<String> inputs, List<CtType<?>> types, int failedFiles, int compliance,
                         List<String> classpath, List<String> generatedDirs, int generatedFiles, int libraries,
                         String dropped) {
     }
@@ -39,9 +39,9 @@ public final class MetaWriter {
             g.writeStartObject();
             g.writeNumberField("contract", Contract.CONTRACT);
             g.writeStringField("engine", Contract.ENGINE);
+            g.writeStringField("engineVersion", Contract.VERSION);
             g.writeNumberField("compliance", facts.compliance());
-            g.writeStringField("root", facts.root().getFileName() == null ? "" : facts.root().getFileName().toString());
-            // No timestamp: a dump of the same inputs is byte-identical, directory and all.
+            // No timestamp, and no root: a dump of the same inputs is byte-identical wherever the checkout lives.
             g.writeObjectFieldStart("classpath");
             g.writeNumberField("entries", facts.classpath().size());
             g.writeStringField("sha256", jarDigest(facts.classpath()));
@@ -49,7 +49,7 @@ public final class MetaWriter {
             // Generated files in the model: read so a project call into one resolves, written as nothing.
             g.writeNumberField("generatedFiles", facts.generatedFiles());
             g.writeNumberField("libraryTypes", facts.libraries());
-            if (facts.dropped() != null) g.writeStringField("dropped", facts.dropped());
+            if (facts.dropped() != null) g.writeStringField("dropped", Failures.scrub(facts.dropped()));
             g.writeEndObject();
             g.writeObjectFieldStart("counts");
             g.writeNumberField("files", facts.inputs().size());
@@ -65,8 +65,9 @@ public final class MetaWriter {
     }
 
     /**
-     * A digest of the classpath as given: each entry's path and size, in order, so a run says which jars it read and a
-     * changed jar set changes the digest. Paths only; the jars themselves are never read twice.
+     * A digest of the classpath: each entry's file name and size, in order, so a run says which jars it read and a
+     * changed jar set changes the digest. The name, not the path: the directory is the host, and the same jars must
+     * give the same digest wherever they sit. The jars themselves are never read.
      */
     private static String jarDigest(List<String> classpath) throws IOException {
         MessageDigest md;
@@ -78,7 +79,8 @@ public final class MetaWriter {
         for (String entry : classpath) {
             Path p = Path.of(entry);
             long size = Files.isRegularFile(p) ? Files.size(p) : 0;
-            md.update((entry + ":" + size + "\n").getBytes(StandardCharsets.UTF_8));
+            String name = p.getFileName() == null ? "" : p.getFileName().toString();
+            md.update((name + ":" + size + "\n").getBytes(StandardCharsets.UTF_8));
         }
         StringBuilder hex = new StringBuilder();
         for (byte b : md.digest()) hex.append(String.format("%02x", b));

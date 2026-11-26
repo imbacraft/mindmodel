@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: meta.json",
+  "description": "The dump's header: the contract and engine, the compliance level, the classpath summary and every failure counter. Nothing in it names a host, a user or a time.",
+  "type": "object",
+  "required": ["contract", "engine", "engineVersion", "compliance", "classpath", "counts"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": { "const": 8 },
+    "engine": { "type": "string", "pattern": "^spoon-[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "engineVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "compliance": { "type": "integer", "minimum": 8 },
+    "classpath": {
+      "type": "object",
+      "required": ["entries", "sha256", "generatedDirs", "generatedFiles", "libraryTypes"],
+      "additionalProperties": false,
+      "properties": {
+        "entries": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "generatedDirs": { "type": "integer", "minimum": 0 },
+        "generatedFiles": { "type": "integer", "minimum": 0 },
+        "libraryTypes": { "type": "integer", "minimum": 0 },
+        "dropped": { "type": "string", "minLength": 1 }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": ["files", "types", "fields", "methods", "failedFiles"],
+      "additionalProperties": false,
+      "properties": {
+        "files": { "type": "integer", "minimum": 0 },
+        "types": { "type": "integer", "minimum": 0 },
+        "fields": { "type": "integer", "minimum": 0 },
+        "methods": { "type": "integer", "minimum": 0 },
+        "failedFiles": { "type": "integer", "minimum": 0 }
+      },
+      "patternProperties": {
+        "^(types\\.duplicateFqn|refs\\.typeUnresolved|refs\\.typeArgsUnresolved|refs\\.textUnresolved|chains\\.typeUnresolved|sites\\.bindingsUnresolved|sites\\.nameUnresolved|returns\\.unreadable|fields\\.modifiersUnreadable|files\\.importsUnreadable)$": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

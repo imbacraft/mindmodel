@@ -3,8 +3,8 @@
 The engine reads a Java checkout with Spoon, without its classpath, and writes the dump: one ndjson file per section
 and a
 `meta.json`. Node reads the dump and never sees Spoon. Where the engine cannot answer, it writes the unknown as `null`
-or
-`origin: "unresolved"` with a reason, and never a guess. The format is `docs/dump-spec.md` (contract 8).
+or `origin: "unresolved"` with a reason, and never a guess. The format is `CONTRACT.md` (contract 8), with its JSON
+Schemas in `contract/`.
 
 ## The pipeline
 
@@ -59,11 +59,10 @@ from a lower one, never from a higher one. The build section below says how to c
 
 ## Conventions
 
-`docs/dump-spec.md` is the contract. It lists the keys of each row kind, the order of every section, the origins, and
-the
-failure counters. The conventions in its Conventions section are checked by `DumpConventionsTest` on a fixture that
-writes every row kind. A change to a key or an order is a change to the spec and a contract bump, and Node refuses a
-dump of any other contract.
+`CONTRACT.md` is the contract. It lists the keys of each row kind, the order of every section, the origins, and the
+failure counters, and `contract/` holds the same shapes as JSON Schemas. The conventions are checked by
+`DumpConventionsTest` on a fixture that writes every row kind, and every row of the fixtures by `ContractSchemaTest`. A
+change to a key or an order is a change to the contract and its schema, and a contract bump when the shape changes.
 
 Within the code, each concept has one owner: `Names` for every spelling of a type or a member, `Failures.Key` for every
 failure name, `Json` for every JSON shape, `Positions` for every source position. A second implementation of one of
@@ -78,8 +77,7 @@ these is a bug to merge.
 3. Check Spoon's real behaviour, not memory. The signatures are in the jar and the sources are in the sources jar (see
    `SPOON.md`). If the behaviour was a surprise, add an entry to `SPOON.md`.
 4. Implement it in the owning class, with a failure counter if the engine answers empty rather than failing.
-5. Add the key to `docs/dump-spec.md`. A key that changes shape bumps `Contract.CONTRACT`, and the Node side must
-5. follow.
+5. Add the key to `CONTRACT.md` and its schema in `contract/`. A key that changes shape bumps `Contract.CONTRACT`.
 6. Run the module tests and check what the dump of the fixture changed.
 
 ## Build and test
@@ -87,6 +85,7 @@ these is a bug to merge.
 - Build and test: `mvn -q -f engine-java/pom.xml package`. This needs JDK 17 or later and Maven. It writes
   `engine-java/target/mindmodel-engine.jar` and runs the JUnit tests.
 - One test class: `mvn -f engine-java/pom.xml test -Dtest=ReceiverTypesTest`.
-- The Node tests that read the dump run the jar: `node --test test/dump.test.mjs`.
+- The contract: `ContractSchemaTest` validates every row of the fixtures against `contract/`, and
+  `MachineIndependenceTest` checks that one input dumped at two locations gives identical bytes.
 - Layer check: list each `import mindmodel.engine.<pkg>.` line per file and confirm no class imports a higher layer.
 - The tests write their sources into temporary folders. They never touch the test apps.

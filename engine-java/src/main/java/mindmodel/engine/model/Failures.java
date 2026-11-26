@@ -2,6 +2,7 @@ package mindmodel.engine.model;
 
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 /**
  * Counts the places the dump answers empty instead of failing, by key. One instance per run; meta.json writes the
@@ -56,9 +57,23 @@ public final class Failures {
         return counts;
     }
 
-    /** The reason an error row carries: {@code ExceptionClass: message}. */
+    /**
+     * An absolute path in a message: a POSIX path, or a Windows one with a drive letter. A relative path is left alone.
+     * shortcut: a path with a space in it keeps its tail after the space, upgrade when a message shows one.
+     */
+    private static final Pattern ABSOLUTE_PATH = Pattern.compile("(?<![\\w.])(?:[A-Za-z]:\\\\\\S+|(?:/[\\w.@+~-]+)+)");
+
+    /**
+     * The text with its absolute paths replaced by {@code <path>}. Every message the dump writes goes through here, so
+     * an output never says where the checkout or a jar lives: that is the host, and the dump must not carry it.
+     */
+    public static String scrub(String text) {
+        return text == null ? null : ABSOLUTE_PATH.matcher(text).replaceAll("<path>");
+    }
+
+    /** The reason an error row carries: {@code ExceptionClass: message}, with no absolute path in it. */
     public static String reason(Throwable failure) {
-        return failure.getClass().getSimpleName() + ": " + failure.getMessage();
+        return scrub(failure.getClass().getSimpleName() + ": " + failure.getMessage());
     }
 
     /**
@@ -68,6 +83,7 @@ public final class Failures {
     public static String brief(Throwable failure) {
         String why = failure.getClass().getSimpleName();
         if (failure.getMessage() != null && !failure.getMessage().isBlank()) why += ": " + failure.getMessage();
+        why = scrub(why);
         return why.length() > 200 ? why.substring(0, 200) : why;
     }
 }

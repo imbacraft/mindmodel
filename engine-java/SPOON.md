@@ -1,7 +1,8 @@
 # Working with Spoon 11.5.0
 
 Read this before changing the engine. It lists the Spoon behaviour this engine depends on and the traps that have
-already caused bugs. Add an entry whenever a bug turns out to be a Spoon surprise.
+already caused bugs. Add an entry whenever a bug turns out to be a Spoon surprise. The output these behaviours reach is
+the contract in `CONTRACT.md`.
 
 ## Ground truth
 - Do not trust memory of the Spoon API. Check the exact version:
@@ -66,7 +67,7 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
   Fold with Java semantics: integer division, int and long overflow, float stays float.
 - Spoon keeps only one declaration of a duplicate FQN, silently. The engine counts `types.duplicateFqn`. Which one it
   keeps depends on the checkout path string, not on the file list order (`DuplicateTypesTest` does not pin it). The
-  dump-spec's "first file in sorted order keeps it" is not what Spoon does; this is an open issue.
+  CONTRACT.md's "first file in sorted order keeps it" is not what Spoon does; this is an open issue.
 - A type or record pattern case label (`case String s`, `case Pair(String l, int r)`) is a `CtCasePattern` wrapping the
   `CtTypePattern` or `CtRecordPattern`; the pattern has no source position, so its text is built from its parts.
 - `case null, default` is `getIncludesDefault()` true, and `getCaseExpressions()` holds only `null`. A `when` guard is

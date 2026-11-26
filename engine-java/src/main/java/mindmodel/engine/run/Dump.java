@@ -78,7 +78,7 @@ public final class Dump {
         int failed = FilesWriter.write(inputs, types, model.packages(),
                 FileProblems.of(model, positions, declared.unread()), positions, outDir.resolve("files.ndjson"),
                 failures);
-        MetaWriter.write(new MetaWriter.Facts(root, inputs, types, failed, compliance, classpath, generatedDirs,
+        MetaWriter.write(new MetaWriter.Facts(inputs, types, failed, compliance, classpath, generatedDirs,
                 model.generatedFiles(), libraries, load.dropped()), failures, outDir.resolve("meta.json"));
     }
 

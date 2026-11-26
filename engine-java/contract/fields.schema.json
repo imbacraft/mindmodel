@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: fields.ndjson row",
+  "description": "One read or write of a field inside a body. A field declared in the checkout has origin java and a field name; any other row says why in reason.",
+  "type": "object",
+  "required": ["method", "field", "static", "op", "kind", "typeArgs", "file", "line", "col", "origin", "value"],
+  "additionalProperties": false,
+  "properties": {
+    "method": { "$ref": "common.schema.json#/$defs/text" },
+    "field": { "$ref": "common.schema.json#/$defs/nullableText" },
+    "static": { "type": ["boolean", "null"] },
+    "op": { "enum": ["read", "write"] },
+    "kind": { "const": "access" },
+    "typeArgs": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/nullableText" } },
+    "file": { "$ref": "common.schema.json#/$defs/text" },
+    "line": { "$ref": "common.schema.json#/$defs/line" },
+    "col": { "$ref": "common.schema.json#/$defs/line" },
+    "origin": { "enum": ["java", "unresolved", "error"] },
+    "reason": { "$ref": "common.schema.json#/$defs/text" },
+    "value": { "$ref": "common.schema.json#/$defs/expression" }
+  },
+  "allOf": [
+    {
+      "description": "A java row names its field and has no reason; every other row has a reason.",
+      "if": { "properties": { "origin": { "const": "java" } }, "required": ["origin"] },
+      "then": {
+        "properties": { "field": { "type": "string", "minLength": 1 } },
+        "not": { "required": ["reason"] }
+      },
+      "else": { "required": ["reason"] }
+    }
+  ]
+}

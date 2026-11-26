@@ -35,7 +35,7 @@ import mindmodel.engine.write.LibraryWriter;
 import mindmodel.engine.write.Ndjson;
 
 /**
- * The dump's conventions (docs/dump-spec.md, Conventions), checked on one fixture that writes every row kind. A rule
+ * The dump's conventions (CONTRACT.md, Conventions), checked on one fixture that writes every row kind. A rule
  * that breaks here is a change a reader would notice: an empty string where null applies, an unknown key, an unsorted
  * section, a label with no text. The error rows are written directly, since a fixture cannot make Spoon fail.
  */
@@ -46,7 +46,8 @@ class DumpConventionsTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
-    private static final String LIB = """
+    /** The library the fixture is compiled from: the classpath rows of the fixture come from it. */
+    static final String LIB = """
             package lib;
             public class Holder<T> extends java.util.AbstractList<T> implements Comparable<Holder<T>> {
                 public T value;
@@ -61,7 +62,7 @@ class DumpConventionsTest {
      * Every row kind: declarations of each kind, Lombok and compiler members, bodies with every decision, calls of each
      * kind, field accesses, annotations, an unresolved type and a default-package file.
      */
-    private static final Map<String, String> SOURCES = Map.of(
+    static final Map<String, String> SOURCES = Map.of(
             "demo/Kinds.java", """
                     package demo;
 
@@ -633,7 +634,7 @@ class DumpConventionsTest {
         throw new AssertionError("no file " + path);
     }
 
-    private static CtInvocation<?> helperCall(SourceModel model) {
+    static CtInvocation<?> helperCall(SourceModel model) {
         for (CtType<?> t : model.allTypes())
             for (CtInvocation<?> call : t.getElements(new TypeFilter<>(CtInvocation.class)))
                 if ("helper".equals(call.getExecutable().getSimpleName())) return call;
@@ -645,7 +646,7 @@ class DumpConventionsTest {
     }
 
     /** A row written by a row writer, read back as JSON. */
-    private static JsonNode writeRow(Ndjson.Body body) throws IOException {
+    static JsonNode writeRow(Ndjson.Body body) throws IOException {
         StringWriter text = new StringWriter();
         try (JsonGenerator g = new JsonFactory().createGenerator(text)) {
             g.writeStartObject();

@@ -79,4 +79,13 @@ class FailuresTest {
         assertEquals("Widget", widget.path("type").asText());
         assertTrue(widget.path("typeFqn").isNull(), "typeFqn: " + widget.path("typeFqn"));
     }
+
+    /** A message keeps what failed and drops where: an absolute path is replaced, a relative one is kept. */
+    @Test
+    void anAbsolutePathInAMessageIsScrubbed() {
+        assertEquals("NoSuchFileException: <path>: missing",
+                Failures.scrub("NoSuchFileException: /Users/someone/checkout/lib.jar: missing"));
+        assertEquals("bad <path> here", Failures.scrub("bad C:\\Users\\someone\\a.jar here"));
+        assertEquals("see src/demo/a/b.java and 1/2", Failures.scrub("see src/demo/a/b.java and 1/2"));
+    }
 }

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: library.ndjson row",
+  "description": "A shallow row for a classpath type the checkout names: readable (origin library, with supers, fields and methods) or unreadable (origin error, with a reason and empty lists). No positions.",
+  "oneOf": [
+    { "$ref": "#/$defs/readable" },
+    { "$ref": "#/$defs/unreadable" }
+  ],
+  "$defs": {
+    "supers": {
+      "type": "array",
+      "items": { "$ref": "common.schema.json#/$defs/supertype" }
+    },
+    "readable": {
+      "type": "object",
+      "required": ["fqn", "kind", "origin", "supers", "fields", "methods"],
+      "additionalProperties": false,
+      "properties": {
+        "fqn": { "$ref": "common.schema.json#/$defs/text" },
+        "kind": { "enum": ["class", "interface", "enum", "record", "annotation"] },
+        "origin": { "const": "library" },
+        "supers": { "$ref": "#/$defs/supers" },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type", "typeFqn", "modifiers"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "$ref": "common.schema.json#/$defs/text" },
+              "type": { "$ref": "common.schema.json#/$defs/text" },
+              "typeFqn": { "$ref": "common.schema.json#/$defs/nullableText" },
+              "modifiers": { "$ref": "common.schema.json#/$defs/modifiers" }
+            }
+          }
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "returns", "params", "modifiers"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "$ref": "common.schema.json#/$defs/text" },
+              "returns": { "$ref": "common.schema.json#/$defs/text" },
+              "params": {
+                "type": "array",
+                "items": {
+                  "description": "A class file keeps no parameter names, so the name is always null here.",
+                  "type": "object",
+                  "required": ["type", "name", "varargs"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": { "$ref": "common.schema.json#/$defs/text" },
+                    "name": { "type": "null" },
+                    "varargs": { "type": "boolean" }
+                  }
+                }
+              },
+              "modifiers": { "$ref": "common.schema.json#/$defs/modifiers" }
+            }
+          }
+        }
+      }
+    },
+    "unreadable": {
+      "type": "object",
+      "required": ["fqn", "kind", "origin", "reason", "supers", "fields", "methods"],
+      "additionalProperties": false,
+      "properties": {
+        "fqn": { "$ref": "common.schema.json#/$defs/text" },
+        "kind": { "type": "null" },
+        "origin": { "const": "error" },
+        "reason": { "$ref": "common.schema.json#/$defs/text" },
+        "supers": { "$ref": "#/$defs/supers", "maxItems": 0 },
+        "fields": { "type": "array", "maxItems": 0 },
+        "methods": { "type": "array", "maxItems": 0 }
+      }
+    }
+  }
+}

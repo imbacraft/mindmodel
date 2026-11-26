@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mindmodel dump: members.ndjson row",
+  "description": "One member of a declared type: a field, an enum constant, a record component, a method or a constructor. The kind says which. Generated members add generated and generatedBy; a row with no body has empty body arrays.",
+  "oneOf": [
+    { "$ref": "#/$defs/field" },
+    { "$ref": "#/$defs/enumConstant" },
+    { "$ref": "#/$defs/recordComponent" },
+    { "$ref": "#/$defs/method" },
+    { "$ref": "#/$defs/constructor" }
+  ],
+  "$defs": {
+    "generated": {
+      "description": "Who wrote a generated member: Lombok, the compiler (enum values and valueOf), or the record header.",
+      "enum": ["lombok", "compiler", "record"]
+    },
+    "param": {
+      "type": "object",
+      "required": ["type", "name", "varargs", "ann"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "$ref": "common.schema.json#/$defs/text" },
+        "name": { "$ref": "common.schema.json#/$defs/nullableText" },
+        "varargs": { "type": "boolean" },
+        "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } }
+      }
+    },
+    "loop": {
+      "type": "object",
+      "required": ["line", "endLine"],
+      "additionalProperties": false,
+      "properties": {
+        "line": { "$ref": "common.schema.json#/$defs/line" },
+        "endLine": { "$ref": "common.schema.json#/$defs/line" }
+      }
+    },
+    "branch": {
+      "type": "object",
+      "required": ["line", "endLine", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "line": { "$ref": "common.schema.json#/$defs/line" },
+        "endLine": { "$ref": "common.schema.json#/$defs/line" },
+        "kind": { "enum": ["if", "else", "catch", "case"] }
+      }
+    },
+    "tryBlock": {
+      "description": "A try block's line range. The finalizer's range is written only for a try that has one.",
+      "type": "object",
+      "required": ["line", "endLine"],
+      "additionalProperties": false,
+      "properties": {
+        "line": { "$ref": "common.schema.json#/$defs/line" },
+        "endLine": { "$ref": "common.schema.json#/$defs/line" },
+        "finallyLine": { "$ref": "common.schema.json#/$defs/line" },
+        "finallyEndLine": { "$ref": "common.schema.json#/$defs/line" }
+      },
+      "dependentRequired": {
+        "finallyLine": ["finallyEndLine"],
+        "finallyEndLine": ["finallyLine"]
+      }
+    },
+    "field": {
+      "type": "object",
+      "required": ["kind", "owner", "name", "type", "typeFqn", "modifiers", "ann", "pos"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "field" },
+        "owner": { "$ref": "common.schema.json#/$defs/text" },
+        "name": { "$ref": "common.schema.json#/$defs/text" },
+        "type": { "$ref": "common.schema.json#/$defs/text" },
+        "typeFqn": { "$ref": "common.schema.json#/$defs/nullableText" },
+        "modifiers": { "$ref": "common.schema.json#/$defs/modifiers" },
+        "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } },
+        "pos": { "$ref": "common.schema.json#/$defs/pos" },
+        "value": { "$ref": "common.schema.json#/$defs/value" },
+        "generated": { "$ref": "#/$defs/generated" },
+        "generatedBy": { "$ref": "common.schema.json#/$defs/nullableText" }
+      },
+      "dependentRequired": {
+        "generated": ["generatedBy"],
+        "generatedBy": ["generated"]
+      }
+    },
+    "enumConstant": {
+      "type": "object",
+      "required": ["kind", "owner", "name", "ann", "pos", "args"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "enumConstant" },
+        "owner": { "$ref": "common.schema.json#/$defs/text" },
+        "name": { "$ref": "common.schema.json#/$defs/text" },
+        "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } },
+        "pos": { "$ref": "common.schema.json#/$defs/pos" },
+        "args": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/value" } }
+      }
+    },
+    "recordComponent": {
+      "type": "object",
+      "required": ["kind", "owner", "name", "type", "typeFqn", "ann", "pos"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "recordComponent" },
+        "owner": { "$ref": "common.schema.json#/$defs/text" },
+        "name": { "$ref": "common.schema.json#/$defs/text" },
+        "type": { "$ref": "common.schema.json#/$defs/text" },
+        "typeFqn": { "$ref": "common.schema.json#/$defs/nullableText" },
+        "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } },
+        "pos": { "$ref": "common.schema.json#/$defs/pos" }
+      }
+    },
+    "method": {
+      "type": "object",
+      "required": [
+        "kind", "owner", "name", "params", "id", "returns", "isMain", "modifiers", "hasBody", "anonymous", "throws",
+        "ann", "loops", "branches", "tryBlocks", "returned", "pos"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "method" },
+        "owner": { "$ref": "common.schema.json#/$defs/text" },
+        "name": { "$ref": "common.schema.json#/$defs/text" },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "id": { "type": "string", "pattern": "^[^#]+#" },
+        "returns": { "$ref": "common.schema.json#/$defs/text" },
+        "isMain": { "type": "boolean" },
+        "modifiers": { "$ref": "common.schema.json#/$defs/modifiers" },
+        "hasBody": { "type": "boolean" },
+        "anonymous": { "type": "boolean" },
+        "throws": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/text" } },
+        "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } },
+        "loops": { "type": "array", "items": { "$ref": "#/$defs/loop" } },
+        "branches": { "type": "array", "items": { "$ref": "#/$defs/branch" } },
+        "tryBlocks": { "type": "array", "items": { "$ref": "#/$defs/tryBlock" } },
+        "returned": { "type": "array", "items": { "$ref": "returns.schema.json" } },
+        "pos": { "$ref": "common.schema.json#/$defs/pos" },
+        "generated": { "$ref": "#/$defs/generated" },
+        "generatedBy": { "$ref": "common.schema.json#/$defs/nullableText" }
+      },
+      "dependentRequired": {
+        "generated": ["generatedBy"],
+        "generatedBy": ["generated"]
+      },
+      "allOf": [
+        {
+          "description": "A row with no body has its body arrays empty.",
+          "if": { "properties": { "hasBody": { "const": false } }, "required": ["hasBody"] },
+          "then": {
+            "properties": {
+              "loops": { "maxItems": 0 },
+              "branches": { "maxItems": 0 },
+              "tryBlocks": { "maxItems": 0 },
+              "returned": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    },
+    "constructor": {
+      "type": "object",
+      "required": [
+        "kind", "owner", "name", "params", "id", "modifiers", "hasBody", "anonymous", "throws", "ann", "loops",
+        "branches", "tryBlocks", "returned", "pos"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "constructor" },
+        "owner": { "$ref": "common.schema.json#/$defs/text" },
+        "name": { "$ref": "common.schema.json#/$defs/text" },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "id": { "type": "string", "pattern": "^[^#]+#" },
+        "modifiers": { "$ref": "common.schema.json#/$defs/modifiers" },
+        "hasBody": { "type": "boolean" },
+        "anonymous": { "type": "boolean" },
+        "throws": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/text" } },
+        "ann": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/annotation" } },
+        "loops": { "type": "array", "items": { "$ref": "#/$defs/loop" } },
+        "branches": { "type": "array", "items": { "$ref": "#/$defs/branch" } },
+        "tryBlocks": { "type": "array", "items": { "$ref": "#/$defs/tryBlock" } },
+        "returned": { "type": "array", "items": { "$ref": "returns.schema.json" } },
+        "pos": { "$ref": "common.schema.json#/$defs/pos" },
+        "generated": { "$ref": "#/$defs/generated" },
+        "generatedBy": { "$ref": "common.schema.json#/$defs/nullableText" }
+      },
+      "dependentRequired": {
+        "generated": ["generatedBy"],
+        "generatedBy": ["generated"]
+      },
+      "allOf": [
+        {
+          "description": "A row with no body has its body arrays empty.",
+          "if": { "properties": { "hasBody": { "const": false } }, "required": ["hasBody"] },
+          "then": {
+            "properties": {
+              "loops": { "maxItems": 0 },
+              "branches": { "maxItems": 0 },
+              "tryBlocks": { "maxItems": 0 },
+              "returned": { "maxItems": 0 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

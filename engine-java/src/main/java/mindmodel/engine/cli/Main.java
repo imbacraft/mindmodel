@@ -12,19 +12,30 @@ import mindmodel.engine.run.Dump;
 import mindmodel.engine.write.Contract;
 
 /**
- * The command line: {@code dump [--contract N] [--compliance L] [--classpath FILE] [--generated FILE] <root>
- * <file-list> <out-dir>} writes the dump, and {@code version} prints the contract. Bad arguments are a usage message
- * and exit 2; a failed run is exit 1.
+ * The command line. {@code --version} prints the engine version and the contract number; {@code --help} prints the
+ * usage. {@code dump [--contract N] [--compliance L] [--classpath FILE] [--generated FILE] <root> <file-list>
+ * <out-dir>} writes the dump. Exit codes: 0 for success and for the two informational flags, 2 for a usage error
+ * (bad arguments, or a contract number the engine does not speak), 1 for a failed run. CONTRACT.md documents them.
  */
 public final class Main {
+
+    /** The usage text: printed by {@code --help} on stdout, and on stderr with exit 2 after a usage error. */
+    static final String USAGE = "usage: mindmodel-engine --version\n"
+            + "       mindmodel-engine --help\n"
+            + "       mindmodel-engine dump [--contract N] [--compliance L] [--classpath FILE] [--generated FILE]\n"
+            + "                      <root> <file-list> <out-dir>\n";
 
     private Main() {
     }
 
     public static void main(String[] args) {
         try {
-            if (args.length >= 1 && "version".equals(args[0])) {
-                System.out.println("{\"contract\":" + Contract.CONTRACT + ",\"engine\":\"" + Contract.ENGINE + "\"}");
+            if (args.length == 1 && "--version".equals(args[0])) {
+                System.out.println("mindmodel-engine " + Contract.VERSION + " contract " + Contract.CONTRACT);
+                return;
+            }
+            if (args.length == 1 && "--help".equals(args[0])) {
+                System.out.print(USAGE);
                 return;
             }
             if (args.length >= 1 && "dump".equals(args[0])) {
@@ -82,9 +93,7 @@ public final class Main {
     }
 
     private static void usage() {
-        System.err.println("usage: java -jar mindmodel-engine.jar version");
-        System.err.println("       java -jar mindmodel-engine.jar dump [--contract N] [--compliance L]"
-                + " [--classpath FILE] [--generated FILE] <root> <file-list> <out-dir>");
+        System.err.print(USAGE);
         System.exit(2);
     }
 }

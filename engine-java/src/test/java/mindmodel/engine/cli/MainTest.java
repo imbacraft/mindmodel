@@ -10,9 +10,18 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-/** The CLI's bad arguments: a usage message and exit 2, never a crash (exit 1). Runs Main in a child JVM. */
+import mindmodel.engine.write.Contract;
+
+/**
+ * The CLI's output and exit codes (CONTRACT.md, Command line): 0 for success and the two informational flags, 2 for a
+ * usage error, 1 for a failed run. Runs Main in a child JVM.
+ */
 class MainTest {
+
+    @TempDir
+    Path dir;
 
     private static String[] run(String... args) throws IOException, InterruptedException {
         String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toString();
@@ -36,5 +45,42 @@ class MainTest {
         String[] result = run("dump", "--compliance", "twenty", "root", "list", "out");
         assertEquals("2", result[0]);
         assertTrue(result[1].contains("usage:"), result[1]);
+    }
+
+    @Test
+    void versionPrintsTheEngineVersionAndTheContract() throws Exception {
+        String[] result = run("--version");
+        assertEquals("0", result[0]);
+        assertEquals("mindmodel-engine " + Contract.VERSION + " contract " + Contract.CONTRACT + "\n", result[1]);
+        assertTrue(Contract.VERSION.matches("\\d+\\.\\d+\\.\\d+"), "a dotted version: " + Contract.VERSION);
+    }
+
+    @Test
+    void helpPrintsTheUsageAndExitsZero() throws Exception {
+        String[] result = run("--help");
+        assertEquals("0", result[0]);
+        assertTrue(result[1].startsWith("usage: mindmodel-engine --version"), result[1]);
+    }
+
+    @Test
+    void noArgumentsIsAUsageError() throws Exception {
+        String[] result = run();
+        assertEquals("2", result[0]);
+        assertTrue(result[1].contains("usage:"), result[1]);
+    }
+
+    @Test
+    void aContractTheEngineDoesNotSpeakIsAUsageError() throws Exception {
+        String[] result = run("dump", "--contract", String.valueOf(Contract.CONTRACT + 1), "root", "list", "out");
+        assertEquals("2", result[0]);
+        assertTrue(result[1].contains("contract mismatch"), result[1]);
+    }
+
+    @Test
+    void aRunThatCannotReadItsInputsFailsWithExitOne() throws Exception {
+        String[] result = run("dump", dir.resolve("no-root").toString(), dir.resolve("no-list.txt").toString(),
+                dir.resolve("out").toString());
+        assertEquals("1", result[0]);
+        assertTrue(result[1].startsWith("mindmodel-engine: "), result[1]);
     }
 }
