@@ -63,19 +63,24 @@ function compare(t, app, now, store = baseline) {
     t.diagnostic(`${app}: baseline created (review test/baselines/coverage.json)`);
     return;
   }
+  // Every rate is checked before failing, so one drop never hides another.
+  const drops = [];
   for (const [id, prev] of Object.entries(was.rates)) {
     const rate = now.rates[id];
-    assert.ok(rate, `${app}: rate "${id}" disappeared`);
+    if (!rate) {
+      drops.push(`rate "${id}" disappeared`);
+      continue;
+    }
     const [num, den] = rate;
     const [wasNum, wasDen, wasPct] = prev;
-    assert.ok(
-      !(num < wasNum && den <= wasDen),
-      `${app}: ${id} numerator dropped ${wasNum} -> ${num} with a denominator that did not grow (${den})`,
-    );
     const grew = wasDen ? (den - wasDen) / wasDen : 1;
-    assert.ok(!(rate[2] < wasPct && grew < 0.05), `${app}: ${id} dropped ${wasPct}% -> ${rate[2]}% (denominator +${den - wasDen})`);
+    if (num < wasNum && den <= wasDen)
+      drops.push(`${id} numerator dropped ${wasNum} -> ${num} with a denominator that did not grow (${den})`);
+    else if (rate[2] < wasPct && grew < 0.05)
+      drops.push(`${id} dropped ${wasPct}% -> ${rate[2]}% (denominator +${den - wasDen})`);
     if (num !== wasNum || den !== wasDen) t.diagnostic(`${app}: ${id} ${wasNum}/${wasDen} -> ${num}/${den}`);
   }
+  assert.deepEqual(drops, [], `${app}: ${drops.join('; ')}`);
   for (const [key, label] of [
     ['unknownAnnotations', 'unknown annotations'],
     ['unknownBaseClasses', 'unknown base classes'],
