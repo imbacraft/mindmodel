@@ -51,27 +51,42 @@ public final class DumpRun {
     /** As {@link #of(Path, Map, List, int)}, with dependency jars or class folders on the classpath Spoon reads. */
     public static DumpRun of(Path dir, Map<String, String> sources, List<String> listed, int compliance,
             List<String> classpath) throws IOException {
+        return of(dir, sources, listed, compliance, classpath, List.of());
+    }
+
+    /**
+     * As {@link #of(Path, Map, List, int, List)}, with annotation-processor output folders (relative to the checkout)
+     * that are read for resolution and never written.
+     */
+    public static DumpRun of(Path dir, Map<String, String> sources, List<String> listed, int compliance,
+            List<String> classpath, List<String> generatedDirs) throws IOException {
+        return of(dir, sources, listed, compliance, classpath, generatedDirs, null);
+    }
+
+    /** As {@link #of(Path, Map, List, int, List, List)}, with the Lombok jar delombok runs with (null: none). */
+    public static DumpRun of(Path dir, Map<String, String> sources, List<String> listed, int compliance,
+            List<String> classpath, List<String> generatedDirs, Path lombok) throws IOException {
         Path root = dir.resolve("src");
         for (var source : sources.entrySet()) {
             Path file = root.resolve(source.getKey());
             Files.createDirectories(file.getParent());
             Files.writeString(file, source.getValue());
         }
-        Path out = dump(dir, root, listed, "out", compliance, classpath);
+        Path out = dump(dir, root, listed, "out", compliance, classpath, generatedDirs, lombok);
         return new DumpRun(dir, root, out);
     }
 
     /** Dumps the same checkout again into {@code dir/<outName>}, with the file list in the given order. */
     public Path redump(String outName, List<String> listed) throws IOException {
-        return dump(dir, root, listed, outName, SourceModel.compliance(), List.of());
+        return dump(dir, root, listed, outName, SourceModel.compliance(), List.of(), List.of(), null);
     }
 
     private static Path dump(Path dir, Path root, List<String> listed, String outName, int compliance,
-            List<String> classpath) throws IOException {
+            List<String> classpath, List<String> generatedDirs, Path lombok) throws IOException {
         Path list = dir.resolve("files-" + outName + ".txt");
         Files.write(list, listed);
         Path out = dir.resolve(outName);
-        Dump.run(root, list, out, compliance, classpath, List.of());
+        Dump.run(root, list, out, compliance, classpath, generatedDirs, lombok);
         return out;
     }
 

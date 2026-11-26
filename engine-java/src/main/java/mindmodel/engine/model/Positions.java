@@ -59,10 +59,9 @@ public final class Positions {
         Pos whole = of(call);
         SourcePosition p = call.getPosition();
         if (whole == null || call.getTarget() == null || call.getExecutable() == null) return whole;
-        CompilationUnit unit = p.getCompilationUnit();
-        if (unit == null || unit.getOriginalSourceCode() == null) return whole;
-        int[] name = nameSpan(unit.getOriginalSourceCode(), p.getSourceStart(), p.getSourceEnd(),
-                call.getExecutable().getSimpleName());
+        String src = SourceText.of(p.getCompilationUnit());
+        if (src == null) return whole;
+        int[] name = nameSpan(src, p.getSourceStart(), p.getSourceEnd(), call.getExecutable().getSimpleName());
         if (name == null) return whole;
         return at(p, name[0], name[1]);
     }
@@ -77,9 +76,8 @@ public final class Positions {
         String rel = file == null ? "" : relative.computeIfAbsent(file,
                 f -> root.relativize(f.toPath().toAbsolutePath().normalize()).toString().replace('\\', '/'));
         CompilationUnit unit = p.getCompilationUnit();
-        if (unit == null || unit.getOriginalSourceCode() == null)
-            return new Pos(rel, p.getLine(), p.getColumn(), p.getEndLine(), p.getEndColumn());
-        String src = unit.getOriginalSourceCode();
+        String src = SourceText.of(unit);
+        if (src == null) return new Pos(rel, p.getLine(), p.getColumn(), p.getEndLine(), p.getEndColumn());
         return new Pos(rel, lineAt(unit, start), columnAt(src, start), lineAt(unit, end), columnAt(src, end));
     }
 

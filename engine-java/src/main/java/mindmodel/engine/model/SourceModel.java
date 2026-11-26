@@ -119,6 +119,8 @@ public final class SourceModel {
         env.setIgnoreDuplicateDeclarations(true);
         env.setComplianceLevel(compliance);
         env.setAutoImports(false);
+        // Each file is parsed as SourceText reads it: UTF-8, else ISO-8859-1 (SPOON.md, encodings).
+        env.setEncodingProvider((file, bytes) -> SourceText.charsetOf(bytes));
         env.setCopyResources(false);
         env.setLevel("OFF");
         if (!classpath.isEmpty()) env.setSourceClasspath(classpath.toArray(new String[0]));
@@ -216,7 +218,20 @@ public final class SourceModel {
         return out;
     }
 
+    /** Every type the model holds, each one followed by its member types, nested to any depth. */
     public List<CtType<?>> allTypes() {
+        List<CtType<?>> out = new ArrayList<>();
+        for (CtType<?> t : topLevelTypes()) addWithNested(t, out);
+        return out;
+    }
+
+    private static void addWithNested(CtType<?> type, List<CtType<?>> out) {
+        out.add(type);
+        for (CtType<?> nested : type.getNestedTypes()) addWithNested(nested, out);
+    }
+
+    /** The top-level types only, as Spoon's getAllTypes() gives them: a member type is reached through its owner. */
+    public List<CtType<?>> topLevelTypes() {
         return new ArrayList<>(launcher.getModel().getAllTypes());
     }
 

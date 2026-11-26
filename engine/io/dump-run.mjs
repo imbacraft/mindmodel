@@ -34,6 +34,12 @@ function complianceCapped() {
   if (saved !== undefined) process.env.MINDMODEL_COMPLIANCE = saved;
 }
 
+// The Lombok jar delombok runs with. Until io/lombok-jar.mjs hands one over, it comes from MINDMODEL_LOMBOK_JAR.
+function lombokJar() {
+  const jar = process.env.MINDMODEL_LOMBOK_JAR;
+  return jar && fs.existsSync(jar) ? jar : null;
+}
+
 /** The file's own bytes, hashed: the one reading of a file that does not depend on when it was written. */
 function contentHash(file) {
   try {
@@ -89,6 +95,9 @@ export function fingerprint(root, files, classpathHash = null) {
     h.update(`${rel}:sha:${contentHash(full)}\n`);
   }
   if (classpathHash) h.update(`classpath:${classpathHash}\n`);
+  // With delombok's members in the dump, the Lombok jar is an input too: a dump without it is not this dump.
+  const lombok = lombokJar();
+  if (lombok) h.update(`lombok:${contentHash(lombok)}\n`);
   return h.digest('hex').slice(0, 16);
 }
 
@@ -125,6 +134,8 @@ export function dumpFor(root, files, { outDir, force = false, classpath = null, 
     scratch.push(gen);
     flags.push('--generated', gen);
   }
+  const lombok = lombokJar();
+  if (lombok) flags.push('--lombok', lombok);
   const retired = `${dir}.${process.pid}.old`;
   let swapped = false;
   try {

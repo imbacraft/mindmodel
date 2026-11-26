@@ -65,7 +65,7 @@ class MachineIndependenceTest {
             Files.writeString(root.resolve("b/Dup.java"), "package demo; public class Dup { int other; }");
             Path list = root.resolve("files.txt");
             Files.writeString(list, "a/Dup.java\nb/Dup.java\n");
-            Dump.run(root, list, root.resolve("out"), 17, List.of(), List.of());
+            Dump.run(root, list, root.resolve("out"), 17, List.of(), List.of(), null);
             String types = Files.readString(root.resolve("out").resolve("types.ndjson"));
             assertTrue(types.contains("\"file\":\"a/Dup.java\""), place + " keeps the sorted-first file: " + types);
         }
@@ -96,7 +96,7 @@ class MachineIndependenceTest {
         Path list = root.resolve("files.txt");
         Files.write(list, listed.stream().sorted().toList());
         Path out = root.resolve("out");
-        Dump.run(root, list, out, 21, List.of(classes.toString()), List.of());
+        Dump.run(root, list, out, 21, List.of(classes.toString()), List.of(), null);
         return out;
     }
 

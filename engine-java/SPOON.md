@@ -16,6 +16,16 @@ the contract in `CONTRACT.md`.
 - The engine runs Spoon in noclasspath mode, with optional dependency jars. Unresolved references are normal: a
   reference can exist while `getDeclaration()` is null. Never invent a type or target for it; write it as unresolved
   (fqn null, written text kept) and count it in `Failures`.
+- A compile error in a source is reported, not thrown: `JDTBasedSpoonCompiler.report` throws `ModelBuildingException`
+  only when the environment is not noclasspath. A syntax error leaves its file's types absent and the file counted in
+  `failedFiles`; a duplicate type is ignored because `setIgnoreDuplicateDeclarations(true)` is set
+  (`SpoonFactsTest`, `DuplicateTypesTest`).
+- A classpath entry that does not exist (or is not a folder or a zip) makes the whole model fail with
+  `InvalidClassPathException: ... does not exist, it is not a valid folder`. `Classpath.readable` drops such entries
+  before the build and counts each one (`classpath.unreadable`); `SourceModel.load` still falls back to no classpath for
+  any other failure, which is recorded as `classpath.dropped`.
+- An input that cannot be opened (permissions) makes `SpoonFile.getContentChars` throw `SpoonException` for the whole
+  model, not one unit. `Dump.inputs` leaves such a file out and counts it (`files.unreadable`), so the rest is dumped.
 
 ## Type hierarchy traps
 - `CtWildcardReference` extends `CtTypeParameterReference`. Check for the wildcard first, or its bounds are lost.
@@ -47,6 +57,16 @@ the contract in `CONTRACT.md`.
   when Lombok writes no constructor for the type (`LombokTest`).
 
 ## Names
+- `CtModel.getAllTypes()` is the top-level types of every package (`CtModelImpl`: `ctPackage.getTypes()`). A member
+  type is reached through `getNestedTypes()`, recursively. `SourceModel.allTypes()` walks them; `topLevelTypes()` is
+  Spoon's list, used where the walk recurses itself. A use that needs nested types (a generated `Outer.Inner` in
+  `Dump.knownTypes`) must not read `getAllTypes()` alone (`NestedGeneratedTypesTest`).
+- A type in the default package is named by its simple name: `getPackage().getQualifiedName()` is `""`, and the
+  root package's `unnamed package` never reaches a name (`SpoonFactsTest`).
+- `CtArrayTypeReference.getComponentType()` has no source position of its own. `Names.qualified` spells `I[]` from the
+  component's name and package, and no row reads a component's position (`SpoonFactsTest`).
+- `CtExecutable.getSignature()` spells types by qualified name (`SignaturePrinter`). The engine does not call it: a
+  parameter list is `Names.typeText` of each parameter, as written.
 - `getQualifiedName()` spells nested types `pkg.Outer$Inner`. The dump spells them dotted (`pkg.Outer.Inner`), so
   every type name goes through `Names`.
 - Type text uses Java spelling with single spaces (`Map<K, V>`, `? extends T`), produced by `Names` only.
@@ -106,3 +126,19 @@ the contract in `CONTRACT.md`.
 - JSON cannot hold `NaN` or `Infinity`; write such a value as unresolved.
 - Strings may hold lone surrogates (escapes, or text clipped mid-character). Clip on code points, and make sure
   the writer cannot throw on unpaired surrogates.
+
+## Encodings
+- `CtCompilationUnit.getOriginalSourceCode()` reads the file with `Files.readString(file, env.getEncoding())`: one
+  encoding for the run, and strict, so a Latin-1 file throws `MalformedInputException` out of the position code. An
+  `EncodingProvider` (`env.setEncodingProvider`) decides the encoding per file, but only for the parse
+  (`SpoonFile.getContentChars`), not for this text.
+- So every reader of a unit's text goes through `SourceText`: UTF-8 when the bytes are valid UTF-8, else ISO-8859-1
+  (which maps every byte). `SourceModel` gives the parser the same rule, so offsets agree
+  (`SourceEncodingTest`).
+
+## Equality
+- `CtElementImpl.equals` is structural (`EqualsVisitor`) and `hashCode` is `HashcodeVisitor`: two elements of the same
+  shape are equal whatever their positions. Never key a `HashMap`, `WeakHashMap` or `HashSet` by an element. A cache
+  keyed by `CompilationUnit` handed one file's text to another unit with the same shape, which moved columns for a
+  Lombok case; `SourceText` keys by path. Use `IdentityHashMap` (or a key the engine makes) for element identity.
+

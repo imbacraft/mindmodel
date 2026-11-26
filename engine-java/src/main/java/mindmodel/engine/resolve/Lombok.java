@@ -122,7 +122,7 @@ public final class Lombok {
     /**
      * Each logger annotation and the type of the field it writes. The field is always `log`, whatever the annotation.
      */
-    private static final Map<String, String> LOGGERS = new LinkedHashMap<>();
+    static final Map<String, String> LOGGERS = new LinkedHashMap<>();
 
     static {
         LOGGERS.put("Slf4j", "org.slf4j.Logger");
@@ -139,14 +139,23 @@ public final class Lombok {
     /**
      * The synthesized members of every type, keyed by the type's name, in a stable order. The positions and the failure
      * counts are the run's own: a reference a generated member names is judged by the same rule as a declared one.
+     *
+     * @param delombok the members delombok read, by the type they belong to; null when delombok did not run, and the
+     *     hand-written rules answer. The compiler's enum members are the same either way.
      */
-    public static Map<String, List<Item>> synthesize(List<CtType<?>> types, Positions positions, Failures failures) {
+    public static Map<String, List<Item>> synthesize(List<CtType<?>> types, Positions positions, Failures failures,
+            Map<String, List<Item>> delombok) {
         Map<String, List<Item>> out = new LinkedHashMap<>();
         for (CtType<?> type : types) {
             List<Item> items = new ArrayList<>();
             Sink sink = new Sink(items, positions, failures);
             // A record's members are the compiler's and the dump's own (RecordCtors): no annotation writes them here.
-            if (!(type instanceof CtRecord)) itemsOf(type, sink);
+            if (delombok != null) {
+                if (type.isEnum()) enumMethods(type, Names.qualified(type), sink);
+                items.addAll(delombok.getOrDefault(Names.qualified(type), List.of()));
+            } else if (!(type instanceof CtRecord)) {
+                itemsOf(type, sink);
+            }
             items.sort(Comparator.comparing((Item i) -> i.pos() == null ? "" : i.pos().file())
                     .thenComparingInt(i -> i.pos() == null ? 0 : i.pos().line())
                     .thenComparing(Item::kind).thenComparing(Item::id));
@@ -235,13 +244,13 @@ public final class Lombok {
     /**
      * A primitive `boolean isActive` is read as `isActive()`; any other type, `Boolean` included, is `get` plus name.
      */
-    private static String getterName(String name, String typeText) {
+    static String getterName(String name, String typeText) {
         if (!typeText.equals("boolean")) return "get" + cap(name);
         return isPrefixed(name) ? name : "is" + cap(name);
     }
 
     /** A primitive `boolean isActive` is written as `setActive`: the `is` is the getter's, not the property's. */
-    private static String setterName(String name, String typeText) {
+    static String setterName(String name, String typeText) {
         return "set" + cap(typeText.equals("boolean") && isPrefixed(name) ? name.substring(2) : name);
     }
 
@@ -340,7 +349,7 @@ public final class Lombok {
      * an annotation imported through a wildcard (`import lombok.*`), and gives it the annotated type's own package; the
      * file's imports are then the evidence, and they are as good as the annotation's own name.
      */
-    private static boolean has(CtElement element, String simpleName) {
+    static boolean has(CtElement element, String simpleName) {
         for (CtAnnotation<?> a : element.getAnnotations()) {
             if (!a.getAnnotationType().getSimpleName().equals(simpleName)) continue;
             String pkg = a.getAnnotationType().getPackage() == null ? ""
@@ -363,7 +372,7 @@ public final class Lombok {
         return false;
     }
 
-    private static String cap(String name) {
+    static String cap(String name) {
         return name.isEmpty() ? name : Character.toUpperCase(name.charAt(0)) + name.substring(1);
     }
 }

@@ -158,7 +158,7 @@ public final class Names {
     public static String sourceOf(CtElement element) {
         SourcePosition p = element == null ? null : element.getPosition();
         if (p == null || !p.isValidPosition() || p.getCompilationUnit() == null) return null;
-        String source = p.getCompilationUnit().getOriginalSourceCode();
+        String source = SourceText.of(p.getCompilationUnit());
         int start = p.getSourceStart();
         int end = p.getSourceEnd();
         if (source == null || start < 0 || end < start || end >= source.length()) return null;

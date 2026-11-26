@@ -10,11 +10,13 @@ Schemas in `contract/`.
 
 `mindmodel.engine.run.Dump.run` reads top to bottom, and each step takes its inputs explicitly:
 
-1. Read the relative file list, sorted, and build the Spoon model (`SourceModel.load`). A classpath that cannot be read
-   is dropped, and the drop is recorded.
+1. Read the relative file list, sorted, and build the Spoon model (`SourceModel.load`). Each classpath entry that is
+   missing or unreadable is dropped first (`Classpath.readable`) and counted; the model reads the rest. Each source
+   that is not UTF-8 is counted (`files.notUtf8`).
 2. Count duplicate declarations (`Duplicates.count`).
 3. Collect the declared types, re-reading the files Spoon left as bare shells (`Declarations.of`).
-4. Synthesise the members Lombok and the compiler write (`Lombok.synthesize`).
+4. Synthesise the members Lombok and the compiler write. With a Lombok jar, delombok runs over the Lombok-using sources
+   and its output is the answer (`LombokOracle.run`); otherwise the hand-written rules are (`Lombok.synthesize`).
 5. Write `types.ndjson`.
 6. Walk each body once (`Walk.Bodies`), give every call site its id, and write `calls.ndjson`. Calls go first because
    their ids are what the other sections name, and they hand back each body's returns and field accesses.
@@ -34,12 +36,15 @@ from a lower one, never from a higher one. The build section below says how to c
   contract number and the engine name.
 - `resolve`: what things are, decided from Spoon's answers. `Refs` is an expression as data. `Chains` types receivers,
   and `Calls` says which declarations a call reaches. `FieldAccess` and `Returns` resolve body facts, and `BodyShape`
-  gives loops, branches and try blocks as line ranges. `Lombok` synthesises generated members. `Values` and `Anns` read
-  constants and annotations. `LibraryTypes` holds the one declared extension table. `CallIds` names call sites. `Types`
+  gives loops, branches and try blocks as line ranges. `Lombok` synthesises generated members by the
+  hand-written rules, and `LombokOracle` reads them from delombok's output. `Values` and `Anns` read constants and
+  annotations. `LibraryTypes` holds the one declared extension table. `CallIds` names call sites. `Types`
   gives a type's kind.
 - `model`: the Spoon model and the spelling of its names. `SourceModel` builds the model. `Generated` tracks generated
   sources. `Recovery`, `Duplicates` and `Declarations` handle the three ways Spoon merges or drops declarations.
-  `Imports` and `FileProblems` read the file header and parse errors. `Walk` and `Anonymous` cover bodies and their
+  `Imports` and `FileProblems` read the file header and parse errors. `SourceText` is the one reader of a file's text
+  (UTF-8, else ISO-8859-1). `Classpath` drops the unreadable classpath entries. `Delombok` runs Lombok's delombok in a
+  child JVM over a staging copy, and removes it afterwards. `Walk` and `Anonymous` cover bodies and their
   anonymous classes. `RecordCtors` finds a record's canonical constructor. `Names`, `Positions` and `Failures` are the
   one owner each of name spelling, source positions and failure counting.
 

@@ -38,7 +38,7 @@ public final class Declarations {
             Positions positions) {
         List<Row> rows = new ArrayList<>();
         Set<String> seen = new HashSet<>();
-        for (CtType<?> t : model.allTypes()) collect(model, t, rows, seen, positions);
+        for (CtType<?> t : model.topLevelTypes()) collect(model, t, rows, seen, positions);
         List<String> unread = recover(model, inputs, compliance, classpath, rows, seen, positions);
         rows.sort(ORDER);
         List<CtType<?>> types = new ArrayList<>();
@@ -81,7 +81,7 @@ public final class Declarations {
         List<String> rest = new ArrayList<>(inputs);
         rest.removeAll(skip);
         SourceModel own = SourceModel.build(positions.root(), rest, compliance, classpath, model.generatedDirs());
-        for (CtType<?> t : own.allTypes()) collect(own, t, rows, seen, positions);
+        for (CtType<?> t : own.topLevelTypes()) collect(own, t, rows, seen, positions);
         return Recovery.unreadFiles(own);
     }
 }

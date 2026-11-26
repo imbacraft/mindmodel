@@ -11,7 +11,7 @@ refuses any other number.
 ```
 mindmodel-engine --version
 mindmodel-engine --help
-mindmodel-engine dump [--contract N] [--compliance L] [--classpath FILE] [--generated FILE] <root> <file-list> <out-dir>
+mindmodel-engine dump [--contract N] [--compliance L] [--classpath FILE] [--generated FILE] [--lombok JAR] <root> <file-list> <out-dir>
 ```
 
 - `--version` prints `mindmodel-engine <version> contract <contract>`, for example `mindmodel-engine 0.7.0 contract 8`.
@@ -23,10 +23,15 @@ mindmodel-engine dump [--contract N] [--compliance L] [--classpath FILE] [--gene
   - `--contract N` names the contract the caller reads. An engine that speaks another number refuses the run.
   - `--compliance L` is the Java level the sources are read at. Without it, `MINDMODEL_COMPLIANCE` applies when set to two
     digits, else 17.
-  - `--classpath FILE` names one jar or class folder per line, in build order. A classpath Spoon cannot read is dropped,
-    and the drop is recorded in `meta.json`.
+  - `--classpath FILE` names one jar or class folder per line, in build order. An entry that is missing, or that is not
+    a readable folder or a zip archive, is dropped and counted (`classpath.unreadable`, listed in `meta.json`); the
+    entries that read still do their work. A failure after that drops the whole classpath, recorded as
+    `classpath.dropped`.
   - `--generated FILE` names annotation-processor output folders, relative to `<root>`. They are read for resolution and
     never written.
+  - `--lombok JAR` names the Lombok jar. With it, and a checkout that mentions Lombok, the Lombok members come from
+    delombok's output (see Lombok). Without it, or when delombok cannot run, the hand-written rules answer and
+    `meta.json` `lombok` says why. Nothing else of the jar is read.
 
 Exit codes:
 
@@ -43,7 +48,7 @@ Any other status is the JVM's own (for example, a kill by the operating system).
 ```
 <out-dir>/
   meta.json      contract, engine, engineVersion, compliance, classpath, counts        meta.schema.json
-  files.ndjson   one row per input file                                                files.schema.json
+  files.ndjson   one row per input file that can be opened                             files.schema.json
   types.ndjson   one row per declared type                                             types.schema.json
   members.ndjson one row per field, enum constant, record component, method, ctor      members.schema.json
   calls.ndjson   one row per call site, method reference or new                        calls.schema.json
@@ -71,6 +76,10 @@ and modifiers. Every schema is draft 2020-12, and every object forbids keys it d
 
 A file Spoon cannot parse does not abort the run. It appears in `files.ndjson` with `errors[]`, its types are absent, and
 `meta.json` `counts.failedFiles` says how many.
+
+A source that is not valid UTF-8 (an old Latin-1 or Windows-1252 file) does not abort the run either. It is read as
+ISO-8859-1, which maps every byte, and counted once under `files.notUtf8`. Spoon and the engine read it the same way, so
+its columns count its characters. A string or comment in such a file may not be the author's text: the count says so.
 
 ## Conventions
 
@@ -233,11 +242,34 @@ row's origin is `java` when the field is declared in this checkout, `unresolved`
 
 ## Lombok
 
-Lombok is handled after parsing, not by changing Spoon's model (`Lombok.java`). For each type with a Lombok annotation,
-the members Lombok would generate are synthesised: accessors, the three constructors, `@ToString`, `@EqualsAndHashCode`,
-builders and the logger field. A synthesised member keeps the annotated element's `pos` and is marked
-`generated: "lombok"`. An unresolved call is matched to a synthesised member on its receiver by name and arity, and the
-call gets `origin: "lombok"`.
+Lombok's members come from one of two answers, and `meta.json` `lombok.mode` says which.
+
+**delombok (the oracle).** With `--lombok JAR`, every input whose text mentions `lombok` is copied to a temporary
+staging folder, with each `lombok.config` from its folder up to the checkout root copied beside it, so Lombok reads
+the config the checkout has. `java -jar JAR delombok -n -q -e UTF-8 -c JAR:<classpath> -d <out> <staging>` runs in a
+child JVM. The child is a process, not Lombok loaded into this one: Lombok reaches into javac's internals, a child has
+its own JVM options, and a hang is a timeout, not a stuck engine. The run counts as done when it exits 0 and wrote a
+`.java` file for every staged source; delombok prints the errors of unresolved names but still writes the output. The
+output is parsed into a second Spoon model, and that model is the answer:
+
+- A member the delomboked type has and the written type lacks, by kind, name and parameter types (`java.lang.` spelled
+  as written), is generated. Its name, parameter types, return type, modifiers and `typeFqn` are the delomboked
+  declaration's. A generated class beside a type (a builder, a `BaseBuilderImpl`) is a type of its own in the answer:
+  its members have that class as owner, and a return type that names it is its join key, as for a builder.
+- `generated: "lombok"` and `generatedBy` name the annotation that produced it, derived from the annotations the written
+  type and field carry: a getter of `@Data` is `Data`, a getter of `@Getter` on its field is `Getter`, a constructor of
+  `@NoArgsConstructor` is `NoArgsConstructor`, a builder member is `Builder`, a logger field is its logger annotation.
+- A generated accessor is placed at its field, and any other generated member at its type (a builder's member at the
+  builder field it mirrors). Original positions and ids are unchanged. Enum `values()` and `valueOf` stay the compiler's.
+
+**The hand-written rules.** Without the jar, or when delombok cannot answer (`lombok.mode` is `hand`, `lombok.reason`
+says why), `Lombok.java` synthesises the members from the annotations alone. They are the degraded answer and are
+known to miss: `canEqual` (`@Data`, `@EqualsAndHashCode`); the all-arguments constructor, the builder's constructor,
+`toString` and field that `@Builder` writes; `@Singular`'s methods and the collection type `tags` takes; the
+`@SuperBuilder` hierarchy (`BaseBuilderImpl`, `self()`); fluent accessors (`@Accessors`, `lombok.config`); `@With`.
+They also label every accessor `Getter` or `Setter`, and spell a builder's `build()` return with its join key rather
+than as written. The differences are asserted in `LombokOracleTest`, which runs both answers over each case and needs
+a Lombok jar (`MINDMODEL_LOMBOK_JAR` or one in `~/.m2`); without one the test is skipped with a message.
 
 A `new` of a class with generated constructors targets the generated constructor of that arity. Spoon also invents a
 default constructor for a class that writes none. That one answers only a call with no arguments, and only for a class
@@ -251,9 +283,8 @@ An enum's `values()` and `valueOf(String)` are the compiler's. They are synthesi
 their calls have `origin: "compiler"`. `name()` and `ordinal()` are inherited from `java.lang.Enum`: a call to one of
 Enum's public methods on a project enum has no target (no declaration is in the checkout) and `origin: "library"`.
 
-Not covered: `@Accessors` renaming, fluent accessors, `@NonNull` behaviour, the `@SuperBuilder` chain across a hierarchy,
-and the all-arguments constructor `@Builder` writes when the class has no other constructor. A call to that constructor
-stays unresolved with a reason.
+Not covered by either answer: `@NonNull` behaviour, and a Lombok annotation whose superclass or type is outside the
+checkout and the classpath (delombok then answers without it, as javac does).
 
 ## Returns
 
@@ -281,9 +312,13 @@ keeps the part after that space. A classpath entry is named in the digest by its
 - `engine`: the parser, `spoon-<version>`.
 - `engineVersion`: the engine's version, as `--version` prints it.
 - `compliance`: the Java level the sources were read at.
+- `lombok`: `mode` is `delombok` (the members came from Lombok's own output), `hand` (the hand-written rules answered)
+  or `none` (no input mentions Lombok). `files` counts the Lombok-using inputs. `reason` is present on `hand` when
+  delombok did not answer: no jar given, the jar not readable, delombok exited or wrote no file, or it timed out.
 - `classpath`: `entries` (the classpath lines read), `sha256` (over each entry's file name and size, in order),
-  `generatedDirs`, `generatedFiles` (read for resolution, never written), `libraryTypes`, and `dropped` when a classpath
-  was dropped: the message of the failure that dropped it.
+  `generatedDirs`, `generatedFiles` (read for resolution, never written), `libraryTypes`, `unreadable` when an entry was
+  dropped (`{name, reason}` in classpath order, `name` the file name, `reason` `missing` or `unreadable` or `not a zip
+  archive`), and `dropped` when the whole classpath was dropped: the message of the failure that dropped it.
 - `counts`: `files`, `types`, `fields`, `methods`, `failedFiles`, and one key per failure counter that is non-zero.
 
 A clean run has no failure counter. The counters are:
@@ -301,6 +336,11 @@ A clean run has no failure counter. The counters are:
 - `fields.modifiersUnreadable`: a field access's `static` could not be decided from its declaration or the source, so it is
   `null`. Each one is a field the dump cannot name, or a receiver outside the checkout.
 - `files.importsUnreadable`: a file's imports could not be read, so its `importsOrigin` is `unresolved`.
+- `files.notUtf8`: a source that is not valid UTF-8 and was read as ISO-8859-1 (see Guarantees).
+- `files.unreadable`: an input file that cannot be opened. It is not dumped and has no row in `files.ndjson`; the rest of
+  the checkout is dumped.
+- `classpath.unreadable`: a classpath entry dropped before the model was built, because it is missing or unreadable.
+  Each is listed in `meta.json` `classpath.unreadable` by file name and reason.
 
 ## Changing the contract
 

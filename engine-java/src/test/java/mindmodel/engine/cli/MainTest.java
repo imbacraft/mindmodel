@@ -5,10 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -74,6 +77,26 @@ class MainTest {
         String[] result = run("dump", "--contract", String.valueOf(Contract.CONTRACT + 1), "root", "list", "out");
         assertEquals("2", result[0]);
         assertTrue(result[1].contains("contract mismatch"), result[1]);
+    }
+
+    /** `--lombok JAR` takes its argument: the dump runs, and meta.json says the jar was not there. */
+    @Test
+    void theLombokFlagTakesAJarAndMetaSaysWhyItWasNotUsed() throws Exception {
+        Path root = dir.resolve("src");
+        Files.createDirectories(root.resolve("demo"));
+        Files.writeString(root.resolve("demo/Tagged.java"),
+                "package demo;\nimport lombok.ToString;\n@ToString public class Tagged { int x; }\n");
+        Path list = dir.resolve("files.txt");
+        Files.writeString(list, "demo/Tagged.java\n");
+        Path out = dir.resolve("out");
+
+        String[] result = run("dump", "--lombok", dir.resolve("no-such.jar").toString(), root.toString(),
+                list.toString(), out.toString());
+
+        assertEquals("0", result[0], result[1]);
+        JsonNode lombok = new ObjectMapper().readTree(out.resolve("meta.json").toFile()).path("lombok");
+        assertEquals("hand", lombok.path("mode").asText(), lombok.toString());
+        assertEquals("the lombok jar is not a readable file", lombok.path("reason").asText(), lombok.toString());
     }
 
     @Test

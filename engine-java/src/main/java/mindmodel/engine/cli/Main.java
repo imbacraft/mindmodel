@@ -3,6 +3,7 @@ package mindmodel.engine.cli;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,7 +24,7 @@ public final class Main {
     static final String USAGE = "usage: mindmodel-engine --version\n"
             + "       mindmodel-engine --help\n"
             + "       mindmodel-engine dump [--contract N] [--compliance L] [--classpath FILE] [--generated FILE]\n"
-            + "                      <root> <file-list> <out-dir>\n";
+            + "                      [--lombok JAR] <root> <file-list> <out-dir>\n";
 
     private Main() {
     }
@@ -55,12 +56,14 @@ public final class Main {
         int compliance = SourceModel.compliance();
         List<String> classpath = List.of();
         List<String> generated = List.of();
+        Path lombok = null;
         while (rest.size() >= 3 && rest.get(0).startsWith("--")) {
             String flag = rest.get(0);
             if ("--contract".equals(flag)) contract = number(rest.get(1));
             else if ("--compliance".equals(flag)) compliance = number(rest.get(1));
             else if ("--classpath".equals(flag)) classpath = lines(rest.get(1));
             else if ("--generated".equals(flag)) generated = lines(rest.get(1));
+            else if ("--lombok".equals(flag)) lombok = Paths.get(rest.get(1));
             else usage();
             rest = new ArrayList<>(rest.subList(2, rest.size()));
         }
@@ -71,7 +74,7 @@ public final class Main {
         }
         if (rest.size() != 3) usage();
         Dump.run(Paths.get(rest.get(0)), Paths.get(rest.get(1)), Paths.get(rest.get(2)), compliance, classpath,
-                generated);
+                generated, lombok);
     }
 
     /** A numeric flag's value. Text that is no number is a usage error (exit 2), not a crash. */

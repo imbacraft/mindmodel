@@ -35,7 +35,13 @@ public final class Failures {
         /** A field access's static flag could not be decided, so it is null (unknown), not false. */
         MODIFIERS_UNREADABLE("fields.modifiersUnreadable"),
         /** A file's imports could not be read, so its import origin is unresolved. */
-        IMPORTS_UNREADABLE("files.importsUnreadable");
+        IMPORTS_UNREADABLE("files.importsUnreadable"),
+        /** A source that is not valid UTF-8, read as ISO-8859-1: its non-ASCII text may not be the author's. */
+        NOT_UTF8("files.notUtf8"),
+        /** A classpath entry that is missing or not readable, dropped before the model was built (meta lists it). */
+        CLASSPATH_UNREADABLE("classpath.unreadable"),
+        /** An input file that cannot be opened: it is not dumped, and Spoon never sees it. */
+        FILE_UNREADABLE("files.unreadable");
 
         private final String dotted;
 

@@ -13,7 +13,9 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import spoon.reflect.declaration.CtType;
 
+import mindmodel.engine.model.Classpath;
 import mindmodel.engine.model.Failures;
+import mindmodel.engine.resolve.LombokOracle;
 
 /** meta.json: the contract, the classpath digest, what was counted, and what the run could not read. */
 public final class MetaWriter {
@@ -21,7 +23,7 @@ public final class MetaWriter {
     /** What the run read, for the meta.json fields that describe the inputs rather than the failures. */
     public record Facts(List<String> inputs, List<CtType<?>> types, int failedFiles, int compliance,
                         List<String> classpath, List<String> generatedDirs, int generatedFiles, int libraries,
-                        String dropped) {
+                        String dropped, List<Classpath.Dropped> unreadable, LombokOracle.Outcome lombok) {
     }
 
     private MetaWriter() {
@@ -50,6 +52,22 @@ public final class MetaWriter {
             g.writeNumberField("generatedFiles", facts.generatedFiles());
             g.writeNumberField("libraryTypes", facts.libraries());
             if (facts.dropped() != null) g.writeStringField("dropped", Failures.scrub(facts.dropped()));
+            if (!facts.unreadable().isEmpty()) {
+                g.writeArrayFieldStart("unreadable");
+                for (Classpath.Dropped entry : facts.unreadable()) {
+                    g.writeStartObject();
+                    g.writeStringField("name", entry.name());
+                    g.writeStringField("reason", entry.reason());
+                    g.writeEndObject();
+                }
+                g.writeEndArray();
+            }
+            g.writeEndObject();
+            // Which answer the Lombok members came from, and why it was not delombok when it was not.
+            g.writeObjectFieldStart("lombok");
+            g.writeStringField("mode", facts.lombok().mode());
+            g.writeNumberField("files", facts.lombok().files());
+            if (facts.lombok().reason() != null) g.writeStringField("reason", facts.lombok().reason());
             g.writeEndObject();
             g.writeObjectFieldStart("counts");
             g.writeNumberField("files", facts.inputs().size());

@@ -1,8 +1,5 @@
 package mindmodel.engine.model;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -139,32 +136,29 @@ public final class Imports {
      * the file cannot be read.
      */
     static List<Import> header(Path root, String path) {
-        try (var reader = Files.newBufferedReader(root.resolve(path), StandardCharsets.UTF_8)) {
-            List<Import> out = new ArrayList<>();
-            String line;
-            boolean inBlockComment = false;
-            while ((line = reader.readLine()) != null) {
-                String text = line.replace("﻿", "").trim();
-                if (inBlockComment) {
-                    inBlockComment = !text.contains("*/");
-                    continue;
-                }
-                if (text.startsWith("/*")) {
-                    inBlockComment = !text.contains("*/");
-                    continue;
-                }
-                if (text.isEmpty() || text.startsWith("//")) continue;
-                if (text.startsWith("package ") || text.startsWith("package\t")) continue;
-                if (!text.startsWith("import ")) break; // the first declaration ends the header
-                Import item = importLine(text);
-                if (item == null) break; // a malformed header is not a guess
-                if (!item.name().isEmpty()) out.add(item);
+        String text = SourceText.read(root.resolve(path));
+        if (text == null) return null;
+        List<Import> out = new ArrayList<>();
+        boolean inBlockComment = false;
+        for (String line : text.split("\\r?\\n|\\r", -1)) {
+            String trimmed = line.replace("\uFEFF", "").trim();
+            if (inBlockComment) {
+                inBlockComment = !trimmed.contains("*/");
+                continue;
             }
-            out.sort(null);
-            return out;
-        } catch (IOException e) {
-            return null;
+            if (trimmed.startsWith("/*")) {
+                inBlockComment = !trimmed.contains("*/");
+                continue;
+            }
+            if (trimmed.isEmpty() || trimmed.startsWith("//")) continue;
+            if (trimmed.startsWith("package ") || trimmed.startsWith("package\t")) continue;
+            if (!trimmed.startsWith("import ")) break; // the first declaration ends the header
+            Import item = importLine(trimmed);
+            if (item == null) break; // a malformed header is not a guess
+            if (!item.name().isEmpty()) out.add(item);
         }
+        out.sort(null);
+        return out;
     }
 
     /** One `import` line as an import (its name may be empty), or null when it has no terminating `;`. */

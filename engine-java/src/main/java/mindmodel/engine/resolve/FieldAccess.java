@@ -1,7 +1,9 @@
 package mindmodel.engine.resolve;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 
@@ -169,7 +171,7 @@ public final class FieldAccess {
      */
     private static boolean libraryAncestor(CtFieldAccess<?> access) {
         for (CtType<?> type = access.getParent(CtType.class); type != null; type = type.getParent(CtType.class))
-            if (inheritsFromLibrary(type, new HashSet<>())) return true;
+            if (inheritsFromLibrary(type, Collections.newSetFromMap(new IdentityHashMap<>()))) return true;
         return false;
     }
 

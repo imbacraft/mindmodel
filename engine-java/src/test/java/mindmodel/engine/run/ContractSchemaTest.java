@@ -72,7 +72,7 @@ class ContractSchemaTest {
             Files.write(list, files);
         }
         Path out = dir.resolve("fixture-out");
-        Dump.run(root, list, out, 17, List.of(), List.of());
+        Dump.run(root, list, out, 17, List.of(), List.of(), null);
         assertNoViolations(out);
     }
 
@@ -121,7 +121,7 @@ class ContractSchemaTest {
     @Test
     void theSchemasRefuseAnUnknownKeyAndAMissingOne() throws Exception {
         Path out = dir.resolve("shape-out");
-        Dump.run(FIXTURE, fixtureList(), out, 17, List.of(), List.of());
+        Dump.run(FIXTURE, fixtureList(), out, 17, List.of(), List.of(), null);
         JsonNode row = JSON.readTree(Files.readAllLines(out.resolve("types.ndjson")).get(0));
 
         ObjectNode unknown = ((ObjectNode) row.deepCopy()).put("drift", true);
