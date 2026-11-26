@@ -27,9 +27,8 @@ export function systemScan(folder) {
   const db = folderFacts?.db ?? null;
   const model = folderFacts?.model ?? null;
   const ix = codeIndex(model);
-  // Modules with a file the folder dump could not parse: the dump keeps one type per name, so a module that copies a
-  // sibling's class needs its own dump.
-  const collided = collidedModules(folder, modules, db);
+  // Modules that copy a sibling's class lose it in the folder dump (one type per name), so they need their own dump.
+  const collided = collidedModules(folder, modules, db, model);
   const byModule = new Map(modules.map((d) => [d, moduleOf(folder, d, db, model, collided)]));
   // Modules without a Spring entry point are shared libraries (DTOs, events), not services. Decided once per module:
   // the check reads the module's build file.

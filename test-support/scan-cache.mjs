@@ -45,7 +45,8 @@ const engineKey = sha(
 const cfg = loadApps(testDir);
 
 // The scan reads these; an entry made under one setting must not answer for another.
-const envKey = () => ['MINDMODEL_CLASSPATH', 'MINDMODEL_M2'].map((k) => process.env[k] ?? '').join('|');
+const ENV_KEYS = ['MINDMODEL_CLASSPATH', 'MINDMODEL_M2', 'MINDMODEL_LOMBOK', 'MINDMODEL_LOMBOK_JAR'];
+const envKey = () => ENV_KEYS.map((k) => process.env[k] ?? '').join('|');
 
 // `what` names the entry, `version` is what must match for it to be valid. The file name is the digest of both.
 function cacheFile(what, version) {

@@ -129,12 +129,18 @@ export function moduleOf(folder, dir, db, model, collided) {
   return { dir, prefix, db, model, types, lines: linesOf(types) };
 }
 
-/** The folder files two modules collide on: a file the folder dump could not parse, and the module that owns it. */
-export function collidedModules(folder, modules, db) {
-  return new Set(
-    [...(db?.files?.values() ?? [])]
-      .filter((f) => (f.errors ?? []).length)
-      .map((f) => modules.find((d) => f.path.startsWith(`${relPosix(folder, d)}/`)))
-      .filter(Boolean),
-  );
+/**
+ * The modules that collide with a sibling: the folder dump keeps one declaration per type name, so a module that
+ * copies a sibling's class (a lambda or API variant) has a file the dump could not parse, or a type file that kept no
+ * type of its own. `package-info.java` and `module-info.java` declare no type and never count.
+ */
+export function collidedModules(folder, modules, db, model) {
+  const typed = new Set([...(model?.types?.values() ?? [])].map((t) => t.file));
+  const ownerOf = (rel) => modules.find((d) => rel.startsWith(`${relPosix(folder, d)}/`));
+  const broken = [...(db?.files?.values() ?? [])].filter((f) => (f.errors ?? []).length).map((f) => f.path);
+  const untyped = model
+    ? modules.flatMap((d) => javaFiles(d).map((p) => relPosix(folder, p)))
+        .filter((rel) => !/(^|\/)(package|module)-info\.java$/.test(rel) && !typed.has(rel))
+    : [];
+  return new Set([...broken, ...untyped].map(ownerOf).filter(Boolean));
 }
