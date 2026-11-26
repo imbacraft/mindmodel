@@ -387,7 +387,7 @@
  },
  {
   "file": "src/main/java/org/eclipse/cargotracker/infrastructure/messaging/jms/JmsApplicationEvents.java",
-  "line": 41,
+  "line": 46,
   "call": "send",
   "recv": "call",
   "recvFqn": "jakarta.jms.JMSProducer",

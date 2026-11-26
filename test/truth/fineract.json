@@ -153,9 +153,9 @@
   "recv": null,
   "recvFqn": "com.acme.fineract.loan.cob.AcmeNoopBusinessStep",
   "recvHow": "this",
-  "how": "unresolved",
+  "how": "external",
   "targets": [],
-  "note": "implicit this.getClass(); the receiver is the enclosing instance"
+  "note": "implicit this.getClass(): final in java.lang.Object, so a library call"
  },
  {
   "file": "custom/acme/loan/job/src/main/java/com/acme/fineract/loan/job/AcmeJobNameConfig.java",
