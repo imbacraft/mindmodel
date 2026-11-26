@@ -288,6 +288,55 @@ class LombokOracleTest {
                 b.oracleMembers().toString());
     }
 
+    /**
+     * A generated getter returns the type its field has, and that type may live in the same package (no import), in
+     * another package (imported), or be nested in another file's class. The oracle model holds only the Lombok-using
+     * files, so its answer must not depend on resolving the type there: each chain through the getter reaches the same
+     * member the hand rules reach. A generic field type gives the getter's erasure, which the chain after it reads.
+     */
+    @Test
+    void aGeneratedGetterTypedInAnotherFileResolvesThroughTheChain() throws Exception {
+        Both b = both("cross-file", Map.of(
+                "demo/Target.java", src("package demo;", "import lombok.Data;", "import other.Scope;",
+                        "import other.Outer;", "import java.util.List;", "@Data public class Target {",
+                        "    private Incident incident; private Scope scope; private List<Scope> scopes;",
+                        "    private Outer.Inner inner; }"),
+                "demo/Incident.java", src("package demo;", "public record Incident(List<String> alertIds) {}"),
+                "other/Scope.java", src("package other;", "public record Scope(java.util.List<String> alertIds) {}"),
+                "other/Outer.java", src("package other;", "public class Outer {",
+                        "    public static class Inner { public java.util.List<String> alertIds() { return null; } }",
+                        "}"),
+                "demo/Use.java", src("package demo;", "public class Use {",
+                        "    Object sameFile(Target t) { return t.getIncident().alertIds(); }",
+                        "    Object imported(Target t) { return t.getScope().alertIds(); }",
+                        "    Object generic(Target t) { return t.getScopes().size(); }",
+                        "    Object nested(Target t) { return t.getInner().alertIds(); }", "}")));
+
+        Map<String, String> hand = targetsOf(b.hand(), "alertIds");
+        assertEquals(Map.of("demo.Use#sameFile(Target)", "demo.Incident#alertIds()",
+                "demo.Use#imported(Target)", "other.Scope#alertIds()",
+                "demo.Use#nested(Target)", "other.Outer.Inner#alertIds()"), hand, "the hand rules");
+        assertEquals(hand, targetsOf(b.oracle(), "alertIds"), "delombok's answer for the same chains");
+        assertEquals("java.util.List", receiverOf(b.oracle(), "size"), "the generic field's erasure");
+        assertEquals(receiverOf(b.hand(), "size"), receiverOf(b.oracle(), "size"));
+    }
+
+    /** Each call of this name, by its method, with the first target it reaches. */
+    private static Map<String, String> targetsOf(DumpRun run, String name) throws Exception {
+        Map<String, String> out = new TreeMap<>();
+        for (JsonNode c : run.rows("calls"))
+            if (name.equals(c.path("name").asText()) && c.path("targets").size() > 0)
+                out.put(c.path("method").asText(), c.path("targets").get(0).path("id").asText());
+        return out;
+    }
+
+    /** The receiver type a call of this name is written on, in the one method that calls it. */
+    private static String receiverOf(DumpRun run, String name) throws Exception {
+        for (JsonNode c : run.rows("calls"))
+            if (name.equals(c.path("name").asText())) return c.path("recv").path("typeFqn").asText();
+        throw new AssertionError("no call named " + name);
+    }
+
     // Degradation: an answer that is not delombok's says why, and the hand rules still write the members.
 
     @Test

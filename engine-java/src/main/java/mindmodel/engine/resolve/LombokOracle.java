@@ -21,6 +21,7 @@ import spoon.reflect.declaration.CtRecord;
 import spoon.reflect.declaration.CtType;
 import spoon.reflect.declaration.CtTypeMember;
 import spoon.reflect.declaration.ModifierKind;
+import spoon.reflect.reference.CtTypeReference;
 
 import mindmodel.engine.model.Delombok;
 import mindmodel.engine.model.Failures;
@@ -187,7 +188,7 @@ public final class LombokOracle {
             String name = field.getSimpleName();
             Source source = sourceOf("field", name, 0, nestedBuilder, scope);
             String type = normal(Names.typeText(field.getType()));
-            String typeFqn = Refs.joinKey(field.getType(), field, scope.failures());
+            String typeFqn = typeFqn(field.getType(), field, type, source.at(), scope);
             return item(owner, "field", name, type, typeFqn, List.of(), modifiers, source, scope);
         }
         if (member instanceof CtMethod<?> method) {
@@ -197,13 +198,26 @@ public final class LombokOracle {
             String text = normal(Names.typeText(method.getType()));
             String nested = scope.nested().get(stripTypeArgs(text));
             String type = nested != null ? nested : text;
-            String typeFqn = nested != null ? nested : Refs.joinKey(method.getType(), method, scope.failures());
+            String typeFqn = nested != null ? nested : typeFqn(method.getType(), method, text, source.at(), scope);
             return item(owner, "method", name, type, typeFqn, params, modifiers, source, scope);
         }
         CtConstructor<?> ctor = (CtConstructor<?>) member;
         List<String> params = paramTexts(ctor.getParameters());
         Source source = sourceOf("constructor", written.getSimpleName(), params.size(), nestedBuilder, scope);
         return item(owner, "constructor", written.getSimpleName(), null, null, params, modifiers, source, scope);
+    }
+
+    /**
+     * The dotted name of a generated member's type. A member written with its field's type (a getter's return, a
+     * builder's field) takes the field's own reference, which Spoon resolved where the field is declared: the
+     * delomboked model holds only the Lombok-using files, so the same spelling may be unknown there.
+     */
+    private static String typeFqn(CtTypeReference<?> type, CtElement context, String text, CtElement at,
+            Scope scope) {
+        if (at instanceof CtField<?> field && field.getType() != null
+                && text.equals(normal(Names.typeText(field.getType()))))
+            return Refs.joinKey(field.getType(), field, scope.failures());
+        return Refs.joinKey(type, context, scope.failures());
     }
 
     private static Lombok.Item item(String owner, String kind, String name, String type, String typeFqn,
