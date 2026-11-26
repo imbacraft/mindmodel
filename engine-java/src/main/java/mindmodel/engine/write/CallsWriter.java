@@ -49,7 +49,8 @@ public final class CallsWriter {
 
     /** What every site row is written with: the resolver, the readers and sinks, and the returns and fields so far. */
     private record Ctx(Calls calls, Chains chains, CallIds ids, Refs refs, Positions positions,
-                       Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccess.Row> fields) {
+                       Map<CtExecutable<?>, List<Returns.Entry>> returns, List<FieldAccess.Row> fields,
+                       FieldAccess.Known statics) {
     }
 
     /** A site with the position it was read at, so the position is computed once. */
@@ -67,7 +68,7 @@ public final class CallsWriter {
             Walk.Bodies bodies, Positions positions, CallIds ids, Refs refs, Path out) throws IOException {
         Chains chains = new Chains(generated, refs.failures());
         Ctx ctx = new Ctx(new Calls(known, generated, chains, refs.failures()), chains, ids, refs, positions,
-                new IdentityHashMap<>(), new ArrayList<>());
+                new IdentityHashMap<>(), new ArrayList<>(), FieldAccess.Known.of(known, generated));
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> type : types) {
                 for (CtExecutable<?> executable : Walk.executables(type))
@@ -94,7 +95,7 @@ public final class CallsWriter {
         ctx.refs().scope(body.writes());
         if (ownSites) writeSites(w, ctx, type, methodId, body.sites());
         ctx.returns().put(executable, Returns.plan(executable, body, ctx.refs()));
-        if (ownSites) FieldAccess.collect(ctx.fields(), body, methodId, ctx.positions(), ctx.refs());
+        if (ownSites) FieldAccess.collect(ctx.fields(), body, methodId, ctx.positions(), ctx.refs(), ctx.statics());
     }
 
     /**

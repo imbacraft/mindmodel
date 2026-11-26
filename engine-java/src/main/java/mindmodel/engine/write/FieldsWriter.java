@@ -70,7 +70,9 @@ public final class FieldsWriter {
     private static void head(JsonGenerator g, FieldAccess.Row row) throws IOException {
         g.writeStringField("method", row.method());
         Json.key(g, "field", row.field());
-        g.writeBooleanField("static", row.isStatic());
+        // Unknown is null: a field whose static flag the dump cannot tell is written as null, never as false.
+        if (row.isStatic() == null) g.writeNullField("static");
+        else g.writeBooleanField("static", row.isStatic());
         g.writeStringField("op", row.op());
         g.writeStringField("kind", "access");
         g.writeArrayFieldStart("typeArgs");

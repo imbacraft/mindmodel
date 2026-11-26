@@ -27,7 +27,7 @@ public final class Failures {
         NAME_UNRESOLVED("sites.nameUnresolved"),
         /** A body's returns could not be read, so its member's returned list is empty. */
         RETURNS_UNREADABLE("returns.unreadable"),
-        /** A field's modifiers could not be read, so the access is taken as non-static. */
+        /** A field access's static flag could not be decided, so it is null (unknown), not false. */
         MODIFIERS_UNREADABLE("fields.modifiersUnreadable"),
         /** A file's imports could not be read, so its import origin is unresolved. */
         IMPORTS_UNREADABLE("files.importsUnreadable");
