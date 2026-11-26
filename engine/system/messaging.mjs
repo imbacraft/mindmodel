@@ -79,8 +79,11 @@ export function messaging(module, patterns = BUILTIN) {
   return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.dir.localeCompare(b.dir));
 }
 
-/** A literal or a `Class.CONSTANT` read: the two shapes a named topic takes. */
-const namedTopic = (arg) => arg.kind === 'literal' || arg.kind === 'constant';
+/**
+ * A literal, a `Class.CONSTANT` read, or a field read: the shapes a named topic takes. A field the dump does not fold
+ * (a non-final static) is still the channel the send names: channelName leaves its name null and writes the expression.
+ */
+const namedTopic = (arg) => arg.kind === 'literal' || arg.kind === 'constant' || arg.kind === 'field';
 
 // Jakarta EE JMS, which a listener's activation config names instead of a topic: a message-driven bean's destination is
 // in `@MessageDriven`'s activation properties, and a sender sends to a field injected by JNDI name (`@Resource`).

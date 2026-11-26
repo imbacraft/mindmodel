@@ -168,7 +168,8 @@ export function channelFacts(model, { config = new Map(), extraConstants = new M
         }
         const aggregate = AGGREGATE_RULES.find((r) => r.name === nm);
         if (aggregate) {
-          const agg = String((c.args ?? [])[0] ?? '').replace(/\.class$/, '').split('.').pop();
+          // A literal names the aggregate by its FQN in quotes; the simple name is the channel, quotes never are.
+          const agg = String((c.args ?? [])[0] ?? '').replace(/^"|"$/g, '').replace(/\.class$/, '').split('.').pop();
           facts.push({
             id: `channel:${aggregate.dir}:${aggregate.kind}:${agg}@${m.name}`,
             family: 'channel',

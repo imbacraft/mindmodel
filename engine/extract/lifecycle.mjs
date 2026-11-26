@@ -13,6 +13,9 @@ import { push } from '../core/collections.mjs';
 import { patternOf } from '../catalogs/catalog.mjs';
 
 const normFqn = (fqn) => String(fqn ?? '').replace(/\$/g, '.');
+// A field's type name. The dump gives no FQN for a type it does not declare (an enum of another module), so the
+// written type names it: without that, a status field of such an entity has no owner.
+const fieldTypeName = (field) => simple(field?.typeFqn ?? field?.type);
 const STATUS_NAME = patternOf('status-type-name');
 const STATUS_FIELD = patternOf('status-field-name');
 const NO_SETTER = 'no setter found by the engine (check the code before saying it is never set)';
@@ -351,7 +354,7 @@ function constantStatuses({ dump, entities, shortlist, ctx, cite, unresolved, in
     if (shortlist && !shortlist.has(e.name)) continue;
     const entityFqn = e.type?.fqn ?? e.fqn;
     for (const field of e.fields ?? []) {
-      if (!STATUS_FIELD.test(field.name) || STATUS_NAME.test(simple(field.typeFqn))) continue;
+      if (!STATUS_FIELD.test(field.name) || STATUS_NAME.test(fieldTypeName(field))) continue;
       const writes = dump.fieldAccessOf(`${entityFqn}#${field.name}`).filter((r) => r.op === 'write' && inApp(r.file));
       if (!writes.length) continue;
       const found = new Map();
@@ -422,8 +425,8 @@ function outsideStatuses({ dump, declared, entities, cite, unresolved, inApp }) 
   const ownerOf = new Map();
   for (const e of entities ?? [])
     for (const field of e.fields ?? [])
-      if (STATUS_FIELD.test(String(field.name)) && STATUS_NAME.test(simple(field.typeFqn))) {
-        const type = simple(field.typeFqn);
+      if (STATUS_FIELD.test(String(field.name)) && STATUS_NAME.test(fieldTypeName(field))) {
+        const type = fieldTypeName(field);
         ownerOf.set(type, ownerOf.has(type) ? null : e.name);
       }
   // A status constant handed to a method that writes it into a field of that type (a setter, by the callee's body).

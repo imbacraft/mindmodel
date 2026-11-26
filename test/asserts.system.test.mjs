@@ -4,7 +4,7 @@
 import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
+import { dumpOf, dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
 import {
   BUILTIN,
   channelName,
@@ -46,6 +46,22 @@ test('messaging: a listener annotation, a template send, a stream and a saga cha
     'kafka:out:"payment-orders"', // kafkaTemplate.send
     'kafka:out:ticket', // the aggregate publisher's publish call, resolved below
   ].sort((a, b) => a.localeCompare(b)) );
+});
+
+test('messaging: a send on an unfolded field is a row with no name', { skip: NO_ENGINE }, () => {
+  // A non-final static String: the dump has no folded value for it, so the saga's channel cannot be named. The send
+  // stays visible (not dropped) with its written expression.
+  const { db, model } = dumpOf({
+    'src/main/java/shop/Lanes.java': 'package shop;\npublic class Lanes {\n  public static String ACCOUNTING = "a";\n}\n',
+    'src/main/java/shop/CancelSaga.java':
+      'package shop;\nclass CancelSaga {\n  Object steps(SagaBuilder b) {\n    return b.to(Lanes.ACCOUNTING);\n  }\n}\n',
+  });
+  const m = { db, model, types: [...model.types.values()], prefix: '' };
+  const sends = messaging(m).filter((x) => x.kind === 'kafka' && x.dir === 'out');
+  assert.equal(sends.length, 1, `the send is a row: ${sends.map((x) => x.expr).join(', ')}`);
+  const r = channelName(sends[0], m, new Map(), codeIndex(model));
+  assert.equal(r.name, null, `not named from a value it does not have: ${JSON.stringify(r)}`);
+  assert.equal(r.unresolved, 'Lanes.ACCOUNTING', 'the written expression stands for the channel');
 });
 
 test('messaging: a project publisher extends the library one and publishes to its aggregate', { skip: NO_ENGINE }, () => {
