@@ -3,6 +3,7 @@ package mindmodel.engine.model;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -25,8 +26,10 @@ class DuplicateTypesTest {
 
         DumpRun run = DumpRun.of(dir, sources);
 
-        long rows = run.rows("types").stream().filter(t -> "demo.Dup".equals(t.path("fqn").asText())).count();
-        assertEquals(1, rows, "a type name keys one row: ids cannot tell the two apart");
+        List<JsonNode> dup = run.rows("types").stream().filter(t -> "demo.Dup".equals(t.path("fqn").asText())).toList();
+        assertEquals(1, dup.size(), "a type name keys one row: ids cannot tell the two apart");
+        assertEquals("mod1/demo/Dup.java", dup.get(0).path("pos").path("file").asText(),
+                "the file whose relative path sorts first keeps the name");
         JsonNode counts = run.meta().path("counts");
         assertEquals(1, counts.path("types.duplicateFqn").asInt(), "the second declaration is reported");
     }

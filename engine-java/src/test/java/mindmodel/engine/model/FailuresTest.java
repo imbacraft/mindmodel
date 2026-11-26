@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -78,6 +79,23 @@ class FailuresTest {
 
         assertEquals("Widget", widget.path("type").asText());
         assertTrue(widget.path("typeFqn").isNull(), "typeFqn: " + widget.path("typeFqn"));
+    }
+
+    /**
+     * A known folder is an exact prefix: a root or a classpath folder with a space in its name is replaced whole, and
+     * so is a path under the home directory.
+     */
+    @Test
+    void aKnownFolderWithASpaceInItsNameIsReplacedWhole() {
+        Failures.knownPaths(List.of(Path.of("/Users/someone/My Projects/checkout")),
+                List.of("/Users/someone/My Libs/lib.jar"));
+
+        assertEquals("NoSuchFileException: <path>: missing", Failures.scrub(
+                "NoSuchFileException: /Users/someone/My Projects/checkout/lib/a.jar: missing"));
+        assertEquals("see <path>:3 and <path>", Failures.scrub(
+                "see /Users/someone/My Projects/checkout/src/A.java:3 and /Users/someone/My Libs/lib.jar"));
+        assertEquals("<path>: gone", Failures.scrub("/Users/someone/My Libs/lib.jar: gone"));
+        assertEquals("<path> ok", Failures.scrub(System.getProperty("user.home") + "/a.jar ok"));
     }
 
     /** A message keeps what failed and drops where: an absolute path is replaced, a relative one is kept. */

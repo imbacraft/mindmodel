@@ -1,9 +1,11 @@
 package mindmodel.engine.model;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -13,10 +15,15 @@ import java.util.Set;
 
 import org.eclipse.jdt.core.compiler.CategorizedProblem;
 import spoon.Launcher;
+import spoon.SpoonModelBuilder;
 import spoon.compiler.Environment;
+import spoon.compiler.SpoonFile;
+import spoon.compiler.SpoonFolder;
 import spoon.reflect.cu.CompilationUnit;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtType;
+import spoon.reflect.factory.Factory;
+import spoon.support.compiler.VirtualFolder;
 import spoon.support.compiler.jdt.JDTBasedSpoonCompiler;
 
 /**
@@ -77,8 +84,8 @@ public final class SourceModel {
             return new Load(build(root, inputs, compliance, classpath, generatedDirs), null);
         } catch (Exception | LinkageError failure) {
             if (classpath.isEmpty()) throw failure;
-            String dropped = failure.getClass().getSimpleName()
-                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage());
+            String dropped = Failures.scrub(failure.getClass().getSimpleName()
+                    + (failure.getMessage() == null ? "" : ": " + failure.getMessage()));
             if (dropped.length() > 200) dropped = dropped.substring(0, 200);
             return new Load(build(root, inputs, compliance, List.of(), generatedDirs), dropped);
         }
@@ -99,7 +106,12 @@ public final class SourceModel {
     public static SourceModel build(Path root, List<String> relFiles, int compliance, List<String> classpath,
             List<String> generatedDirs) {
         Path realRoot = realPath(root);
-        Launcher launcher = new Launcher();
+        Launcher launcher = new Launcher() {
+            @Override
+            protected SpoonModelBuilder getCompilerInstance(Factory factory) {
+                return new OrderedCompiler(factory);
+            }
+        };
         Environment env = launcher.getEnvironment();
         env.setNoClasspath(true);
         env.setCommentEnabled(false);
@@ -110,16 +122,66 @@ public final class SourceModel {
         env.setCopyResources(false);
         env.setLevel("OFF");
         if (!classpath.isEmpty()) env.setSourceClasspath(classpath.toArray(new String[0]));
-        for (String rel : relFiles) launcher.addInputResource(realRoot.resolve(rel).toString());
+        // Sorted by relative path, then the generated files: Spoon binds a duplicate name to the first file it meets,
+        // so this order decides which declaration the dump keeps (see SPOON.md).
+        List<String> ordered = new ArrayList<>(relFiles);
+        Collections.sort(ordered);
+        for (String rel : ordered) launcher.addInputResource(realRoot.resolve(rel).toString());
         List<String> roots = new ArrayList<>();
         for (String dir : generatedDirs) {
             Path at = realRoot.resolve(dir);
             if (!Files.isDirectory(at)) continue;
-            launcher.addInputResource(at.toString());
+            for (Path java : javaFiles(at)) launcher.addInputResource(java.toString());
             roots.add(realPath(at).toString());
         }
         launcher.buildModel();
         return new SourceModel(realRoot, List.copyOf(relFiles), launcher, new Generated(List.copyOf(roots)));
+    }
+
+    /** The .java files under a folder, sorted by path. */
+    private static List<Path> javaFiles(Path dir) {
+        try (var walk = Files.walk(dir)) {
+            return walk.filter(p -> p.toString().endsWith(".java") && Files.isRegularFile(p)).sorted().toList();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
+     * Spoon's compiler with its source folder replaced by one that keeps the order files were added in. Spoon's own
+     * folder is a hash set, so the compiler binds a duplicate name to whichever file the hash of its absolute path met
+     * first: the kept declaration then changed with the checkout's location.
+     */
+    private static final class OrderedCompiler extends JDTBasedSpoonCompiler {
+        OrderedCompiler(Factory factory) {
+            super(factory);
+            this.sources = new OrderedFolder();
+        }
+    }
+
+    /** A source folder that lists its files in the order they were added, each once. */
+    private static final class OrderedFolder extends VirtualFolder {
+        private final Set<SpoonFile> listed = new LinkedHashSet<>();
+
+        @Override
+        public void addFile(SpoonFile file) {
+            listed.add(file);
+        }
+
+        @Override
+        public void addFolder(SpoonFolder folder) {
+            for (SpoonFile file : folder.getAllFiles()) if (file.isFile()) listed.add(file);
+        }
+
+        @Override
+        public List<SpoonFile> getAllFiles() {
+            return new ArrayList<>(listed);
+        }
+
+        @Override
+        public List<SpoonFile> getFiles() {
+            return List.copyOf(listed);
+        }
     }
 
     public Path root() {

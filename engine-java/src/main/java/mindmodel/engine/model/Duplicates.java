@@ -11,9 +11,9 @@ import spoon.reflect.cu.CompilationUnit;
 import spoon.reflect.declaration.CtType;
 
 /**
- * Two input files that declare one name. An id is the name, so the first file in sorted order keeps it and the other
- * declaration is dropped. Spoon drops it silently with its unit's type, so the duplicate is found by reading again the
- * files that declare nothing, and counting each name they declare that the model kept.
+ * Two input files that declare one name. An id is the name, so the file whose relative path sorts first keeps it and
+ * the other declaration is dropped. Spoon drops it silently with its unit's type, so the duplicate is found by reading
+ * again the files that declare nothing, and counting each name they declare that the model kept.
  */
 public final class Duplicates {
 

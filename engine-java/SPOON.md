@@ -65,9 +65,12 @@ the contract in `CONTRACT.md`.
 - Overrides: use `CtMethod.isOverriding(...)`, not name and arity.
 - Constants (JLS 4.12.4): a `final` variable of primitive or String type with a constant initializer, static or not.
   Fold with Java semantics: integer division, int and long overflow, float stays float.
-- Spoon keeps only one declaration of a duplicate FQN, silently. The engine counts `types.duplicateFqn`. Which one it
-  keeps depends on the checkout path string, not on the file list order (`DuplicateTypesTest` does not pin it). The
-  CONTRACT.md's "first file in sorted order keeps it" is not what Spoon does; this is an open issue.
+- Spoon keeps only one declaration of a duplicate FQN, silently: the one the compiler binds first. Spoon's source folder
+  is a `VirtualFolder`, a `HashSet` of files, so that order was the hash of each absolute path and the kept file changed
+  with the checkout's location. `SourceModel` now builds its model with `OrderedCompiler`, a `JDTBasedSpoonCompiler`
+  whose source folder (`OrderedFolder`) keeps the order files were added in, and adds the inputs sorted by relative
+  path. The rule is in CONTRACT.md; `MachineIndependenceTest` pins it on eight folder names. The engine counts
+  `types.duplicateFqn`. Spoon's `Launcher.getCompilerInstance` is the hook: it is protected and no reflection is needed.
 - A type or record pattern case label (`case String s`, `case Pair(String l, int r)`) is a `CtCasePattern` wrapping the
   `CtTypePattern` or `CtRecordPattern`; the pattern has no source position, so its text is built from its parts.
 - `case null, default` is `getIncludesDefault()` true, and `getCaseExpressions()` holds only `null`. A `when` guard is

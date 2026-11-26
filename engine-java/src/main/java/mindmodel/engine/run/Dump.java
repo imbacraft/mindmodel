@@ -50,6 +50,7 @@ public final class Dump {
         // Spoon reports canonical paths (macOS /var is /private/var): every relativised or prefix-checked path below is
         // measured against the canonical root.
         Path root = SourceModel.realPath(given);
+        Failures.knownPaths(List.of(given, root), classpath);
         Files.createDirectories(outDir);
         List<String> inputs = inputs(root, listPath);
         SourceModel.Load load = SourceModel.load(root, inputs, compliance, classpath, generatedDirs);

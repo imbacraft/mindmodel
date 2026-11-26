@@ -269,7 +269,11 @@ inside an arm answers for itself, not for the arm that contains it.
 
 No output names a host. Paths are relative to `<root>`: `file`, `path`, and the file of every `pos`. An exception message
 that a reason or `dropped` carries has each absolute path replaced by `<path>`, so a reason says what failed and not where
-the checkout or a jar lives. Known limit: a path with a space in it keeps the part after the space. A classpath entry is named in the digest by its file name and size, never its path.
+the checkout or a jar lives. A path that starts with a known folder (the checkout, the folder of each classpath entry, the
+home directory) is replaced whole, as an exact prefix, so a folder with a space in its name is removed too. The part of
+the path after that folder runs to the next space or delimiter, so a relative part with a space keeps its tail after the
+space; no host name is in it. Known limit: an absolute path outside those folders is matched up to its first space, so it
+keeps the part after that space. A classpath entry is named in the digest by its file name and size, never its path.
 
 ## meta.json
 
@@ -284,8 +288,9 @@ the checkout or a jar lives. Known limit: a path with a space in it keeps the pa
 
 A clean run has no failure counter. The counters are:
 
-- `types.duplicateFqn`: two input files declare the same name. The first file in sorted order keeps it, and the other
-  declaration is dropped. Known gap: Spoon keeps one declaration by checkout path, not by this order (see SPOON.md).
+- `types.duplicateFqn`: two input files declare the same name. The file whose project-relative path sorts first keeps
+  it (plain string order, `/` separators), and the other declaration is dropped. The engine hands Spoon its inputs in
+  that order, so the choice does not depend on where the checkout lives (see SPOON.md).
 - `refs.typeUnresolved`: a type reference the dump could not name (see Rules).
 - `refs.typeArgsUnresolved`: a type's arguments could not be read, so it lists none.
 - `refs.textUnresolved`: an expression's source text could not be read, so its `text` is null.

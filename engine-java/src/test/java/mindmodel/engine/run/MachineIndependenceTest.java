@@ -13,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -50,15 +49,15 @@ class MachineIndependenceTest {
     }
 
     /**
-     * Known gap, kept as a test so the fix has a target: Spoon keeps one of two declarations of a name by checkout
-     * path, so the file it keeps changes with the location. The documented rule is the first file in sorted order.
-     * Fixing it changes which declaration three corpus apps keep (a Node snapshot change), so it waits for that
-     * decision. SPOON.md records it.
+     * Spoon binds a duplicate name to the first file its compiler meets, and that order was the hash of the absolute
+     * path, so the file kept changed with the folder's name. The rule is the file whose relative path sorts first. The
+     * folder names are several, because the old hash choice differed between them and a single pair could match by luck.
      */
-    @Disabled("known gap: Spoon keeps a duplicate declaration by checkout path (SPOON.md)")
     @Test
     void aDuplicateDeclarationIsKeptFromTheSameFileWhereverTheCheckoutLives() throws Exception {
-        for (String place : List.of("first/alpha-checkout", "second/zulu-checkout")) {
+        List<String> places = List.of("first/alpha-checkout", "second/zulu-checkout", "third/a", "fourth/g",
+                "fifth/h", "sixth/k", "seventh/n", "eighth/p");
+        for (String place : places) {
             Path root = dir.resolve(place);
             Files.createDirectories(root.resolve("a"));
             Files.createDirectories(root.resolve("b"));

@@ -1,5 +1,9 @@
 package mindmodel.engine.model;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
@@ -12,7 +16,7 @@ public final class Failures {
 
     /** Every key a run can count, with the dotted name meta.json writes it under. */
     public enum Key {
-        /** Two input files declare the same name; the first in sorted order keeps it. */
+        /** Two input files declare the same name; the file whose relative path sorts first keeps it. */
         DUPLICATE_FQN("types.duplicateFqn"),
         /** A type reference the dump could not name (see resolve.Refs). */
         TYPE_UNRESOLVED("refs.typeUnresolved"),
@@ -57,18 +61,54 @@ public final class Failures {
         return counts;
     }
 
+    /** The folders a run's messages may name, as patterns: longest first, set once per run by {@link #knownPaths}. */
+    private static volatile List<Pattern> knownPatterns = List.of();
+
+    /** Ends a path: whitespace, a colon, a quote, a bracket, a comma or a semicolon. */
+    private static final String PATH_END = "\\s:'\"`,;()\\[\\]";
+
     /**
-     * An absolute path in a message: a POSIX path, or a Windows one with a drive letter. A relative path is left alone.
-     * shortcut: a path with a space in it keeps its tail after the space, upgrade when a message shows one.
+     * An absolute path in a message that no known folder covers: a POSIX path, or a Windows one with a drive letter.
+     * shortcut: such a path with a space in it keeps its tail after the space, upgrade when a message shows one.
      */
-    private static final Pattern ABSOLUTE_PATH = Pattern.compile("(?<![\\w.])(?:[A-Za-z]:\\\\\\S+|(?:/[\\w.@+~-]+)+)");
+    private static final Pattern ABSOLUTE_PATH =
+            Pattern.compile("(?<![\\w.])(?:[A-Za-z]:\\\\\\S+|(?:/[\\w.@+~-]+)+)");
+
+    /**
+     * Names the folders a run's messages may hold: the given and the canonical checkout, the folder of each classpath
+     * entry, and the home directory. {@link #scrub} replaces each whole, as an exact prefix, so a folder with a space
+     * in its name goes too.
+     */
+    public static void knownPaths(List<Path> roots, List<String> classpath) {
+        List<String> folders = new ArrayList<>();
+        for (Path root : roots) {
+            folders.add(root.toAbsolutePath().normalize().toString());
+            folders.add(SourceModel.realPath(root).toString());
+        }
+        for (String entry : classpath) {
+            Path parent = Path.of(entry).toAbsolutePath().normalize().getParent();
+            if (parent != null) folders.add(parent.toString());
+        }
+        folders.add(System.getProperty("user.home"));
+        folders.removeIf(f -> f == null || f.isBlank() || f.equals("/"));
+        folders.sort(Comparator.comparingInt(String::length).reversed().thenComparing(Comparator.naturalOrder()));
+        List<Pattern> patterns = new ArrayList<>();
+        for (String folder : folders)
+            patterns.add(Pattern.compile(Pattern.quote(folder) + "(?=[/" + PATH_END + "]|$)[^" + PATH_END + "]*"));
+        knownPatterns = List.copyOf(patterns);
+    }
 
     /**
      * The text with its absolute paths replaced by {@code <path>}. Every message the dump writes goes through here, so
-     * an output never says where the checkout or a jar lives: that is the host, and the dump must not carry it.
+     * an output never says where the checkout or a jar lives: that is the host, and the dump must not carry it. A known
+     * folder is matched as an exact prefix, so a space in its name is no end; a path no known folder covers falls back
+     * to the pattern.
      */
     public static String scrub(String text) {
-        return text == null ? null : ABSOLUTE_PATH.matcher(text).replaceAll("<path>");
+        if (text == null) return null;
+        String out = text;
+        for (Pattern known : knownPatterns) out = known.matcher(out).replaceAll("<path>");
+        return ABSOLUTE_PATH.matcher(out).replaceAll("<path>");
     }
 
     /** The reason an error row carries: {@code ExceptionClass: message}, with no absolute path in it. */
