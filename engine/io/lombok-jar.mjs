@@ -183,6 +183,31 @@ export function newestLocalLombok() {
 const choice = (version, rule, detail, approximate = false) => ({ used: true, version, rule, detail, approximate });
 
 /**
+ * The Lombok jar a scan hands the engine: the same rules as `lombokOf`, from local stores and the mindmodel cache only
+ * (preflight fetches; a scan never does). MINDMODEL_LOMBOK_JAR names a jar directly. Null when there is none.
+ */
+export function lombokJarFor(root) {
+  const forced = process.env.MINDMODEL_LOMBOK_JAR;
+  if (forced) return isFile(forced) ? forced : null;
+  if (mode() === 'off') return null;
+  const builds = readBuild(root, buildFilesOf(root));
+  const declared = declaredLombok(builds);
+  if (!declared.used) return null;
+  let version = declared.version;
+  const boot = version ? null : bootVersionOf(builds);
+  if (!version && boot) {
+    const pom = localFile('org.springframework.boot', 'spring-boot-dependencies', boot, BOM_NAME(boot)) ?? cachedBootPom(boot);
+    try {
+      version = pom ? pomPropertyOf(fs.readFileSync(pom.path, 'utf8'), 'lombok.version') : null;
+    } catch {
+      version = null; // an unreadable BOM gives no version
+    }
+  }
+  version = validVersion(version) ? version : newestLocalLombok();
+  return version ? locateLombok(version)?.path ?? null : null;
+}
+
+/**
  * The Lombok declaration of the checkout at `root`, and the rule that chose its version: `declared` (the build names
  * it), `boot-bom` (the Spring Boot BOM's pom is in a local store), `boot-bom-fetch` (the BOM's pom came from the mindmodel
  * cache or was fetched from Maven Central), or `newest-local` (an approximation). `version` is null when no rule applies.

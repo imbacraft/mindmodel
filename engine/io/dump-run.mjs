@@ -9,6 +9,7 @@ import assert from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { jarPath } from './engine-jar.mjs';
 import { git } from './git.mjs';
+import { lombokJarFor } from './lombok-jar.mjs';
 
 // Spoon 11.5 accepts a compliance level up to 26 (JDK 25); 11.2.1 died above 21. A project on a newer JDK therefore
 // gets the highest level this engine understands, and `capped` says so in the facts rather than pretending the source
@@ -34,11 +35,6 @@ function complianceCapped() {
   if (saved !== undefined) process.env.MINDMODEL_COMPLIANCE = saved;
 }
 
-// The Lombok jar delombok runs with. Until io/lombok-jar.mjs hands one over, it comes from MINDMODEL_LOMBOK_JAR.
-function lombokJar() {
-  const jar = process.env.MINDMODEL_LOMBOK_JAR;
-  return jar && fs.existsSync(jar) ? jar : null;
-}
 
 /** The file's own bytes, hashed: the one reading of a file that does not depend on when it was written. */
 function contentHash(file) {
@@ -96,7 +92,7 @@ export function fingerprint(root, files, classpathHash = null) {
   }
   if (classpathHash) h.update(`classpath:${classpathHash}\n`);
   // With delombok's members in the dump, the Lombok jar is an input too: a dump without it is not this dump.
-  const lombok = lombokJar();
+  const lombok = lombokJarFor(root);
   if (lombok) h.update(`lombok:${contentHash(lombok)}\n`);
   return h.digest('hex').slice(0, 16);
 }
@@ -134,7 +130,7 @@ export function dumpFor(root, files, { outDir, force = false, classpath = null, 
     scratch.push(gen);
     flags.push('--generated', gen);
   }
-  const lombok = lombokJar();
+  const lombok = lombokJarFor(root);
   if (lombok) flags.push('--lombok', lombok);
   const retired = `${dir}.${process.pid}.old`;
   let swapped = false;
