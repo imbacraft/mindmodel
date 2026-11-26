@@ -86,8 +86,14 @@ export function userSourcesOf(model, selected) {
           calls.some((x) => ['setAttribute', 'set', 'setAuthentication'].includes(x.name)) &&
           // The header the filter reads names the token: the dump folded the argument, no source text is read.
           calls.some((x) => (x.args ?? []).some((a) => /Authorization|Bearer|token/i.test(a)))
-        )
-          addUser('API token', citeOf(t, c), `${t.name}#${m.name} reads the token header and stores the caller`);
+        ) {
+          // Cited at the token's header read: `c` is the loop's call, not the one this rule keys on.
+          const reads = calls.filter((x) => x.name === 'getHeader');
+          const isToken = (x) => (x.args ?? []).some((a) => /Authorization|Bearer|token/i.test(a));
+          const header = reads.find(isToken) ?? reads[0];
+          const why = `${t.name}#${m.name} reads the token header and stores the caller`;
+          addUser('API token', `${t.file}:${header.line}`, why);
+        }
       }
     }
   // Sureness declares its authentication types as processors; the catalog names them.

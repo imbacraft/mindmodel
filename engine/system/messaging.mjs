@@ -118,6 +118,15 @@ export function jakartaJms(module) {
 }
 
 /**
+ * A send on a JNDI-injected field is named by `jakartaJms`. The JMSProducer rule sees the same call with the field as
+ * its argument and cannot name it, so it would add an unresolved twin: the named row stands, the twin goes.
+ */
+export function withoutJndiTwins(rows, jndi) {
+  const named = new Set(jndi.map((x) => `${x.file}:${x.line}`));
+  return rows.filter((x) => !(x.dir === 'out' && named.has(`${x.file}:${x.line}`)));
+}
+
+/**
  * The destination an MDB's activation config names: `destinationLookup`, `destinationName`, `destination`,
  * `mappedName`.
  */

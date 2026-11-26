@@ -5,7 +5,15 @@ import '../test-support/strict.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dumpOfLayers, NO_ENGINE } from '../test-support/fixtures/dump-dir.mjs';
-import { BUILTIN, channelName, codeIndex, jakartaJms, messaging, resolve } from '../engine/system/messaging.mjs';
+import {
+  BUILTIN,
+  channelName,
+  codeIndex,
+  jakartaJms,
+  messaging,
+  resolve,
+  withoutJndiTwins,
+} from '../engine/system/messaging.mjs';
 import { gatewayRoutes, restCalls } from '../engine/system/rest.mjs';
 
 const module_ = () => {
@@ -55,6 +63,15 @@ test('jakartaJms: an MDB destination and a JNDI-injected sender', { skip: NO_ENG
     jakartaJms(module_()).map((x) => `${x.dir}:${x.name}`),
     ['in:java:app/jms/Orders', 'out:java:app/jms/Invoices'],
   );
+});
+
+test('withoutJndiTwins: a JNDI-injected send is named once, by its JNDI name', { skip: NO_ENGINE }, () => {
+  const m = module_();
+  const sends = messaging(m).filter((x) => x.kind === 'jms' && x.dir === 'out');
+  assert.ok(sends.some((x) => x.expr === 'invoices'), 'the generic rule sees the injected send');
+  const kept = withoutJndiTwins(sends, jakartaJms(m));
+  assert.ok(!kept.some((x) => x.expr === 'invoices'), 'the unnamed twin goes');
+  assert.ok(kept.some((x) => x.expr === '"invoices"'), 'a literal send is not a twin');
 });
 
 test('channelName: a constant, a class literal and an injected placeholder', { skip: NO_ENGINE }, () => {

@@ -24,6 +24,8 @@ export function extractOutside(model, selected) {
   for (const t of model.types.values())
     for (const m of t.methods)
       for (const call of m.calls ?? []) {
+        // A `new` is a constructor (`<init>`): building a client or a message reaches nothing outside.
+        if (call.kind === 'new') continue;
         const entry = index.get(call.recvFqn)?.find((e) => !e.methods || e.methods.has(call.name));
         if (!entry) continue;
         const client = call.recvFqn.split('.').pop();
@@ -83,4 +85,9 @@ export function extractOutside(model, selected) {
   const facts = extractOutside(model, selected);
   assert.deepStrictEqual(facts.map((f) => [f.kind, f.target, f.method]), [['HTTP', 'RestTemplate.exchange', 'a.Svc#pay()']]);
   assert.match(facts[0].why[0], /outside client/);
+  // A constructor row is never an outside call, even where the catalog names the type with no methods list.
+  const jms = 'org.springframework.jms.core.JmsTemplate';
+  model.types.get('a.Svc').methods[0].calls.push({ kind: 'new', name: '<init>', recvFqn: jms, recvHow: 'new', targets: [] });
+  selected[0].catalog.calls.push({ type: jms, means: 'outside-call', kind: 'JMS' });
+  assert.equal(extractOutside(model, selected).length, 1, 'a new row adds no outside call');
 }

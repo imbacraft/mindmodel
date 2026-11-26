@@ -143,6 +143,8 @@ export function extractTransactions(model, selected, { outside = [], writes = []
       });
       if (sync) {
         const after = t.methods.find((n) => n.name === 'afterCommit' && n.start >= m.start && n.end <= m.end);
+        // The anonymous method's calls belong to the member that writes it: its own lines are the ones it runs.
+        const inside = (m.calls ?? []).filter((c) => c.line >= after?.start && c.line <= after?.end);
         if (after)
           facts.push(
             factOf({
@@ -152,7 +154,7 @@ export function extractTransactions(model, selected, { outside = [], writes = []
               kind: 'after-commit',
               mechanism: 'synchronization',
               method: m.id,
-              runs: (after.calls ?? []).flatMap((c) => c.targets ?? []),
+              runs: inside.flatMap((c) => c.targets ?? []),
               evidence: [citeOf(t, m), citeOf(t, after)],
               why: [`${sync.name} at :${sync.line}, afterCommit at :${after.start}`],
             }),
@@ -262,6 +264,8 @@ const lineOf = (f) => parseCite(f.evidence?.[0])?.start || null;
                   targets: [],
                   line: 42,
                 },
+                // Written inside the anonymous afterCommit (lines 44-46): the member owns it, its span names it.
+                { kind: 'call', name: 'persist', targets: ['a.Svc#persist()'], line: 45 },
               ],
             },
             {
@@ -274,7 +278,7 @@ const lineOf = (f) => parseCite(f.evidence?.[0])?.start || null;
               ann: [{ name: 'Transactional', fqn: 'org.springframework.transaction.annotation.Transactional', args: '', line: 54 }],
               calls: [{ kind: 'call', name: 'later', targets: ['a.Svc#later()'], line: 56 }],
             },
-            { id: 'a.Svc#afterCommit()', name: 'afterCommit', start: 44, end: 46, ann: [], calls: [{ kind: 'call', name: 'persist', targets: ['a.Svc#persist()'] }] },
+            { id: 'a.Svc#afterCommit()', name: 'afterCommit', start: 44, end: 46, ann: [], calls: [] },
             { id: 'a.Svc#persist()', name: 'persist', start: 48, end: 50, ann: [], calls: [] },
           ],
         },

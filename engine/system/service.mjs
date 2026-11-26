@@ -4,7 +4,7 @@ import { scan } from '../scan.mjs';
 import { configKeys } from '../extract/config.mjs';
 import { annotationOn, hasAnnotation } from '../core/annotations.mjs';
 import { flatStrings, typeRow } from './rows.mjs';
-import { channelName, jakartaJms, messaging } from './messaging.mjs';
+import { channelName, jakartaJms, messaging, withoutJndiTwins } from './messaging.mjs';
 import { gatewayRoutes, restCalls } from './rest.mjs';
 
 /**
@@ -32,12 +32,12 @@ export function serviceOf(folder, dir, module, patterns, ix) {
   const port = /^\d+$/.test(keys.get('server.port')?.value ?? '') ? keys.get('server.port').value : null;
   const cite = (file, line) => `${file}:${line}`;
   const msgs = [];
-  for (const x of messaging(module, patterns)) {
+  const jndi = jakartaJms(module);
+  for (const x of withoutJndiTwins(messaging(module, patterns), jndi)) {
     const r = channelName(x, module, keys, ix);
     msgs.push({ kind: x.kind, dir: x.dir, line: x.line, ...r, raw: x.raw, cite: cite(x.file, x.line) });
   }
-  for (const x of jakartaJms(module))
-    msgs.push({ ...x, via: 'JNDI name', raw: x.name, cite: cite(x.file, x.line) });
+  for (const x of jndi) msgs.push({ ...x, via: 'JNDI name', raw: x.name, cite: cite(x.file, x.line) });
   const calls = restCalls(module).map(({ file, ...c }) => ({ ...c, cite: cite(file, c.line) }));
   for (const [k, v] of keys) {
     const u = /^(?:https?|lb):\/\/([a-z][a-z0-9-]*)(?::(\d+))?(?=[:/]|$)/.exec(v.value);

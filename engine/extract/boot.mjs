@@ -430,8 +430,8 @@ export function bootFacts({ root, files, rel, git, app, read = (p) => fs.readFil
   if (profile) {
     let where = 'no profile config file found';
     if (prof) {
-      const tracked = git(root, ['ls-files', '--error-unmatch', prof.file]) != null;
-      const ign = !tracked && git(root, ['check-ignore', '-v', prof.file]);
+      const tracked = git(root, ['ls-files', '--error-unmatch', prof.file]).out != null;
+      const ign = !tracked && git(root, ['check-ignore', '-v', prof.file]).out;
       where = tracked
         ? `${prof.file} (in git)`
         : `${prof.file} is NOT in git${ign ? ` (ignored by ${ign.split('\t')[0].replace(/:[^:]*$/, '')})` : ''}: a new developer must create it`;
