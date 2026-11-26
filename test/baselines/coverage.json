@@ -12,18 +12,18 @@
     100
    ],
    "receiver typing": [
-    106394,
-    111408,
-    95
+    107780,
+    112676,
+    96
    ],
    "project targets": [
-    52100,
-    54000,
+    52263,
+    54168,
     96
    ],
    "ambiguous targets": [
     0,
-    54000,
+    54168,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -54,18 +54,18 @@
     100
    ],
    "receiver typing": [
-    146795,
-    154396,
+    148178,
+    155537,
     95
    ],
    "project targets": [
-    99676,
-    105219,
+    100199,
+    105775,
     95
    ],
    "ambiguous targets": [
     0,
-    105219,
+    105775,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -96,18 +96,18 @@
     100
    ],
    "receiver typing": [
-    1374,
-    1374,
+    1750,
+    1750,
     100
    ],
    "project targets": [
-    615,
-    630,
+    684,
+    699,
     98
    ],
    "ambiguous targets": [
     0,
-    630,
+    699,
     0
    ],
    "endpoints with a fully resolved path": [
