@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.code.CtLambda;
@@ -159,6 +160,53 @@ public final class Calls {
         if (ref == null) return out;
         if (ref.getDeclaration() instanceof CtConstructor<?> ctor) return constructorTargets(ctor, argc);
         if (!(ref.getDeclaration() instanceof CtMethod<?> method)) return byArity(receiver, name, argc);
+        return declaredMember(method, receiver);
+    }
+
+    /**
+     * A method reference Spoon could not type, passed to a call on a generic receiver:
+     * {@code page.map(mapper::toDto)} on a {@code Page<Booking>}. The function takes the receiver's one type argument,
+     * so the qualifier's overload of the name that takes exactly that type is the one. Several such overloads, or none,
+     * stay unresolved.
+     *
+     * <p>shortcut: a parameter whose type is imported from outside the dumped files is written bare and matches
+     * nothing, so it stays unresolved; upgrade by reading the declaring file's imports.
+     */
+    public List<Target> overloadByArgument(CtExecutableReferenceExpression<?, ?> reference, String receiver,
+            String name) {
+        if (receiver == null || !index.declared().contains(receiver)) return List.of();
+        if (!(reference.getParent() instanceof CtInvocation<?> call)) return List.of();
+        if (call.getArguments().stream().noneMatch(argument -> argument == reference)) return List.of();
+        String wanted = soleTypeArgument(call.getTarget());
+        if (wanted == null) return List.of();
+        List<CtMethod<?>> oneArgument = new ArrayList<>();
+        for (CtMethod<?> method : index.types().get(receiver).getMethods())
+            if (name.equals(method.getSimpleName()) && method.getParameters().size() == 1) oneArgument.add(method);
+        if (oneArgument.size() < 2) return List.of();
+        List<CtMethod<?>> matching = oneArgument.stream()
+                .filter(method -> wanted.equals(parameterName(method.getParameters().get(0).getType()))).toList();
+        return matching.size() == 1 ? declaredMember(matching.get(0), receiver) : List.of();
+    }
+
+    /** The one type argument of a receiver's written type, as a join key; null when it has none or it is a variable. */
+    private static String soleTypeArgument(CtExpression<?> target) {
+        CtTypeReference<?> type = target == null ? null : target.getType();
+        List<CtTypeReference<?>> arguments = type == null ? List.of() : type.getActualTypeArguments();
+        if (arguments.size() != 1 || arguments.get(0) instanceof CtTypeParameterReference) return null;
+        return Names.qualified(arguments.get(0));
+    }
+
+    /** A parameter's type as a join key, or null for a type variable (a wildcard is one too). */
+    private static String parameterName(CtTypeReference<?> type) {
+        return type == null || type instanceof CtTypeParameterReference ? null : Names.qualified(type);
+    }
+
+    /**
+     * A declaration in this checkout, then each implementation of it a receiver can reach: the same answer a call and a
+     * method reference give once they name the member.
+     */
+    private List<Target> declaredMember(CtMethod<?> method, String receiver) {
+        List<Target> out = new ArrayList<>();
         CtType<?> owner = method.getDeclaringType();
         if (owner == null || !index.declared().contains(Names.qualified(owner))) return out;
         // The method's own position can be synthetic (a record accessor); the owner's is the check that matters.

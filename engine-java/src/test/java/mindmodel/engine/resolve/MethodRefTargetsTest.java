@@ -40,6 +40,7 @@ class MethodRefTargetsTest {
                         private final Mapper mapper = new Mapper();
                         Object single(Page<Booking> bookings) { return bookings.map(mapper::single); }
                         Object overloaded(Page<Booking> bookings) { return bookings.map(mapper::toDto); }
+                        Object unmatched(Page<String> names) { return names.map(mapper::toDto); }
                     }
                     """);
 
@@ -84,11 +85,59 @@ class MethodRefTargetsTest {
         assertEquals("lombok", ref.path("origin").asText());
     }
 
-    /** Two overloads of one name and no way to tell them apart: no target, and no guess. */
+    /**
+     * Two overloads of one name, passed to a call on a generic receiver: the overload that takes the receiver's one
+     * type argument is the function's argument, so {@code Page<Booking>.map(mapper::toDto)} is {@code toDto(Booking)}.
+     */
     @Test
-    void anOverloadedMethodReferenceWithoutASignatureHasNoTarget() throws Exception {
-        JsonNode ref = refOn("toDto", "mapper::toDto");
-        assertTrue(ref.path("targets").isEmpty(), "two overloads: the dump does not pick one");
+    void anOverloadedMethodReferenceTakesTheOverloadOfTheReceiversTypeArgument() throws Exception {
+        JsonNode ref = refOn("toDto", "bookings.map(mapper::toDto)");
+        assertEquals(1, ref.path("targets").size());
+        assertEquals("demo.Mapper#toDto(Booking)", ref.path("targets").get(0).path("id").asText());
+        assertEquals("java", ref.path("origin").asText());
+    }
+
+    /**
+     * The mapper names its parameter's type through a wildcard import, as a real mapper does: Spoon writes the
+     * parameter bare, and the type is named by the checkout's own declaration of it.
+     */
+    @Test
+    void anOverloadIsTakenWhenItsParameterIsImportedOnDemand() throws Exception {
+        Map<String, String> sources = Map.of(
+                "demo/entity/Booking.java", "package demo.entity; public class Booking { }",
+                "demo/entity/Settings.java", "package demo.entity; public class Settings { }",
+                "demo/mapper/Mapper.java", """
+                        package demo.mapper;
+                        import demo.entity.*;
+                        public class Mapper {
+                            public String toDto(Settings s) { return ""; }
+                            public String toDto(Booking b) { return ""; }
+                        }
+                        """,
+                "demo/Use.java", """
+                        package demo;
+                        import demo.entity.Booking;
+                        import demo.mapper.Mapper;
+                        import org.example.Page;
+                        public class Use {
+                            private final Mapper mapper = new Mapper();
+                            Object run(Page<Booking> bookings) { return bookings.map(mapper::toDto); }
+                        }
+                        """);
+        var run = DumpRun.of(dir, sources);
+        int line = DumpRun.lineOf(sources.get("demo/Use.java"), "bookings.map(mapper::toDto)");
+        JsonNode ref = run.rows("calls").stream()
+                .filter(r -> "methodRef".equals(r.path("kind").asText()) && r.path("line").asInt() == line)
+                .findFirst().orElseThrow();
+        assertEquals("demo.mapper.Mapper#toDto(Booking)", ref.path("targets").get(0).path("id").asText());
+        assertEquals("java", ref.path("origin").asText());
+    }
+
+    /** No overload takes the receiver's type argument: no target, and no guess. */
+    @Test
+    void anOverloadedMethodReferenceNoOverloadMatchesHasNoTarget() throws Exception {
+        JsonNode ref = refOn("toDto", "names.map(mapper::toDto)");
+        assertTrue(ref.path("targets").isEmpty(), "no overload takes String: the dump does not pick one");
         assertEquals("unresolved", ref.path("origin").asText());
     }
 }

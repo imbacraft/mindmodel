@@ -163,7 +163,7 @@ test('dump: the fixture contract', { skip }, () => {
   });
   assert.deepStrictEqual(arg('input'), { text: 'input', kind: 'param', typeFqn: 'java.lang.String', index: 0, inLambda: false });
   assert.equal(arg('count').index, 1, 'a second parameter keeps its index');
-  assert.equal(arg('local').from, 'contract.Args#run(String,int)@10:24', 'a local names the call it was assigned from');
+  assert.equal(arg('local').from, 'contract.Args#run(String,int)@10:30', 'a local names the call it was assigned from');
   assert.equal(arg('state').field, 'contract.Args#state');
   assert.ok(arg('sink.name()').call.startsWith('contract.Args#run(String,int)@'), 'a call argument names its row');
   assert.equal(arg('new Sink()').created, 'contract.Sink');

@@ -200,6 +200,7 @@ public final class CallsWriter {
         boolean unnamed = calls.undeclared(target);
         String receiver = unnamed ? null : calls.methodRefReceiver(type, ref, target);
         List<Target> targets = unnamed ? List.of() : calls.targets(ref, receiver, name, argc == null ? 0 : argc);
+        if (!unnamed && targets.isEmpty()) targets = calls.overloadByArgument(expression, receiver, name);
         // Spoon types no Lombok member, so a getter named by a reference (`Booking::getId`) is the synthesis's alone.
         Lombok.Item made = !unnamed && targets.isEmpty() ? calls.generated().onlyMethod(receiver, name) : null;
         if (made != null) targets = List.of(new Target(made.id(), "declared"));

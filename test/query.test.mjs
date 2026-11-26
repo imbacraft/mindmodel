@@ -113,8 +113,8 @@ test('query: holders are the static ThreadLocal fields, with the method that wri
   assert.deepStrictEqual(scoped.writes.map((w) => w.method), ['contract.ScopedHolder#store(String)']);
   assert.deepStrictEqual(scoped.clears.map((w) => w.method), ['contract.ScopedHolder#clear()']);
   const slot = holders.find((h) => h.field === 'contract.Stores#SLOT');
-  assert.deepStrictEqual(slot.writes.map((w) => w.call), ['contract.Stores#holder(String)@9:9'], 'a set is not a clear');
-  assert.deepStrictEqual(slot.clears.map((w) => w.call), ['contract.Stores#holder(String)@10:9']);
+  assert.deepStrictEqual(slot.writes.map((w) => w.call), ['contract.Stores#holder(String)@9:14'], 'a set is not a clear');
+  assert.deepStrictEqual(slot.clears.map((w) => w.call), ['contract.Stores#holder(String)@10:14']);
 });
 
 test('query: stores are holder writes, the security context and request attributes, in reach', { skip }, () => {
@@ -167,7 +167,7 @@ test('query: comparedTo finds the comparison of a parameter, and the value that 
     ['no-method-in-dump']);
   assert.deepStrictEqual(q().comparedTo({}).unresolved.map((u) => u.reason), ['no-method']);
   // A local is nameable only through what it was assigned from; one built from a literal has no id.
-  const from = 'contract.Compare#fromCall(Object)@8:24';
+  const from = 'contract.Compare#fromCall(Object)@8:31';
   assert.deepStrictEqual(q().comparedTo({ method: 'contract.Compare#fromCall(Object)', from }).comparisons.map((c) => [c.name, c.arg]),
     [['equals', 0]]);
   assert.deepStrictEqual(q().comparedTo({ method: 'contract.Compare#fromLiteral()' }).unresolved.map((u) => u.reason),
