@@ -7,14 +7,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { cacheFile, declaredLombok, ensureLombok, locateLombok, lombokOf } from '../engine/io/lombok-jar.mjs';
 
 const VERSION = '1.18.34';
 const JAR = Buffer.from('not really a jar, but bytes Central would serve');
 const CENTRAL = `https://repo1.maven.org/maven2/org/projectlombok/lombok/${VERSION}/lombok-${VERSION}.jar`;
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const TABLE = JSON.parse(fs.readFileSync(path.join(REPO, 'engine/catalogs/versions/lombok-by-boot.json'), 'utf8'));
+const BOOT = '2.4.5';
+const BOM_NAME = `spring-boot-dependencies-${BOOT}.pom`;
+const BOM_URL = `https://repo1.maven.org/maven2/org/springframework/boot/spring-boot-dependencies/${BOOT}/${BOM_NAME}`;
+const BOM = Buffer.from('<project><properties><lombok.version>1.18.16</lombok.version></properties></project>');
 
 // A fake HOME with the variables the lookup reads; the real environment is put back by `restore`.
 function sandbox(env = {}) {
@@ -209,7 +210,7 @@ test('ensure: downloads off, local-only mode, no version, and a bad version all 
   }
 });
 
-test('lombokOf, rule declared: a POM version, a managed version, and a Gradle catalog', () => {
+test('lombokOf, rule declared: a POM version, a managed version, and a Gradle catalog', async () => {
   const s = sandbox();
   try {
     const dir = projectWith(path.join(s.dir, 'project'), {
@@ -221,7 +222,7 @@ test('lombokOf, rule declared: a POM version, a managed version, and a Gradle ca
       // A module declares no version; the root's pin is the one reported.
       'core/pom.xml': '<project><artifactId>core</artifactId></project>',
     });
-    const first = lombokOf(dir);
+    const first = await lombokOf(dir);
     assert.equal(first.version, '1.18.30');
     assert.equal(first.rule, 'declared');
 
@@ -232,41 +233,51 @@ test('lombokOf, rule declared: a POM version, a managed version, and a Gradle ca
         'lombok = { module = "org.projectlombok:lombok", version.ref = "lombok" }\n',
       'build.gradle.kts': 'dependencies { annotationProcessor(libs.lombok) }',
     });
-    assert.deepStrictEqual(
-      [lombokOf(dir).version, lombokOf(dir).rule],
-      ['1.18.36', 'declared'],
-    );
+    const second = await lombokOf(dir);
+    assert.deepStrictEqual([second.version, second.rule], ['1.18.36', 'declared']);
 
     // A project without Lombok: nothing to say, nothing to fetch.
     fs.rmSync(path.join(dir, 'build.gradle.kts'));
-    assert.deepStrictEqual(lombokOf(dir), { used: false, version: null, rule: null, detail: null, approximate: false });
+    assert.deepStrictEqual(await lombokOf(dir), {
+      used: false,
+      version: null,
+      rule: null,
+      detail: null,
+      approximate: false,
+    });
   } finally {
     s.restore();
   }
 });
 
-test('lombokOf, rule boot-bom (Maven parent): the local Spring Boot BOM names the Lombok version', () => {
+test('lombokOf, rule boot-bom (Maven parent): the local Spring Boot BOM names the Lombok version', async () => {
   const s = sandbox();
   try {
-    putFile(mavenRepo(s.dir, 'org', 'springframework', 'boot', 'spring-boot-dependencies', '2.4.0',
-      'spring-boot-dependencies-2.4.0.pom'), Buffer.from(bootPom('1.18.16')));
+    putFile(
+      mavenRepo(s.dir, 'org', 'springframework', 'boot', 'spring-boot-dependencies', '2.4.0',
+        'spring-boot-dependencies-2.4.0.pom'),
+      Buffer.from(bootPom('1.18.16')),
+    );
     const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom('2.4.0') });
-    const r = lombokOf(dir);
+    const { fetch, calls } = fakeFetch(new Map());
+    const r = await lombokOf(dir, { fetch });
     assert.equal(r.version, '1.18.16');
     assert.equal(r.rule, 'boot-bom');
     assert.equal(r.approximate, false);
     assert.match(r.detail, /spring-boot-dependencies 2\.4\.0 BOM \(maven-repo\)/);
+    assert.deepStrictEqual(calls, [], 'a local BOM is read with no request');
   } finally {
     s.restore();
   }
 });
 
-test('lombokOf, rule boot-bom: an imported BOM (Maven) and a Gradle plugin, the BOM in the Gradle cache', () => {
+test('lombokOf, rule boot-bom: an imported BOM (Maven) and a Gradle plugin, the BOM in the Gradle cache', async () => {
   const s = sandbox();
   try {
     const hash = path.join(s.dir, 'gradle-home', 'caches', 'modules-2', 'files-2.1', 'org.springframework.boot',
       'spring-boot-dependencies', '2.4.0', 'f00d');
     putFile(path.join(hash, 'spring-boot-dependencies-2.4.0.pom'), Buffer.from(bootPom('1.18.16')));
+    const { fetch, calls } = fakeFetch(new Map());
 
     const imported = projectWith(path.join(s.dir, 'maven-import'), {
       'pom.xml': `<project><artifactId>app</artifactId><dependencyManagement><dependencies>
@@ -275,40 +286,114 @@ test('lombokOf, rule boot-bom: an imported BOM (Maven) and a Gradle plugin, the 
         <dependencies><dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId></dependency>
         </dependencies></project>`,
     });
-    assert.equal(lombokOf(imported).rule, 'boot-bom');
-    assert.equal(lombokOf(imported).version, '1.18.16');
+    const viaImport = await lombokOf(imported, { fetch });
+    assert.equal(viaImport.rule, 'boot-bom');
+    assert.equal(viaImport.version, '1.18.16');
 
     const plugin = projectWith(path.join(s.dir, 'gradle-plugin'), {
       'build.gradle': "plugins { id 'org.springframework.boot' version '2.4.0' }\n" +
         "dependencies { compileOnly 'org.projectlombok:lombok' }\n",
     });
-    const r = lombokOf(plugin);
-    assert.equal(r.version, '1.18.16');
-    assert.match(r.detail, /\(gradle-cache\)/);
+    const viaPlugin = await lombokOf(plugin, { fetch });
+    assert.equal(viaPlugin.version, '1.18.16');
+    assert.match(viaPlugin.detail, /\(gradle-cache\)/);
+    assert.deepStrictEqual(calls, [], 'the Gradle-cached BOM is read with no request');
   } finally {
     s.restore();
   }
 });
 
-test('lombokOf, rule boot-table: no BOM is local, so the Spring Boot line row decides', () => {
+test('lombokOf, rule boot-bom-fetch: the BOM is not local, so it is fetched from Central once, verified and cached', async () => {
   const s = sandbox();
   try {
-    // The line's row, and a patch version of that line: the row is per minor line.
-    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom('2.4.5') });
-    const r = lombokOf(dir);
-    assert.equal(r.version, TABLE.lombok['2.4']);
-    assert.equal(r.rule, 'boot-table');
+    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom(BOOT) });
+    const files = new Map([[`${BOM_URL}.sha1`, Buffer.from(`${sha('sha1', BOM)}  ${BOM_NAME}\n`)], [BOM_URL, BOM]]);
+    const { fetch, calls } = fakeFetch(files);
 
-    // An unreadable BOM is no BOM to read from: the table answers instead.
-    putFile(mavenRepo(s.dir, 'org', 'springframework', 'boot', 'spring-boot-dependencies', '2.4.5',
-      'spring-boot-dependencies-2.4.5.pom'), Buffer.from('<project><properties><lombok.version>'));
-    assert.equal(lombokOf(dir).rule, 'boot-table');
+    const r = await lombokOf(dir, { fetch });
+    assert.equal(r.version, '1.18.16');
+    assert.equal(r.rule, 'boot-bom-fetch');
+    assert.match(r.detail, /spring-boot-dependencies 2\.4\.5 BOM \(download\)/);
+    assert.deepStrictEqual(calls, [`${BOM_URL}.sha512`, `${BOM_URL}.sha1`, BOM_URL]);
+    const cachedPom = path.join(s.dir, 'cache', 'mindmodel', 'spring-boot-dependencies', BOOT, BOM_NAME);
+    assert.deepStrictEqual(fs.readFileSync(cachedPom), BOM);
+
+    // The next run reads the mindmodel cache: the same rule, and no request.
+    const again = await lombokOf(dir, { fetch });
+    assert.equal(again.rule, 'boot-bom-fetch');
+    assert.match(again.detail, /\(cache\)/);
+    assert.equal(calls.length, 3);
   } finally {
     s.restore();
   }
 });
 
-test('lombokOf, rule newest-local: no version, no BOM and no row, so the newest local jar, approximate', () => {
+test('lombokOf, rule boot-bom-fetch: a BOM whose digest does not match is refused and falls through', async () => {
+  const s = sandbox();
+  try {
+    putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', '1.18.30', 'lombok-1.18.30.jar'));
+    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom(BOOT) });
+    const files = new Map([[`${BOM_URL}.sha1`, Buffer.from(sha('sha1', 'another pom'))], [BOM_URL, BOM]]);
+    const r = await lombokOf(dir, { fetch: fakeFetch(files).fetch });
+    assert.equal(r.rule, 'newest-local', 'the refused BOM gives no version; the newest local jar does');
+    assert.equal(r.version, '1.18.30');
+    assert.equal(fs.existsSync(path.join(s.dir, 'cache', 'mindmodel', 'spring-boot-dependencies', BOOT, BOM_NAME)), false);
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf, rule boot-bom-fetch: a BOM Central does not publish gives no version and no cache', async () => {
+  const s = sandbox();
+  try {
+    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom(BOOT) });
+    const r = await lombokOf(dir, { fetch: fakeFetch(new Map()).fetch });
+    assert.equal(r.version, null);
+    assert.equal(r.rule, null);
+    assert.match(r.detail, /neither the Spring Boot BOM nor a local Lombok jar/);
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf: the fetch is skipped under download:false, MINDMODEL_LOMBOK=local and =off', async () => {
+  for (const [env, options] of [
+    [{}, { download: false }],
+    [{ MINDMODEL_LOMBOK: 'local' }, {}],
+    [{ MINDMODEL_LOMBOK: 'off' }, {}],
+  ]) {
+    const s = sandbox(env);
+    try {
+      const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom(BOOT) });
+      const files = new Map([[`${BOM_URL}.sha1`, Buffer.from(sha('sha1', BOM))], [BOM_URL, BOM]]);
+      const { fetch, calls } = fakeFetch(files);
+      const r = await lombokOf(dir, { ...options, fetch });
+      assert.equal(r.version, null, JSON.stringify(env));
+      assert.deepStrictEqual(calls, [], JSON.stringify(env));
+    } finally {
+      s.restore();
+    }
+  }
+});
+
+test('lombokOf: a local BOM that is unreadable is no BOM, and nothing is fetched in its place', async () => {
+  const s = sandbox();
+  try {
+    putFile(
+      mavenRepo(s.dir, 'org', 'springframework', 'boot', 'spring-boot-dependencies', BOOT, BOM_NAME),
+      Buffer.from('<project><properties><lombok.version>'),
+    );
+    const dir = projectWith(path.join(s.dir, 'project'), { 'pom.xml': bootParentPom(BOOT) });
+    const { fetch, calls } = fakeFetch(new Map([[BOM_URL, BOM]]));
+    const r = await lombokOf(dir, { fetch });
+    assert.equal(r.rule, null);
+    assert.deepStrictEqual(calls, []);
+  } finally {
+    s.restore();
+  }
+});
+
+test('lombokOf, rule newest-local: no version, no BOM, so the newest local jar, approximate', async () => {
   const s = sandbox();
   try {
     putFile(mavenRepo(s.dir, 'org', 'projectlombok', 'lombok', '1.18.30', 'lombok-1.18.30.jar'));
@@ -318,22 +403,24 @@ test('lombokOf, rule newest-local: no version, no BOM and no row, so the newest 
     const dir = projectWith(path.join(s.dir, 'project'), {
       'build.gradle': "dependencies { compileOnly 'org.projectlombok:lombok' }\n",
     });
-    const r = lombokOf(dir);
+    const { fetch, calls } = fakeFetch(new Map());
+    const r = await lombokOf(dir, { fetch });
     assert.equal(r.version, '1.18.34', 'numeric order: 1.18.34 is newer than 1.18.9');
     assert.equal(r.rule, 'newest-local');
     assert.equal(r.approximate, true);
+    assert.deepStrictEqual(calls, [], 'no Boot version, so no BOM is asked for');
   } finally {
     s.restore();
   }
 });
 
-test('lombokOf, no rule applies: used, with no version and a reason', () => {
+test('lombokOf, no rule applies: used, with no version and a reason', async () => {
   const s = sandbox();
   try {
     const dir = projectWith(path.join(s.dir, 'project'), {
       'build.gradle': "dependencies { compileOnly 'org.projectlombok:lombok' }\n",
     });
-    const r = lombokOf(dir);
+    const r = await lombokOf(dir, { fetch: fakeFetch(new Map()).fetch });
     assert.equal(r.used, true);
     assert.equal(r.version, null);
     assert.equal(r.rule, null);

@@ -1,6 +1,0 @@
-{
-  "source": "lombok.version read from spring-boot-dependencies-2.4.0.pom in a local Maven repository. No row for a later Spring Boot line: no BOM for one was available to read, and a guessed version would be chosen silently.",
-  "lombok": {
-    "2.4": "1.18.16"
-  }
-}

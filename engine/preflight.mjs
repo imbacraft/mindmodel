@@ -148,7 +148,7 @@ function preflightInner(root) {
 // The Lombok jar, when the project uses Lombok. Its outcome is an info line, never a block: without the jar the
 // hand-written Lombok rules are used and the map is degraded. Returns null when the project does not use Lombok.
 async function lombokStatus(root, warnings) {
-  const { used, version, rule, detail, approximate } = lombokOf(root);
+  const { used, version, rule, detail, approximate } = await lombokOf(root);
   if (!used) return null;
   const chosen = `version from ${detail}${approximate ? ' (approximate)' : ''}`;
   const found = version ? await ensureLombok(version) : { ok: false, reason: detail };

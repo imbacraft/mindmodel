@@ -10,14 +10,11 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { readBuild } from './build.mjs';
 import { buildFileOf, pomPropertyOf, readVersionCatalog } from '../evidence/build.mjs';
 import { cacheRoot, fetchVerified, hashFile } from './download.mjs';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const TABLE = path.join(HERE, '..', 'catalogs', 'versions', 'lombok-by-boot.json');
-const CENTRAL = 'https://repo1.maven.org/maven2/org/projectlombok/lombok';
+const CENTRAL_ROOT = 'https://repo1.maven.org/maven2';
 const DIGEST_HEX_CHARS = { sha512: 128, sha1: 40 };
 // The build files that name a version. A root-level `libs.versions.toml` is not Gradle's convention, so not read.
 const BUILD_NAME = /(^|\/)(pom\.xml|build\.gradle(\.kts)?|gradle\/libs\.versions\.toml)$/;
@@ -139,10 +136,27 @@ export function locateLombok(version) {
   return isFile(cached) ? { path: cached, source: 'cache' } : null;
 }
 
-// The Lombok version a Spring Boot BOM manages, when that BOM's pom is local. Null when there is no such file.
-function lombokFromBootBom(boot) {
-  const pom = `spring-boot-dependencies-${boot}.pom`;
-  const found = localFile('org.springframework.boot', 'spring-boot-dependencies', boot, pom);
+const BOM_NAME = (boot) => `spring-boot-dependencies-${boot}.pom`;
+
+// The mindmodel cache copy of a Spring Boot BOM, when one was fetched before. Null otherwise.
+function cachedBootPom(boot) {
+  const file = path.join(cacheRoot(), 'spring-boot-dependencies', boot, BOM_NAME(boot));
+  return isFile(file) ? { path: file, source: 'cache' } : null;
+}
+
+// The Lombok version a Spring Boot BOM manages. The BOM's pom is read from a local store, then the mindmodel cache;
+// when neither has it and fetching is allowed, it is fetched from Maven Central once. Null when no step gives a version.
+async function lombokFromBootBom(boot, { allowFetch, fetch }) {
+  let found = localFile('org.springframework.boot', 'spring-boot-dependencies', boot, BOM_NAME(boot)) ?? cachedBootPom(boot);
+  if (!found && allowFetch) {
+    const url = `${CENTRAL_ROOT}/org/springframework/boot/spring-boot-dependencies/${boot}/${BOM_NAME(boot)}`;
+    const dest = path.join(cacheRoot(), 'spring-boot-dependencies', boot, BOM_NAME(boot));
+    try {
+      found = { path: await fetchCentral(url, dest, fetch), source: 'download' };
+    } catch {
+      return null; // no verified BOM, so no version from it
+    }
+  }
   if (!found) return null;
   let version = null;
   try {
@@ -151,15 +165,8 @@ function lombokFromBootBom(boot) {
     return null; // an unreadable BOM is no BOM to read from
   }
   if (!validVersion(version)) return null;
-  return { version, detail: `the lombok.version of the spring-boot-dependencies ${boot} BOM (${found.source})` };
-}
-
-// The Lombok version for a Spring Boot minor line, from the table beside the catalogs. Null when the line has no row.
-function lombokFromTable(boot) {
-  const minor = boot.split('.').slice(0, 2).join('.');
-  const version = JSON.parse(fs.readFileSync(TABLE, 'utf8')).lombok?.[minor];
-  if (!validVersion(version)) return null;
-  return { version, detail: `the Spring Boot ${minor} row of engine/catalogs/versions/lombok-by-boot.json` };
+  const rule = found.source === 'maven-repo' || found.source === 'gradle-cache' ? 'boot-bom' : 'boot-bom-fetch';
+  return { version, rule, detail: `the lombok.version of the spring-boot-dependencies ${boot} BOM (${found.source})` };
 }
 
 /** The newest Lombok version with a jar in any local store, or null. A guess: the project's own version is unknown. */
@@ -177,51 +184,56 @@ const choice = (version, rule, detail, approximate = false) => ({ used: true, ve
 
 /**
  * The Lombok declaration of the checkout at `root`, and the rule that chose its version: `declared` (the build names
- * it), `boot-bom` (the Spring Boot BOM's pom is local), `boot-table` (the table row for the Boot line), or
- * `newest-local` (an approximation). `version` is null when no rule applies. Reads files only; nothing is run.
+ * it), `boot-bom` (the Spring Boot BOM's pom is in a local store), `boot-bom-fetch` (the BOM's pom came from the mindmodel
+ * cache or was fetched from Maven Central), or `newest-local` (an approximation). `version` is null when no rule applies.
+ * Fetching needs `download` and the default mode; a BOM is never fetched under MINDMODEL_LOMBOK=off or =local.
  */
-export function lombokOf(root) {
+export async function lombokOf(root, { download = true, fetch = globalThis.fetch } = {}) {
   const builds = readBuild(root, buildFilesOf(root));
   const declared = declaredLombok(builds);
   if (!declared.used) return { used: false, version: null, rule: null, detail: null, approximate: false };
   if (declared.version) return choice(declared.version, 'declared', 'declared in the build files');
   const boot = bootVersionOf(builds);
-  const bom = boot && lombokFromBootBom(boot);
-  if (bom) return choice(bom.version, 'boot-bom', bom.detail);
-  const row = boot && lombokFromTable(boot);
-  if (row) return choice(row.version, 'boot-table', row.detail);
+  const allowFetch = download && mode() === 'auto';
+  const bom = boot ? await lombokFromBootBom(boot, { allowFetch, fetch }) : null;
+  if (bom) return choice(bom.version, bom.rule, bom.detail);
   const newest = newestLocalLombok();
   if (newest) return choice(newest, 'newest-local', 'the newest Lombok already local', true);
-  return choice(null, null, 'no version declared, and no Spring Boot BOM, table row or local Lombok jar gives one');
+  return choice(null, null, 'no version declared, and neither the Spring Boot BOM nor a local Lombok jar gives one');
 }
 
-// The digest Central publishes beside the jar: sha512 where it exists, else sha1. Never none: an unverified jar is
+// The digest Central publishes beside a file: sha512 where it exists, else sha1. Never none: an unverified file is
 // not cached.
-async function publishedDigest(jarUrl, fetch) {
+async function publishedDigest(fileUrl, fetch) {
   for (const algo of ['sha512', 'sha1']) {
-    const response = await fetch(`${jarUrl}.${algo}`, { redirect: 'follow' });
+    const response = await fetch(`${fileUrl}.${algo}`, { redirect: 'follow' });
     if (!response.ok) continue;
     const hex = /^[0-9a-fA-F]+/.exec((await response.text()).trim())?.[0].toLowerCase() ?? '';
     if (hex.length !== DIGEST_HEX_CHARS[algo]) throw new Error(`the ${algo} file from Maven Central is not a digest`);
     return { algo, hex };
   }
-  throw new Error('Maven Central publishes no checksum for this jar');
+  throw new Error('Maven Central publishes no checksum for this file');
 }
 
-/** Fetches the jar from Maven Central into the cache, verified against its published digest. Returns the path. */
-export async function downloadLombok(version, fetch = globalThis.fetch) {
-  const url = `${CENTRAL}/${version}/lombok-${version}.jar`;
+/** Fetches a Maven Central file into `dest`, verified against the digest Central publishes beside it. Returns `dest`. */
+async function fetchCentral(url, dest, fetch) {
   const { algo, hex } = await publishedDigest(url, fetch);
-  const dest = cacheFile(version);
   await fetchVerified({
     url,
     dest,
     fetch,
     verify: (temp) => {
-      if (hashFile(temp, algo) !== hex) throw new Error('checksum mismatch: the jar is not the one Central publishes');
+      if (hashFile(temp, algo) !== hex) throw new Error('checksum mismatch: the file is not the one Central publishes');
     },
   });
   return dest;
+}
+
+/** Fetches the jar from Maven Central into the cache, verified against its published digest. Returns the path. */
+export async function downloadLombok(version, fetch = globalThis.fetch) {
+  const dest = cacheFile(version);
+  const url = `${CENTRAL_ROOT}/org/projectlombok/lombok/${version}/lombok-${version}.jar`;
+  return fetchCentral(url, dest, fetch);
 }
 
 /**
