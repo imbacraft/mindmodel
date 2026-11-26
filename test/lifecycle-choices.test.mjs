@@ -120,3 +120,9 @@ test('two entities that share one enum are two lifecycles', { skip }, () => {
   assert.match(lineOf('Invoice.OrderStatus', 'PAID'), /InvoiceService\.java#activate/, lineOf('Invoice.OrderStatus', 'PAID'));
   assert.doesNotMatch(lineOf('Order.OrderStatus', 'PAID'), /#activate/, lineOf('Order.OrderStatus', 'PAID'));
 });
+
+test('a status set through a Lombok builder is a set of the entity the builder belongs to', { skip }, () => {
+  // Lombok names the builder `<Type>Builder` and nests it in the type: `shop.Booking.BookingBuilder`.
+  assert.match(lineOf('Booking.OrderStatus', 'PAID'), /BookingService\.java#book\b/, lineOf('Booking.OrderStatus', 'PAID'));
+  assert.doesNotMatch(lineOf('Booking.OrderStatus', 'PAID'), /no setter found/, lineOf('Booking.OrderStatus', 'PAID'));
+});

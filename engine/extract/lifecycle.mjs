@@ -39,6 +39,21 @@ const outsideRead = (value) =>
     : null;
 const noHop = (reason, at) => ({ values: [], unresolved: [{ reason, at }] });
 
+/**
+ * The entity a Lombok builder setter writes. Lombok nests the builder in the type it builds, under `<Type>Builder` or the
+ * name a `builderClassName` gives, so the member's owner is `Entity.<Builder>`: the entity is that owner without its last
+ * segment, when the dump declares it. A builder the source declares itself is top-level (`OrderBuilder`), has no such
+ * owner, and stays unattributed.
+ */
+function builtEntityOf(dump, targetId) {
+  const member = dump.members.get(targetId);
+  if (!member || member.generated !== 'lombok') return null;
+  const owner = normFqn(member.owner);
+  const cut = owner.lastIndexOf('.');
+  const entity = cut > 0 ? owner.slice(0, cut) : '';
+  return dump.types.has(entity) ? entity : null;
+}
+
 /** The constants one expression can be: a constant, or the two branches of a conditional (`a ? S.X : S.Y`). */
 function expressionValues(value, enumFqn, at) {
   if (!value) return noHop('no-value', at);
@@ -199,19 +214,6 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
         push(paramWriters, key, pair);
       }
 
-  // The entity a Lombok builder setter writes. The synthesis names the builder `Entity.Builder` and marks its members
-  // `generated: lombok`; the entity is that owner without the suffix, and only when the dump declares it. A builder the
-  // source itself declares (`OrderBuilder`) has no such owner and stays unattributed.
-  const BUILDER_SUFFIX = '.Builder';
-  const builtEntity = (targetId) => {
-    const member = dump.members.get(targetId);
-    if (!member || member.generated !== 'lombok') return null;
-    const owner = String(member.owner ?? '');
-    if (!owner.endsWith(BUILDER_SUFFIX)) return null;
-    const entity = owner.slice(0, -BUILDER_SUFFIX.length);
-    return dump.types.has(entity) ? entity : null;
-  };
-
   // A write of the entity's own status field: the dump's field accesses carry the value, so a field default, a
   // constructor assignment and a setter body are one shape.
   for (const pair of pairs)
@@ -239,7 +241,7 @@ function lifecycleFacts({ dump, files = null, entities = [], enums = [], shortli
       // The type whose instance receives the call: the receiver the dump typed, or the entity a Lombok builder setter
       // belongs to. Both are facts of the call row, not a reading of the argument's text.
       const receivers = new Set(
-        [normFqn(q.receiverEntity(call).type), ...targetIds(call).map(builtEntity)].filter(Boolean),
+        [normFqn(q.receiverEntity(call).type), ...targetIds(call).map((t) => builtEntityOf(dump, t))].filter(Boolean),
       );
       const owners = pairs.filter(
         (p) =>
