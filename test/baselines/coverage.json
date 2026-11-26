@@ -2,28 +2,28 @@
  "hertzbeat": {
   "rates": {
    "supertypes resolved": [
-    2157,
+    2153,
     2157,
     100
    ],
    "fields with a resolved type": [
-    10996,
+    10985,
     10996,
     100
    ],
    "receiver typing": [
-    107620,
-    111512,
-    97
+    106394,
+    111408,
+    95
    ],
    "project targets": [
-    52011,
-    54049,
+    52100,
+    54000,
     96
    ],
    "ambiguous targets": [
     0,
-    54049,
+    54000,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -44,28 +44,28 @@
  "fineract": {
   "rates": {
    "supertypes resolved": [
-    4348,
+    4347,
     4348,
     100
    ],
    "fields with a resolved type": [
-    27362,
+    27354,
     27362,
     100
    ],
    "receiver typing": [
-    148293,
-    154470,
-    96
+    146795,
+    154396,
+    95
    ],
    "project targets": [
-    99196,
-    104912,
+    99676,
+    105219,
     95
    ],
    "ambiguous targets": [
     0,
-    104912,
+    105219,
     0
    ],
    "endpoints with a fully resolved path": [
@@ -101,9 +101,9 @@
     100
    ],
    "project targets": [
-    623,
+    615,
     630,
-    99
+    98
    ],
    "ambiguous targets": [
     0,
