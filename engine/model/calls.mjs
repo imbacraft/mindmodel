@@ -8,7 +8,9 @@ export function bindingRates(model) {
   for (const t of model.types.values())
     for (const m of t.methods)
       for (const call of m.calls ?? []) {
-        if (call.kind === 'new') continue;
+        // A constructor is not a call site the rates count, and neither is a method reference: it names a method and
+        // runs nothing where it is written, so counting it would move the rates for code that never called.
+        if (call.kind === 'new' || call.kind === 'methodRef') continue;
         rate.calls++;
         if (call.recvFqn) rate.typed++;
         if (call.recvFqn && model.types.has(call.recvFqn)) {

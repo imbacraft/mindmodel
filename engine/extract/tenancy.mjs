@@ -447,7 +447,14 @@ export function noRequestPaths({ model, tenancy, repos, extra = [] }) {
     if (names.some((n) => isListenerAnnotation(n))) return 'listener';
     return 'job'; // a remaining no-request name, such as a timer's @Timeout
   };
-  const setsContext = (t, m) => (m.calls ?? []).some((c) => /^(set|current)(Tenant|Workspace|Site)/.test(c.name ?? '')) || /Context|Holder/.test(t.name);
+  // The context is set by a call the method makes wherever it stands, a loop included: a setter by name, or a call
+  // into a method that stores into a holder within two more hops (a per-row wrapper such as `setupForSubscription`).
+  const dumpQueries = queries(model.dump ?? null);
+  const storesWithin = (id) => dumpQueries.stores(id, 2).stores.some((s) => s.op !== 'clear');
+  const setsContext = (t, m) =>
+    (m.calls ?? []).some(
+      (c) => /^(set|current)(Tenant|Workspace|Site)/.test(c.name ?? '') || (c.targets ?? []).some(storesWithin),
+    ) || /Context|Holder/.test(t.name);
   const out = [];
   // Worker loops have no annotation: the flow builder already found them (a loop polling a queue, started by an
   // executor or a lifecycle hook), so they enter here as entries too.

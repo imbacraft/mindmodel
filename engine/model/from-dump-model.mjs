@@ -137,6 +137,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
         // `public static void main(String[])`: the dump's answer, so an entry point is never a regex over text.
         isMain: member.isMain === true,
         isPublic: (member.modifiers ?? []).includes('public'),
+        // A constructor is a member the dump names by kind, not by a name a method could share.
+        isConstructor: member.kind === 'constructor',
         returnText: member.returns ?? null,
         start: startsAt(member, at.line),
         end: at.endLine ?? at.line,
@@ -159,10 +161,9 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
   const methodsById = new Map();
   for (const t of types.values()) for (const m of t.methods) if (m.id) methodsById.set(m.id, { type: t, method: m });
   for (const row of dump.calls) {
-    // A method reference is a call row of its own; it names a method and does not call it.
-    if (row.via === 'methodRef') continue;
-    const method = methodsById.get(row.method)?.method;
-    if (!method || row.origin === 'error') continue;
+    if (row.origin === 'error') continue;
+    const method = methodsById.get(row.method)?.method ?? initializerMember(row.method, types, methodsById);
+    if (!method) continue;
     // Each target is `{id, kind}`: the declaration Spoon resolved, then its overrides.
     const targets = row.targets ?? [];
     const call = {
@@ -226,7 +227,8 @@ export function buildModelFromDump(dump, sources = new Map(), known = new Set())
  * segment that starts with a capital names the type.
  */
 function receiverOf(row) {
-  const written = row.recv?.text ?? null;
+  // A method reference's text is `recv::name`: the receiver is the expression before the `::`.
+  const written = (row.recv?.text ?? '').split('::')[0] || null;
   if (!written) return null;
   // A static call written without a receiver inside its own class: Spoon names the class, the author did not.
   if (row.recv.kind === 'static' && String(row.method ?? '').startsWith(`${row.recv.typeFqn}#`)) return null;
@@ -249,6 +251,42 @@ function howOf(row) {
       : 'direct';
   }
   return row.origin === 'library' ? 'external' : 'unresolved';
+}
+
+// A field initializer or an initializer block has no declaration: the dump owns its calls under a pseudo-member,
+// `T#<clinit>()` (static) or `T#<init>()` (per instance). The member is made on its type the first time a call
+// names it.
+const INITIALIZER_ID = /^(.+)#<(clinit|init)>\(\)$/;
+function initializerMember(id, types, methodsById) {
+  const hit = INITIALIZER_ID.exec(id ?? '');
+  const t = hit && types.get(hit[1]);
+  if (!t) return null;
+  const isStatic = hit[2] === 'clinit';
+  const m = {
+    id,
+    name: isStatic ? '<clinit>' : '<init>',
+    returns: 'void',
+    params: [],
+    ann: [],
+    hasBody: true,
+    isMain: false,
+    isPublic: false,
+    isConstructor: false,
+    returnText: 'void',
+    start: t.start,
+    end: t.start,
+    nameLine: t.start,
+    signatureLine: t.start,
+    modifiers: isStatic ? ['static'] : [],
+    loops: [],
+    branches: [],
+    tryBlocks: [],
+    synthetic: 'initializer',
+    calls: [],
+  };
+  t.methods.push(m);
+  methodsById.set(id, { type: t, method: m });
+  return m;
 }
 
 /** Names as written in one file, resolved from that file's imports and its own package. Only bodies need this. */

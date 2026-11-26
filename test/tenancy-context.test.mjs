@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { NO_ENGINE, dumpOf } from '../test-support/fixtures/dump-dir.mjs';
 import { annotationIndex, loadCatalogs, selectCatalogs, typeIndex } from '../engine/catalogs/catalog.mjs';
 import { entityFacts } from '../engine/extract/entities.mjs';
-import { tenancyFacts } from '../engine/extract/tenancy.mjs';
+import { noRequestPaths, tenancyFacts } from '../engine/extract/tenancy.mjs';
 
 const L = (...x) => x.join('\n');
 
@@ -265,4 +265,61 @@ test('fixture C: a key stored through a wrapper helper into a ThreadLocal counts
   assert.equal(chosen.passed, true);
   assert.equal(tenancy.key, 'subscriptionId');
   assert.deepEqual(tenancy.coverage.withKey, ['Row01', 'Row02', 'Row03', 'Row04', 'Row05']);
+});
+
+// Fixture D: a scheduled job sets the tenant context once per row, inside its loop, through the wrapper of fixture C,
+// then reads the keyed repository. The loop is not the method's start: the set is found wherever the call is made.
+function fixtureD() {
+  const files = fixtureC();
+  files['src/main/java/shop/SyncJob.java'] = L(
+    'package shop;',
+    'import org.springframework.scheduling.annotation.Scheduled;',
+    'public class SyncJob {',
+    '  private final Row01Repo rows;',
+    '  private final TenantContextSetup setup;',
+    '  public SyncJob(Row01Repo rows, TenantContextSetup setup) {',
+    '    this.rows = rows;',
+    '    this.setup = setup;',
+    '  }',
+    '  @Scheduled(fixedRate = 1000)',
+    '  public void run() {',
+    '    for (Long subscriptionId : java.util.List.of(1L, 2L)) {',
+    '      setup.setupForSubscription(subscriptionId);',
+    '      rows.findBySubscriptionId(subscriptionId);',
+    '    }',
+    '  }',
+    '}',
+  );
+  // The same read without a setup call: the job reaches the keyed repository and sets nothing.
+  files['src/main/java/shop/ReadOnlyJob.java'] = L(
+    'package shop;',
+    'import org.springframework.scheduling.annotation.Scheduled;',
+    'public class ReadOnlyJob {',
+    '  private final Row01Repo rows;',
+    '  public ReadOnlyJob(Row01Repo rows) {',
+    '    this.rows = rows;',
+    '  }',
+    '  @Scheduled(fixedRate = 1000)',
+    '  public void run() {',
+    '    rows.findBySubscriptionId(1L);',
+    '  }',
+    '}',
+  );
+  return files;
+}
+
+test('fixture D: a per-row setup call inside a scheduled loop sets the tenant context', { skip: NO_ENGINE }, () => {
+  const { model } = dumpOf(fixtureD());
+  const imports = [...model.importsOf.values()].flatMap((i) => (i.imports ?? []).map((x) => x.name));
+  const selected = selectCatalogs(loadCatalogs(), { imports });
+  const entFacts = entityFacts(model, annotationIndex(selected), typeIndex(selected));
+  const tenancy = tenancyFacts(entFacts, { model });
+  assert.equal(tenancy.key, 'subscriptionId');
+  const paths = noRequestPaths({ model, tenancy, repos: entFacts.repos });
+  const run = paths.find((p) => p.method === 'SyncJob#run');
+  assert.ok(run, `the job reaches the keyed repository: ${paths.map((p) => p.method).join(', ')}`);
+  assert.equal(run.setsContext, true, 'the per-row setup in the loop sets the context');
+  const readOnly = paths.find((p) => p.method === 'ReadOnlyJob#run');
+  assert.ok(readOnly, 'the read-only job reaches the keyed repository too');
+  assert.equal(readOnly.setsContext, false, 'a read with no setup call sets nothing');
 });
