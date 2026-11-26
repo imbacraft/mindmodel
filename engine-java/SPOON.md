@@ -86,13 +86,17 @@ already caused bugs. Add an entry whenever a bug turns out to be a Spoon surpris
 - An invocation starts at its target: `a.b().c()` is one element that starts at `a`, and the method name's token has no
   position of its own. `Positions.ofCall` reads the name from the source: the identifier before the last top-level `(`
   of the span, which is the call's own argument list. Strings, characters, comments and brackets are skipped.
-- Spoon's column (`SourcePositionImpl.searchColumnNumber`) is 1-based and counts a tab as one character on lines 2 and
-  up. Two quirks: on the file's first line it is 0-based (`position`, not `position + 1`), and on its last line (after
-  the final line separator) a tab counts as the tabulation size (4). `Positions` keeps Spoon's numbers, quirks included,
-  so a column is a character index only on the middle lines of a file. Open: fix both in `Positions`.
+- Spoon's column (`SourcePositionImpl.searchColumnNumber`) is not what the dump writes. It is 0-based on the first
+  line, and on the last line a tab counts as the tabulation size (4). `Positions` reads each column from the source
+  text: 1-based characters, a tab one. Spoon's line is used as it is.
+- A declaration's Spoon line and column are its name's start, not its first token: annotations and modifiers come
+  before it (`CompoundSourcePosition.getNameStart`). `Positions` starts a declaration at its name, as Spoon does.
+- An unqualified call's receiver is an implicit `this` (`CtThisAccess.isImplicit()`), not a null target.
+- Spoon's import list leaves an import of a type not on the classpath `UNRESOLVED` with a null reference, so the static
+  imports of a file are read from its header (`Imports.staticImports`).
 - `SourcePositionImpl` has a public constructor, `new SourcePositionImpl(unit, start, end,
-  unit.getLineSeparatorPositions())`: it gives Spoon's own line and column for any offset of the unit, the only way to
-  get those for a sub-range.
+  unit.getLineSeparatorPositions())`: it gives Spoon's line for any offset of the unit, the only way to get one for a
+  sub-range.
 
 ## Output safety
 - JSON cannot hold `NaN` or `Infinity`; write such a value as unresolved.

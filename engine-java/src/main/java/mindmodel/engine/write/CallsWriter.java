@@ -12,6 +12,7 @@ import spoon.reflect.code.CtConstructorCall;
 import spoon.reflect.code.CtExecutableReferenceExpression;
 import spoon.reflect.code.CtExpression;
 import spoon.reflect.code.CtInvocation;
+import spoon.reflect.code.CtThisAccess;
 import spoon.reflect.code.CtLambda;
 import spoon.reflect.declaration.CtElement;
 import spoon.reflect.declaration.CtExecutable;
@@ -67,7 +68,8 @@ public final class CallsWriter {
     public static Written write(List<CtType<?>> types, List<CtType<?>> known, Lombok.Index generated,
             Walk.Bodies bodies, Positions positions, CallIds ids, Refs refs, Path out) throws IOException {
         Chains chains = new Chains(generated, refs.failures());
-        Ctx ctx = new Ctx(new Calls(known, generated, chains, refs.failures()), chains, ids, refs, positions,
+        Calls calls = new Calls(known, generated, chains, refs.failures(), positions.root());
+        Ctx ctx = new Ctx(calls, chains, ids, refs, positions,
                 new IdentityHashMap<>(), new ArrayList<>(), FieldAccess.Known.of(known, generated));
         try (Ndjson w = new Ndjson(out)) {
             for (CtType<?> type : types) {
@@ -164,8 +166,12 @@ public final class CallsWriter {
             }
         }
         Recv recv = calls.recv(type, receiver, fieldType != null, unnamed);
+        // Spoon writes an unqualified call's receiver as an implicit `this`, so unqualified means that or no target.
+        boolean unqualified = call.getTarget() == null
+                || call.getTarget() instanceof CtThisAccess<?> self && self.isImplicit();
+        boolean imported = unqualified && calls.staticallyImportedFromLibrary(type, pos.file(), name);
         boolean inherited = targets.isEmpty() && (calls.inheritedFromEnum(recv, name, argc)
-                || calls.inheritsFromLibrary(recv, name));
+                || calls.inheritsFromLibrary(recv, name) || imported);
         head(g, methodId, ctx.ids().id(call), "call", pos, name);
         g.writeNumberField("argc", argc);
         writeRecv(g, recv.invented() ? null : recv.type(), ctx, call.getTarget(), Calls.kind(call),

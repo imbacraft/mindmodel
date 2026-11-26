@@ -8,6 +8,7 @@ import java.util.Map;
 import spoon.reflect.code.CtInvocation;
 import spoon.reflect.cu.CompilationUnit;
 import spoon.reflect.cu.SourcePosition;
+import spoon.reflect.cu.position.CompoundSourcePosition;
 import spoon.reflect.declaration.CtElement;
 import spoon.support.reflect.cu.position.SourcePositionImpl;
 
@@ -38,7 +39,15 @@ public final class Positions {
     public Pos of(CtElement element) {
         SourcePosition p = element == null ? null : element.getPosition();
         if (p == null || !p.isValidPosition()) return null;
-        return at(p);
+        return at(p, startOf(p), p.getSourceEnd());
+    }
+
+    /**
+     * Where Spoon's own start sits: a declaration's name (its annotations and modifiers come before it), else the
+     * element's first token. Its line and column are read from this offset.
+     */
+    private static int startOf(SourcePosition p) {
+        return p instanceof CompoundSourcePosition compound ? compound.getNameStart() : p.getSourceStart();
     }
 
     /**
@@ -55,29 +64,46 @@ public final class Positions {
         int[] name = nameSpan(unit.getOriginalSourceCode(), p.getSourceStart(), p.getSourceEnd(),
                 call.getExecutable().getSimpleName());
         if (name == null) return whole;
-        // Spoon's own line and column for the name's offsets: the same rules as the call's position, tabs included.
-        SourcePosition at = new SourcePositionImpl(unit, name[0], name[1], unit.getLineSeparatorPositions());
-        return at(at);
-    }
-
-    /** A Spoon position as a project-relative one. */
-    private Pos at(SourcePosition p) {
-        File file = p.getFile();
-        String rel = file == null ? "" : relative.computeIfAbsent(file,
-                f -> root.relativize(f.toPath().toAbsolutePath().normalize()).toString().replace('\\', '/'));
-        return new Pos(rel, p.getLine(), p.getColumn(), p.getEndLine(), p.getEndColumn());
+        return at(p, name[0], name[1]);
     }
 
     /**
-     * The offsets of a call's method name in its source, or null. The call's own argument list is the last `(` at the
-     * top level of the span (the span ends with that list's `)`): the name is the identifier right before it. Strings,
-     * characters, comments and nested brackets are skipped, so a `(` in a literal or a receiver's argument is never it.
+     * The span {@code [start, end]} of an element's file, as the dump writes it: Spoon's line for each end, and each
+     * column counted in characters of that line, 1-based, a tab one character. Spoon's own column is not used: it is
+     * 0-based on the first line and counts a tab as the tabulation size on the last.
+     */
+    private Pos at(SourcePosition p, int start, int end) {
+        File file = p.getFile();
+        String rel = file == null ? "" : relative.computeIfAbsent(file,
+                f -> root.relativize(f.toPath().toAbsolutePath().normalize()).toString().replace('\\', '/'));
+        CompilationUnit unit = p.getCompilationUnit();
+        if (unit == null || unit.getOriginalSourceCode() == null)
+            return new Pos(rel, p.getLine(), p.getColumn(), p.getEndLine(), p.getEndColumn());
+        String src = unit.getOriginalSourceCode();
+        return new Pos(rel, lineAt(unit, start), columnAt(src, start), lineAt(unit, end), columnAt(src, end));
+    }
+
+    /** Spoon's line of one offset of the unit. */
+    private static int lineAt(CompilationUnit unit, int offset) {
+        return new SourcePositionImpl(unit, offset, offset, unit.getLineSeparatorPositions()).getLine();
+    }
+
+    /** The 1-based column of an offset: the characters between the line's start and the offset, plus one. */
+    static int columnAt(String src, int offset) {
+        return offset - (src.lastIndexOf('\n', offset - 1) + 1) + 1;
+    }
+
+    /**
+     * The offsets of a call's method name in its source, or null. A span can carry the parentheses of an enclosing cast
+     * (`((Number) m.get(k))`), so the name is not the last top-level `(`: it is the identifier of this name followed by
+     * `(` at the shallowest depth, the last one there. Strings, characters, comments and nested brackets are skipped.
      */
     static int[] nameSpan(String src, int start, int end, String name) {
-        int open = -1;
-        int depth = 0;
-        int i = start;
         int last = Math.min(end, src.length() - 1);
+        int depth = 0;
+        int bestDepth = Integer.MAX_VALUE;
+        int best = -1;
+        int i = start;
         while (i <= last) {
             int skip = literalOrCommentLength(src, i);
             if (skip > 0) {
@@ -85,18 +111,29 @@ public final class Positions {
                 continue;
             }
             char c = src.charAt(i);
-            if (c == '(' && depth == 0) open = i;
+            boolean wordStart = i == start || !Character.isJavaIdentifierPart(src.charAt(i - 1));
+            if (Character.isJavaIdentifierStart(c) && wordStart) {
+                int stop = i;
+                while (stop <= last && Character.isJavaIdentifierPart(src.charAt(stop))) stop++;
+                if (src.substring(i, stop).equals(name) && opensArguments(src, stop, last) && depth <= bestDepth) {
+                    bestDepth = depth;
+                    best = i;
+                }
+                i = stop;
+                continue;
+            }
             if (c == '(' || c == '[' || c == '{') depth++;
             if (c == ')' || c == ']' || c == '}') depth--;
             i++;
         }
-        if (open < 0) return null;
-        int stop = open;
-        while (stop > start && Character.isWhitespace(src.charAt(stop - 1))) stop--;
-        int from = stop;
-        while (from > start && Character.isJavaIdentifierPart(src.charAt(from - 1))) from--;
-        if (from == stop || !src.substring(from, stop).equals(name)) return null;
-        return new int[] {from, stop - 1};
+        return best < 0 ? null : new int[] {best, best + name.length() - 1};
+    }
+
+    /** True when the next non-blank character at or after {@code from}, up to {@code last}, is a `(`. */
+    private static boolean opensArguments(String src, int from, int last) {
+        int k = from;
+        while (k <= last && Character.isWhitespace(src.charAt(k))) k++;
+        return k <= last && src.charAt(k) == '(';
     }
 
     /**

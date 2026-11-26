@@ -102,4 +102,26 @@ class PositionsTest {
         assertEquals(lineOf(OUTER, "public String toString()"), method.path("line").asInt());
         assertEquals(lineOf(OUTER, "return \"Inner\";") + 1, method.path("endLine").asInt());
     }
+
+    /**
+     * Columns are 1-based character offsets in the line, a tab counting as one: a call on the first line is not 0-based,
+     * and a tab-indented last line (with no line separator after it) is not expanded to the tabulation size.
+     */
+    @Test
+    void aCallsColumnIsTheOneBasedCharacterOffsetOnFirstAndLastLines() throws Exception {
+        String first = "package demo; public class One { void f() { g(); } void g() { } }";
+        var run = DumpRun.of(dir.resolve("first"), Map.of("demo/One.java", first));
+        JsonNode onFirst = DumpRun.one(run.rows("calls"), "name", "g");
+        assertEquals(1, onFirst.path("line").asInt());
+        assertEquals(first.indexOf("g();") + 1, onFirst.path("col").asInt(), "1-based, on the first line");
+
+        String last = "package demo;\nclass C {\n\tvoid f() {\n\t\tg();\n\t}\n\tvoid g() {}\n}\n"
+                + "\tclass D { void f() { g(); } }";
+        var run2 = DumpRun.of(dir.resolve("last"), Map.of("demo/C.java", last));
+        int line = DumpRun.lineOf(last, "class D");
+        JsonNode onLast = run2.rows("calls").stream().filter(r -> r.path("line").asInt() == line).findFirst()
+                .orElseThrow();
+        String text = last.split("\n", -1)[line - 1];
+        assertEquals(text.indexOf("g();") + 1, onLast.path("col").asInt(), "a tab is one column, not four");
+    }
 }

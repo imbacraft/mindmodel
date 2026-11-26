@@ -76,6 +76,23 @@ class CallsWriterTest {
         assertEquals(source.split("\n", -1)[buildLine - 1].indexOf("build") + 1, build.path("col").asInt());
     }
 
+    /** A call inside a cast is placed at its own method name, like any other call. */
+    @Test
+    void aCallInsideACastIsPlacedAtItsMethodName() throws Exception {
+        String source = """
+                package demo;
+                import java.util.Map;
+                public class Cast {
+                    int quantity(Map<String, Object> m) {
+                        return ((Number) m.get("quantity")).intValue();
+                    }
+                }
+                """;
+        JsonNode get = DumpRun.one(DumpRun.of(dir, Map.of("demo/Cast.java", source)).rows("calls"), "name", "get");
+        String text = source.split("\n", -1)[get.path("line").asInt() - 1];
+        assertEquals(text.indexOf("get(") + 1, get.path("col").asInt());
+    }
+
     /** A varargs call names the member the dump writes for it, so the call's target is a lookup. */
     @Test
     void aVarargsCallTargetsTheIdTheMemberRowWrites() throws Exception {

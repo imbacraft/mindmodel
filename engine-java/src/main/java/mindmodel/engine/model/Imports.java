@@ -83,6 +83,17 @@ public final class Imports {
     }
 
     /**
+     * The static imports a file's header writes, in header order. Spoon's own list cannot be used for them: an import
+     * of a type that is not on the classpath is unresolved there, with no name. None when the header cannot be read.
+     */
+    public static List<Import> staticImports(Path root, String path) {
+        List<Import> out = new ArrayList<>();
+        List<Import> lines = header(root, path);
+        if (lines != null) for (Import item : lines) if (item.isStatic()) out.add(item);
+        return out;
+    }
+
+    /**
      * The types a file's header statically imports a member of: `import static a.b.C.NAME;` names `a.b.C`, and `import
      * static a.b.C.Nested;` could be either, so both spellings are returned. Read by the same header reader that
      * answers the imports row, so a static import Spoon cannot resolve is still here.

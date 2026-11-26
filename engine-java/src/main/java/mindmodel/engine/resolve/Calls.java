@@ -1,5 +1,6 @@
 package mindmodel.engine.resolve;
 
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -32,6 +33,7 @@ import spoon.reflect.reference.CtTypeParameterReference;
 import spoon.reflect.reference.CtTypeReference;
 
 import mindmodel.engine.model.Failures;
+import mindmodel.engine.model.Imports;
 import mindmodel.engine.model.Names;
 import mindmodel.engine.model.RecordCtors;
 import mindmodel.engine.model.Walk;
@@ -69,16 +71,20 @@ public final class Calls {
     private final Lombok.Index generated;
     private final Chains chains;
     private final Failures failures;
+    /** The checkout the files are read from, and each file's static imports read once from its header. */
+    private final Path root;
+    private final Map<String, List<Imports.Import>> staticImports = new HashMap<>();
 
     /**
      * The resolver over the dumped types. {@code known} adds the generated sources' signatures, which the index needs
      * so a call into a generated mapper is typed like any other; they are never walked.
      */
-    public Calls(List<CtType<?>> known, Lombok.Index generated, Chains chains, Failures failures) {
+    public Calls(List<CtType<?>> known, Lombok.Index generated, Chains chains, Failures failures, Path root) {
         this.index = index(known, failures);
         this.generated = generated;
         this.chains = chains;
         this.failures = failures;
+        this.root = root;
     }
 
     /** The Lombok members the run synthesised. */
@@ -250,6 +256,25 @@ public final class Calls {
             if (name.equals(method.getSimpleName())) return true;
         return owner instanceof CtRecord record && record.getRecordComponents().stream()
                 .anyMatch(c -> name.equals(c.getSimpleName()));
+    }
+
+    /**
+     * True when an unqualified call names a method no enclosing type of the call declares, and the file (the call's own
+     * header) imports that name statically from a library type: a single import of the name, or an on-demand import of
+     * the type. A static import of a project type is not a library's, so it does not count.
+     */
+    public boolean staticallyImportedFromLibrary(CtType<?> type, String file, String name) {
+        if (name == null) return false;
+        for (CtType<?> owner = type; owner != null; owner = owner.getDeclaringType())
+            for (String fqn : projectClosure(Names.qualified(owner)))
+                if (declaresName(fqn, name)) return false;
+        for (Imports.Import item : staticImports.computeIfAbsent(file, f -> Imports.staticImports(root, f))) {
+            int dot = item.name().lastIndexOf('.');
+            String owner = item.wildcard() ? item.name() : item.name().substring(0, Math.max(0, dot));
+            boolean names = item.wildcard() || item.name().endsWith("." + name);
+            if (names && dot >= 0 && !index.declared().contains(owner)) return true;
+        }
+        return false;
     }
 
     /** True when a call's resolved declaration is a library's, or has no declaring type at all. */
