@@ -407,6 +407,81 @@ test('a header that is only checked, never stored, is a user source and no warni
   assert.ok(sources.some((s) => s.name === 'X-Tfa-Token'), `the read is still a user source: ${sources.map((s) => s.kind).join(', ')}`);
 });
 
+// A holder of a project record the app builds from configuration. The request's header is only compared with the
+// workspace the config names; nothing from the request is stored. This is a routing destination, not a caller.
+const ROUTE_FILES = {
+  'src/main/java/shop/Settings.java': L(
+    'package shop;',
+    'public class Settings {',
+    '  private final String database;',
+    '  private final String workspace;',
+    '  public Settings(String database, String workspace) {',
+    '    this.database = database;',
+    '    this.workspace = workspace;',
+    '  }',
+    '  public String getDatabase() {',
+    '    return database;',
+    '  }',
+    '  public String getWorkspace() {',
+    '    return workspace;',
+    '  }',
+    '}',
+  ),
+  'src/main/java/shop/Route.java': L('package shop;', 'public record Route(String database, String workspace) { }'),
+  'src/main/java/shop/RouteContext.java': L(
+    'package shop;',
+    'public class RouteContext {',
+    '  private static final ThreadLocal<Route> CURRENT = new ThreadLocal<>();',
+    '  public static void bind(Route route) {',
+    '    CURRENT.set(route);',
+    '  }',
+    '}',
+  ),
+};
+
+const CONFIG_ROUTE_FILTER = L(
+  'package shop;',
+  ...IMPORTS,
+  'public class ConfigRouteFilter {',
+  '  private final Settings settings;',
+  '  public ConfigRouteFilter(Settings settings) {',
+  '    this.settings = settings;',
+  '  }',
+  '  public void doFilterInternal(HttpServletRequest request) {',
+  '    String header = request.getHeader("X-Workspace");',
+  '    if (!settings.getWorkspace().equals(header)) {',
+  '      throw new IllegalStateException("workspace");',
+  '    }',
+  '    RouteContext.bind(new Route(settings.getDatabase(), settings.getWorkspace()));',
+  '  }',
+  '}',
+);
+
+const HEADER_ROUTE_FILTER = L(
+  'package shop;',
+  ...IMPORTS,
+  'public class HeaderRouteFilter {',
+  '  private final Settings settings;',
+  '  public HeaderRouteFilter(Settings settings) {',
+  '    this.settings = settings;',
+  '  }',
+  '  public void doFilterInternal(HttpServletRequest request) {',
+  '    RouteContext.bind(new Route(request.getHeader("X-Database"), settings.getWorkspace()));',
+  '  }',
+  '}',
+);
+
+test('a holder value built from configuration, with a header only compared, is no warning', { skip: NO_ENGINE }, () => {
+  const { warnings } = build('ConfigRouteFilter', CONFIG_ROUTE_FILTER, ROUTE_FILES);
+  assert.deepEqual(warnings, [], `the stored route is config, the header is only compared: ${JSON.stringify(warnings)}`);
+});
+
+test('a header stored into a project holder is still a warning (the control for the config case)', { skip: NO_ENGINE }, () => {
+  const { warnings } = build('HeaderRouteFilter', HEADER_ROUTE_FILTER, ROUTE_FILES);
+  assert.equal(warnings.length, 1, `the header reaches the stored route: ${JSON.stringify(warnings.map((w) => w.id))}`);
+  assert.match(warnings[0].source, /X-Database/);
+});
+
 test('a cookie name compared inside a helper is resolved through the helper', { skip: NO_ENGINE }, () => {
   const { sources } = build('HelperFilter', HELPER_NAMED['src/main/java/shop/HelperFilter.java'], { 'src/main/java/shop/CookieNames.java': HELPER_NAMED['src/main/java/shop/CookieNames.java'] });
   const cookie = sources.find((s) => s.kind.startsWith('cookie'));

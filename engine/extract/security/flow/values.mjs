@@ -3,15 +3,25 @@ import { callById } from './dump.mjs';
 
 /**
  * The value the client sent has to reach the holder. Followed through what the dump records: the store's argument is
- * the read's own call, or a local assigned from it, or a local assigned from a call that took it (one hop). A value
- * the dump cannot place — a parameter of the sink's own method, or a value built inside a `new` whose arguments are
- * not recorded — keeps the warning: an unknown never clears a warning.
+ * the read's own call, or a local assigned from a call that takes it, or a `new` whose constructor arguments carry it
+ * (placed by the identity rule). A call's own result is not followed: its arguments are not walked, so a result the
+ * code computes from the request does not reach here. A
+ * value the dump cannot place (a parameter of the sink's own method, or a `new` whose constructor is not recorded)
+ * keeps the warning: an unknown never clears a warning.
  */
 export function valueReaches(read, value, q, db, weak = false, depth = 2) {
   if (!value) return true;
   const ids = new Set([read.call, read.value].filter(Boolean));
   const isRead = (v) =>
     Boolean(v) && ((v.kind === 'call' && ids.has(v.call)) || (v.kind === 'local' && ids.has(v.from)));
+  // The arguments of one call row: a read among them, or one that reaches through its own value.
+  const viaArgs = (row, sink = weak) => {
+    if (!row) return false;
+    for (let i = 0; i < (row.args ?? []).length; i++)
+      for (const v of q.argValue(row, i).values)
+        if (isRead(v.value) || valueReaches(read, v.value, q, db, sink, depth - 1)) return true;
+    return false;
+  };
   if (isRead(value)) return true;
   if (value.kind === 'param') return !weak;
   // A local assigned in more than one place has no `from` in the dump (`actor = null; ... actor = c.getValue();`).
@@ -19,17 +29,13 @@ export function valueReaches(read, value, q, db, weak = false, depth = 2) {
   // on it: the weakest sink warns only on what the dump can show reaching it, or every filter that re-stores the
   // caller already authenticated would be flagged.
   if (value.kind === 'local' && !value.from) return !weak;
-  // A value built inline (`new UserContext(user)`): the dump names the created type, not its arguments, so what was
-  // passed to the constructor is not in it. Unplaceable, and the warning stands.
-  if (value.kind === 'new') return true;
-  if (value.kind === 'local' && value.from && depth > 0) {
-    const row = callById(db, value.from);
-    if (!row) return false;
-    for (let i = 0; i < (row.args ?? []).length; i++)
-      for (const v of q.argValue(row, i).values)
-        if (isRead(v.value) || valueReaches(read, v.value, q, db, weak, depth - 1)) return true;
-    return false;
+  // The arguments of a `new` built at the sink are the identity being made there, so the weak rule does not apply.
+  if (value.kind === 'new') {
+    if (!value.ctor || depth <= 0) return true;
+    return viaArgs(value.ctor, false);
   }
+  if (depth <= 0) return false;
+  if (value.kind === 'local' && value.from) return viaArgs(callById(db, value.from));
   return false;
 }
 
@@ -46,4 +52,7 @@ export function valueReaches(read, value, q, db, weak = false, depth = 2) {
   assert.ok(!valueReaches(read, { kind: 'local', from: 'a.F#go()@5:9' }, q, db), 'an unrelated local does not reach');
   assert.ok(valueReaches(read, { kind: 'param', index: 0 }, q, db), 'a value the dump cannot place keeps the warning');
   assert.ok(valueReaches(read, null, q, db), 'a store whose argument was not recorded keeps the warning');
+  assert.ok(valueReaches(read, { kind: 'new', created: 'a.R' }, q, db), 'an unplaced new keeps the warning');
+  assert.ok(!valueReaches(read, { kind: 'new', created: 'a.R', ctor: { id: 'k', args: [] } }, q, db),
+    'a placed new whose constructor arguments do not carry the read does not reach');
 }

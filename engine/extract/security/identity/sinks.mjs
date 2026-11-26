@@ -4,6 +4,7 @@ import { targetIds } from '../../../model/targets.mjs';
 import { callById, memberAt, simpleType } from '../flow/dump.mjs';
 import { identityStores } from '../flow/stores.mjs';
 import { isIdentityType } from './types.mjs';
+import { placedArg } from './untrusted.mjs';
 
 // The caller slots: a field, or a project method's parameter, that carries the authenticated caller itself.
 const CALLER_SIMPLE = listOf('caller-types');
@@ -31,7 +32,7 @@ export function securitySinks(entryId, q, db, model, holders) {
             `${store.unresolved ? 'unresolved:' : ''}${simpleType(recv ?? 'SecurityContext')}.` +
             `${store.how ?? 'setAuthentication'}`,
           cite: `${store.file}:${store.line}`,
-          arg: args[0] ?? null,
+          arg: placedArg(db, callById(db, store.call), args[0]) ?? null,
         });
         continue;
       }
@@ -46,7 +47,7 @@ export function securitySinks(entryId, q, db, model, holders) {
           method: label,
           what: `thread-local ${simpleType(store.holder)} (element unresolved)`,
           cite: `${store.file}:${store.line}`,
-          arg: args[0] ?? null,
+          arg: placedArg(db, callById(db, store.call), args[0]) ?? null,
           element: 'unresolved',
           holderType: store.holder,
           confidence: 'inferred',
@@ -71,7 +72,7 @@ export function securitySinks(entryId, q, db, model, holders) {
               method: callerLabel,
               what: `thread-local ${String(store.field).split('#').pop()} (${simpleType(holder.element)})`,
               cite: `${c.file}:${c.line}`,
-              arg: db.argsOf(c.id)[args[0].index] ?? null,
+              arg: placedArg(db, c, db.argsOf(c.id)[args[0].index]) ?? null,
               holderType: holder.owner,
               // Evidence, not an accusation: a sink moved to a call site would otherwise accuse a filter whose
               // verification call the dump could not type (`manager.authenticate(...)`): a wrong claim on two real
@@ -86,7 +87,7 @@ export function securitySinks(entryId, q, db, model, holders) {
         method: label,
         what: `thread-local ${String(store.field).split('#').pop()} (${simpleType(holder.element)})`,
         cite: `${store.file}:${store.line}`,
-        arg: args[0] ?? null,
+        arg: placedArg(db, callById(db, store.call), args[0]) ?? null,
         holderType: holder.owner,
       });
     }
@@ -114,7 +115,7 @@ export function securitySinks(entryId, q, db, model, holders) {
             method: label,
             what: `${simple(hit.owner)}#${hit.name}(${hit.params[callerAt].name})`,
             cite: `${c.file}:${c.line}`,
-            arg: c.args?.[callerAt] ?? null,
+            arg: placedArg(db, c, c.args?.[callerAt]) ?? null,
             weak: true,
           });
           continue;
@@ -158,6 +159,7 @@ export function projectHolderSlot(hit, call, q, db, model) {
 /** The project value built at a call site: the dump says `new` and names the created type. */
 export const builtValue = (q, call, i, db, model) => {
   for (const { value } of q.argValue(call, i).values)
-    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.typeFqn, db)) return value;
+    if (value.kind === 'new' && isIdentityType(model, value.created ?? value.typeFqn, db))
+      return placedArg(db, call, value);
   return null;
 };
